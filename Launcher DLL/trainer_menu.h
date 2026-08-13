@@ -46,7 +46,7 @@ struct MenuItem {
 extern MenuItem  g_items[];
 extern const int ITEM_COUNT;
 
-void menu_init(HINSTANCE hinst, HWND game_hwnd);
+bool menu_init(HINSTANCE hinst, HWND game_hwnd);
 void menu_start_loop();
 void menu_open();
 void menu_close();

@@ -13,4 +13,4 @@ extern bool g_bagitem_enabled;
 
 void opt_bagitem_init(const char* ini_path);
 void opt_bagitem_set_hwnd_and_start(HWND hwnd);
-void opt_bagitem_set_quantity(int qty);  // écrire la quantité dans le sac
+void opt_bagitem_set_quantity(int item_id, int qty);  // cible immuable + quantite

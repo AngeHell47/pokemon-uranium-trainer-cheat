@@ -98,6 +98,48 @@ uintptr_t remote_module_base(DWORD pid, const wchar_t* module_name) {
     return result;
 }
 
+struct OverlaySearch {
+    DWORD pid;
+    bool found;
+};
+
+BOOL CALLBACK find_existing_overlay(HWND window, LPARAM parameter) {
+    OverlaySearch* search = reinterpret_cast<OverlaySearch*>(parameter);
+    DWORD owner = 0;
+    GetWindowThreadProcessId(window, &owner);
+    if (owner != search->pid) return TRUE;
+
+    wchar_t class_name[64] = {};
+    GetClassNameW(window, class_name, ARRAYSIZE(class_name));
+    if (_wcsicmp(class_name, L"TrainerOverlay") == 0) {
+        search->found = true;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+bool process_has_trainer_overlay(DWORD pid) {
+    OverlaySearch search = {pid, false};
+    EnumWindows(find_existing_overlay, reinterpret_cast<LPARAM>(&search));
+    return search.found;
+}
+
+bool wait_for_trainer_ready(DWORD pid, DWORD timeout_ms) {
+    wchar_t ready_name[96] = {};
+    swprintf_s(ready_name, L"Local\\PolkamonUraniumTrainerReady_%lu", pid);
+    const DWORD started = GetTickCount();
+    do {
+        HANDLE ready = OpenEventW(SYNCHRONIZE, FALSE, ready_name);
+        if (ready) {
+            const bool signaled = WaitForSingleObject(ready, 0) == WAIT_OBJECT_0;
+            CloseHandle(ready);
+            if (signaled) return process_has_trainer_overlay(pid);
+        }
+        Sleep(50);
+    } while (GetTickCount() - started < timeout_ms);
+    return false;
+}
+
 bool process_has_rgss(DWORD pid) {
     return remote_module_base(pid, L"RGSS102E.dll") != 0;
 }
@@ -266,8 +308,22 @@ uintptr_t remote_load_library_address(DWORD pid) {
 }
 
 bool inject_payload(DWORD pid, const std::wstring& payload_path, std::wstring& error) {
+    wchar_t mutex_name[96] = {};
+    swprintf_s(mutex_name, L"Local\\PolkamonUraniumTrainer_%lu", pid);
+    HANDLE existing_trainer = OpenMutexW(SYNCHRONIZE, FALSE, mutex_name);
+    if (existing_trainer) {
+        CloseHandle(existing_trainer);
+        if (wait_for_trainer_ready(pid, 15000)) return true;
+        error = L"Le payload est charge, mais son overlay n'a pas termine son initialisation.";
+        return false;
+    }
+
     const std::wstring payload_name = basename_of(payload_path);
-    if (remote_module_base(pid, payload_name.c_str())) return true;
+    if (remote_module_base(pid, payload_name.c_str())) {
+        if (wait_for_trainer_ready(pid, 15000)) return true;
+        error = L"Le payload est present, mais son overlay n'est pas disponible. Redemarre le jeu avant de reessayer.";
+        return false;
+    }
 
     HANDLE process = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
         PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, pid);
@@ -331,7 +387,12 @@ bool inject_payload(DWORD pid, const std::wstring& payload_path, std::wstring& e
     if (wait == WAIT_OBJECT_0) VirtualFreeEx(process, remote_path, 0, MEM_RELEASE);
     CloseHandle(thread);
     CloseHandle(process);
-    return ok;
+    if (!ok) return false;
+    if (!wait_for_trainer_ready(pid, 15000)) {
+        error = L"Le payload a ete charge, mais l'overlay ne s'est pas initialise. Redemarre le jeu avant de reessayer.";
+        return false;
+    }
+    return true;
 }
 
 void attach_selected_process(HWND window) {

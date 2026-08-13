@@ -84,7 +84,7 @@ MenuItem g_items[] = {
       NULL,NULL, NULL,0,0,NULL },
 
     { "Argent ($)", ITEM_TYPE_SLIDER,
-      NULL,NULL, &g_money_value,0,9999999,opt_money_apply },
+      NULL,NULL, &g_money_value,0,999999,opt_money_apply },
     { "", ITEM_TYPE_BAGITEM,
       NULL,NULL, NULL,0,0,NULL },
 
@@ -153,19 +153,122 @@ static bool  s_open          = false;
 static int   s_hovered       = -1;
 static HHOOK s_kbd_hook      = NULL;
 static HHOOK s_mouse_hook    = NULL;
+static HHOOK s_input_cwp_hook = NULL;
+static HHOOK s_input_getmsg_hook = NULL;
 static LONG  s_mouse_buttons = 0;
+static volatile LONG s_block_game_mouse = 0;
+// 0=aucune capture, 1=navigation du menu, 2=edition de texte/quantite.
+static volatile LONG s_block_game_keyboard = 0;
+static volatile LONG s_input_guard_pending = 0;
+static volatile LONG s_input_guard_installed = 0;
+static volatile LONG s_input_guard_in_tick = 0;
+static DWORD s_game_tid = 0;
 static bool  s_dragging_menu = false;
 static int   s_drag_ox = 0, s_drag_oy = 0;
 static bool  s_slider_drag   = false;
 static int   s_slider_idx    = -1;
+static int   s_slider_start_value = 0;
 static bool  s_qty_editing   = false;
 static char  s_qty_buf[8]    = "0";
 static int   s_qty_len       = 1;
+static int   s_qty_edit_item_id = 0;
 static UINT_PTR s_watch_timer = 0;
 static DWORD s_heal_flash_until = 0;  // GetTickCount() until which to show flash
 
 static bool menu_keyboard_should_capture();
 static void cancel_overlay_mouse_interaction();
+static bool overlay_contains_screen_point(const POINT& pt);
+
+typedef int (__cdecl *MenuRGSSEval_t)(const char*);
+static MenuRGSSEval_t s_menu_eval = NULL;
+
+static bool resolve_menu_eval() {
+    if (s_menu_eval) return true;
+    HMODULE rgss = GetModuleHandleA("RGSS102E.dll");
+    if (!rgss) return false;
+    s_menu_eval = (MenuRGSSEval_t)GetProcAddress(rgss, "RGSSEval");
+    return s_menu_eval != NULL;
+}
+
+// Uranium lit les boutons directement avec GetAsyncKeyState. Le hook souris
+// bloque les messages Windows, et ce wrapper masque aussi l'etat physique au
+// script Ruby tant que le pointeur appartient a l'overlay.
+static void input_guard_tick() {
+    if (InterlockedExchange(&s_input_guard_pending, 0) == 0) return;
+    if (InterlockedCompareExchange(&s_input_guard_in_tick, 1, 0) != 0) return;
+    if (!resolve_menu_eval()) {
+        InterlockedExchange(&s_input_guard_pending, 1);
+        InterlockedExchange(&s_input_guard_in_tick, 0);
+        return;
+    }
+
+    char ruby[4096];
+    _snprintf(ruby, sizeof(ruby) - 1,
+        "installed=0\n"
+        "begin\n"
+        "  $__uranium_trainer_mouse_block_address=%lu\n"
+        "  $__uranium_trainer_keyboard_block_address=%lu\n"
+        "  $__uranium_trainer_mouse_reader ||= Win32API.new(\"kernel32\",\"RtlMoveMemory\",[\"p\",\"l\",\"l\"],\"v\")\n"
+        "  if defined?(Input) && Input.respond_to?(:getstate)\n"
+        "    class << Input\n"
+        "      unless method_defined?(:__uranium_trainer_original_getstate)\n"
+        "        alias_method :__uranium_trainer_original_getstate, :getstate\n"
+        "        def getstate(key)\n"
+        "          if key==1 || key==2 || key==4 || key==5 || key==6\n"
+        "            begin\n"
+        "              state=[0].pack(\"l\")\n"
+        "              $__uranium_trainer_mouse_reader.call(state,$__uranium_trainer_mouse_block_address,4)\n"
+        "              return false if state.unpack(\"l\")[0]!=0\n"
+        "            rescue Exception\n"
+        "            end\n"
+        "          end\n"
+        "          begin\n"
+        "            mode=[0].pack(\"l\")\n"
+        "            $__uranium_trainer_mouse_reader.call(mode,$__uranium_trainer_keyboard_block_address,4)\n"
+        "            mode=mode.unpack(\"l\")[0]\n"
+        "            if mode==1\n"
+        "              return false if key==8 || key==13 || key==27 || key==32 || (key>=37 && key<=40)\n"
+        "            elsif mode==2\n"
+        "              modifiers=[16,17,18,20,91,92,144,145,160,161,162,163,164,165]\n"
+        "              return false unless modifiers.include?(key)\n"
+        "            end\n"
+        "          rescue Exception\n"
+        "          end\n"
+        "          __uranium_trainer_original_getstate(key)\n"
+        "        end\n"
+        "      end\n"
+        "    end\n"
+        "    installed=1\n"
+        "  end\n"
+        "rescue Exception\n"
+        "end\n"
+        "begin\n"
+        "  Win32API.new(\"kernel32\",\"RtlMoveMemory\",[\"l\",\"p\",\"l\"],\"v\").call(%lu,[installed].pack(\"l\"),4)\n"
+        "rescue Exception\n"
+        "end\n",
+        (unsigned long)(ULONG_PTR)&s_block_game_mouse,
+        (unsigned long)(ULONG_PTR)&s_block_game_keyboard,
+        (unsigned long)(ULONG_PTR)&s_input_guard_installed);
+    ruby[sizeof(ruby) - 1] = '\0';
+    s_menu_eval(ruby);
+    InterlockedExchange(&s_input_guard_in_tick, 0);
+}
+
+static LRESULT CALLBACK input_cwp_hook(int code, WPARAM wp, LPARAM lp) {
+    if (code == HC_ACTION) input_guard_tick();
+    return CallNextHookEx(s_input_cwp_hook, code, wp, lp);
+}
+
+static LRESULT CALLBACK input_getmsg_hook(int code, WPARAM wp, LPARAM lp) {
+    if (code == HC_ACTION) input_guard_tick();
+    return CallNextHookEx(s_input_getmsg_hook, code, wp, lp);
+}
+
+static void post_input_guard_tick() {
+    InterlockedExchange(&s_input_guard_pending, 1);
+    if (s_game) PostMessageA(s_game, WM_NULL, 0, 0);
+    if (s_game_tid) PostThreadMessageA(s_game_tid, WM_NULL, 0, 0);
+}
 
 // ------------------------------------------------------------
 // PARTYMON PANEL STATE
@@ -186,7 +289,8 @@ enum EditField {
 
 static EditField s_pm_field = EF_NONE;
 static bool s_pm_name_edit  = false;
-static char s_pm_name_buf[32] = {0};
+// Pokemon Uranium limite nativement les surnoms a 11 caracteres.
+static char s_pm_name_buf[12] = {0};
 
 static RECT s_pm_rc_level  = {0};
 static RECT s_pm_rc_name   = {0};
@@ -215,6 +319,7 @@ enum PickerType {
 
 static bool s_picker_scroll_drag = false;
 static int  s_picker_scroll_drag_dy = 0;
+static int  s_picker_bag_item_id = 0;
 
 static bool       s_picker_open   = false;
 static PickerType s_picker_type   = PICKER_NONE;
@@ -327,10 +432,10 @@ static void picker_open_weather(const RECT& anchor) {
     s_picker_values[2] = 1;  s_picker_labels[2] = "Pluie";
     s_picker_values[3] = 2;  s_picker_labels[3] = "Orage";
     s_picker_values[4] = 3;  s_picker_labels[4] = "Neige";
-    s_picker_values[5] = 4;  s_picker_labels[5] = "Blizzard";
-    s_picker_values[6] = 5;  s_picker_labels[6] = "Tempete sable";
+    s_picker_values[5] = 4;  s_picker_labels[5] = "Tempete sable";
+    s_picker_values[6] = 5;  s_picker_labels[6] = "Soleil";
     s_picker_values[7] = 6;  s_picker_labels[7] = "Pluie forte";
-    s_picker_values[8] = 7;  s_picker_labels[8] = "Soleil";
+    s_picker_values[8] = 7;  s_picker_labels[8] = "Blizzard";
     s_picker_values[9] = 8;  s_picker_labels[9] = "Fallout";
 
     s_picker_rc.left   = anchor.left;
@@ -345,10 +450,11 @@ static void picker_open_bag_qty(const RECT& anchor) {
     s_picker_index = 0;
     s_picker_hover = -1;
     s_picker_scroll = 0;
-    s_picker_count = 999;
+    s_picker_bag_item_id = g_bag_item.item_id;
+    s_picker_count = 100;
 
-    for (int i = 0; i < 999; i++) {
-        s_picker_values[i] = i + 1;
+    for (int i = 0; i < 100; i++) {
+        s_picker_values[i] = i;
         s_picker_labels[i] = NULL;
     }
 
@@ -365,7 +471,7 @@ static void picker_open_iv(int stat_index, const RECT& anchor) {
     s_picker_hover = -1;
     s_picker_scroll = 0;
 
-    s_picker_count = 10000; // 0 → 999999
+    s_picker_count = 32; // 0..31 (limite native des IV)
 
     s_picker_rc.left   = anchor.left;
     s_picker_rc.top    = anchor.bottom + 2;
@@ -380,7 +486,7 @@ static void picker_open_ev(int stat_index, const RECT& anchor) {
     s_picker_hover = -1;
     s_picker_scroll = 0;
 
-    s_picker_count = 10000; // 0 → 999999
+    s_picker_count = 256; // 0..255 (limite native par statistique)
 
     s_picker_rc.left   = anchor.left;
     s_picker_rc.top    = anchor.bottom + 2;
@@ -531,7 +637,7 @@ static void picker_apply(int idx) {
         s_pm_field = EF_PM_SHINY;
     }
     else if (s_picker_type == PICKER_BAG_QTY) {
-        opt_bagitem_set_quantity(val);
+        opt_bagitem_set_quantity(s_picker_bag_item_id, val);
     }
     else if (s_picker_type == PICKER_TIME) {
         opt_time_apply_hour(val);
@@ -662,12 +768,22 @@ static void on_money_read(int val) {
 // ------------------------------------------------------------
 
 static void cancel_overlay_mouse_interaction() {
+    if (s_slider_drag && s_slider_idx >= 0 && s_slider_idx < ITEM_COUNT &&
+        g_items[s_slider_idx].on_slide == opt_zoom_apply &&
+        g_items[s_slider_idx].slider_val) {
+        // Un changement de focus au milieu d'un drag ne doit pas declencher
+        // une recreation lourde de la carte avec une valeur non validee.
+        *g_items[s_slider_idx].slider_val = s_slider_start_value;
+    }
     InterlockedExchange(&s_mouse_buttons, 0);
+    InterlockedExchange(&s_block_game_mouse, 0);
+    InterlockedExchange(&s_block_game_keyboard, 0);
     s_dragging_menu = false;
     s_drag_ox = 0;
     s_drag_oy = 0;
     s_slider_drag = false;
     s_slider_idx = -1;
+    s_slider_start_value = 0;
     s_picker_scroll_drag = false;
     s_picker_scroll_drag_dy = 0;
 
@@ -693,6 +809,8 @@ static void sync_overlay_to_game() {
     }
 
     ShowWindow(s_overlay, SW_SHOWNOACTIVATE);
+    InterlockedExchange(&s_block_game_keyboard,
+                        (s_pm_name_edit || s_qty_editing) ? 2 : 1);
 
     RECT gr;
     GetWindowRect(s_game, &gr);
@@ -711,6 +829,13 @@ static void sync_overlay_to_game() {
 
     SetWindowPos(s_overlay, HWND_TOPMOST, ox, oy, MENU_TOTAL_W, mh,
                  SWP_NOACTIVATE | SWP_NOSIZE);
+
+    POINT cursor = {};
+    const LONG captured = InterlockedExchangeAdd(&s_mouse_buttons, 0);
+    const bool cursor_over = GetCursorPos(&cursor) &&
+                             overlay_contains_screen_point(cursor);
+    InterlockedExchange(&s_block_game_mouse,
+                        (cursor_over || captured != 0) ? 1 : 0);
 
     static int last_item_id = -1;
     static int last_item_qty = -1;
@@ -1063,8 +1188,8 @@ static void paint(HWND hw) {
             SelectObject(mem, obb);
             DeleteObject(bpn);
 
-            const char* wnames[] = {"Aucune","Pluie","Orage","Neige","Blizzard",
-                                    "Sable","Forte pluie","Soleil","Fallout"};
+            const char* wnames[] = {"Aucune","Pluie","Orage","Neige","Sable",
+                                    "Soleil","Forte pluie","Blizzard","Fallout"};
             char wbuf[32];
             if (g_weather_type >= 0 && g_weather_type <= 8) {
                 lstrcpynA(wbuf, wnames[g_weather_type], sizeof(wbuf));
@@ -1296,22 +1421,28 @@ static void toggle_item(int i) {
     InvalidateRect(s_overlay, NULL, FALSE);
 }
 
-static void apply_slider(int i, int val) {
+static void apply_slider(int i, int val, bool commit = true) {
     if (i < 0 || i >= ITEM_COUNT || g_items[i].type != ITEM_TYPE_SLIDER) return;
     int mn = g_items[i].slider_min, mx = g_items[i].slider_max;
     if (val < mn) val = mn;
     if (val > mx) val = mx;
     *g_items[i].slider_val = val;
-    if (g_items[i].on_slide) g_items[i].on_slide(val);
+    // Le zoom recree les spritesets de carte. Pendant un glisser, ne mettre
+    // a jour que l'aperçu; appliquer et sauver une seule fois au relachement.
+    const bool deferred_zoom = g_items[i].on_slide == opt_zoom_apply;
+    if (g_items[i].on_slide && (!deferred_zoom || commit))
+        g_items[i].on_slide(val);
     InvalidateRect(s_overlay, NULL, FALSE);
 }
 
 static void commit_qty_edit() {
     if (!s_qty_editing) return;
     s_qty_editing = false;
+    const int item_id = s_qty_edit_item_id;
+    s_qty_edit_item_id = 0;
     int qty = 0;
     for (int k = 0; k < s_qty_len; k++) qty = qty * 10 + (s_qty_buf[k] - '0');
-    opt_bagitem_set_quantity(qty);
+    opt_bagitem_set_quantity(item_id, qty);
     SetWindowLongA(s_overlay, GWL_EXSTYLE,
         GetWindowLongA(s_overlay, GWL_EXSTYLE) | WS_EX_NOACTIVATE);
     SetForegroundWindow(s_game);
@@ -1319,7 +1450,12 @@ static void commit_qty_edit() {
 }
 
 static void start_qty_edit() {
+    const int item_id = g_bag_item.item_id;
+    if (item_id <= 0) return;
+
+    s_qty_edit_item_id = item_id;
     s_qty_editing = true;
+    InterlockedExchange(&s_block_game_keyboard, 2);
     s_qty_buf[0] = '\0';
     s_qty_len = 0;
     wsprintfA(s_qty_buf, "%d", g_bag_item.quantity);
@@ -1561,8 +1697,9 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             else if (g_items[i].type == ITEM_TYPE_SLIDER && is_in_slider_track(i, x, y)) {
                 s_slider_drag = true;
                 s_slider_idx = i;
+                s_slider_start_value = *g_items[i].slider_val;
                 SetCapture(hw);
-                apply_slider(i, slider_val_from_x(i, x));
+                apply_slider(i, slider_val_from_x(i, x), false);
             }
             else if (g_items[i].type == ITEM_TYPE_TIME && is_in_time_box(i, x, y)) {
                 RECT tbox = {
@@ -1669,7 +1806,7 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             SetWindowPos(hw, HWND_TOPMOST, nx, ny, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
         }
         else if (s_slider_drag && s_slider_idx >= 0) {
-            apply_slider(s_slider_idx, slider_val_from_x(s_slider_idx, x));
+            apply_slider(s_slider_idx, slider_val_from_x(s_slider_idx, x), false);
         }
         else {
             // Pas de hover sur le panneau Pokemon à droite
@@ -1701,8 +1838,11 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             ReleaseCapture();
         }
         if (s_slider_drag) {
+            if (s_slider_idx >= 0 && s_slider_idx < ITEM_COUNT)
+                apply_slider(s_slider_idx, *g_items[s_slider_idx].slider_val, true);
             s_slider_drag = false;
             s_slider_idx = -1;
+            s_slider_start_value = 0;
             ReleaseCapture();
         }
         return 0;
@@ -1754,6 +1894,7 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             }
             else if (c == '\x1b') {
                 s_qty_editing = false;
+                s_qty_edit_item_id = 0;
                 InvalidateRect(hw, NULL, FALSE);
             }
             return 0;
@@ -1769,6 +1910,7 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             }
             else if (wp == VK_ESCAPE) {
                 s_qty_editing = false;
+                s_qty_edit_item_id = 0;
                 SetWindowLongA(s_overlay, GWL_EXSTYLE,
                     GetWindowLongA(s_overlay, GWL_EXSTYLE) | WS_EX_NOACTIVATE);
                 SetForegroundWindow(s_game);
@@ -1859,8 +2001,6 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
 // ------------------------------------------------------------
 
 static bool menu_keyboard_should_capture() {
-    if (!s_open || !s_overlay) return false;
-
     HWND fg = GetForegroundWindow();
     if (!fg) return false;
 
@@ -1881,16 +2021,24 @@ static LRESULT CALLBACK KbdHook(int code, WPARAM wp, LPARAM lp) {
     if (code == HC_ACTION) {
         KBDLLHOOKSTRUCT* kb = (KBDLLHOOKSTRUCT*)lp;
 
-        // Insert reste global pour ouvrir/fermer le menu même si le jeu n'est pas focus
+        // Insert ne pilote le trainer que lorsque le jeu (ou son overlay) est
+        // actif. Il ne doit pas voler cette touche dans une autre application.
         if (kb->vkCode == VK_INSERT && wp == WM_KEYDOWN) {
-            s_open ? menu_close() : menu_open();
-            return 1;
+            if (menu_keyboard_should_capture()) {
+                s_open ? menu_close() : menu_open();
+                return 1;
+            }
+            return CallNextHookEx(s_kbd_hook, code, wp, lp);
         }
 
         // A partir d'ici, on ne capture QUE si le jeu/menu a réellement le focus
-        if (!menu_keyboard_should_capture()) {
+        if (!s_open || !s_overlay || !menu_keyboard_should_capture()) {
+            InterlockedExchange(&s_block_game_keyboard, 0);
             return CallNextHookEx(s_kbd_hook, code, wp, lp);
         }
+
+        InterlockedExchange(&s_block_game_keyboard,
+                            (s_pm_name_edit || s_qty_editing) ? 2 : 1);
 
         if (!s_qty_editing && (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN)) {
             // Si on édite le nom du Pokémon, on capture TOUT
@@ -2025,6 +2173,9 @@ static LRESULT CALLBACK MouseHook(int code, WPARAM wp, LPARAM lp) {
 
         const MSLLHOOKSTRUCT* mouse = (const MSLLHOOKSTRUCT*)lp;
         const bool over_overlay = overlay_contains_screen_point(mouse->pt);
+        const LONG captured_before = InterlockedExchangeAdd(&s_mouse_buttons, 0);
+        InterlockedExchange(&s_block_game_mouse,
+                            (over_overlay || captured_before != 0) ? 1 : 0);
         LONG bit = 0;
         UINT overlay_down = 0;
         UINT overlay_up = 0;
@@ -2060,18 +2211,21 @@ static LRESULT CALLBACK MouseHook(int code, WPARAM wp, LPARAM lp) {
         // Une fois un bouton capture par l'overlay, les boutons additionnels
         // appartiennent a la meme interaction, meme si un glisser a deja
         // amene le pointeur hors du rectangle.
-        if (bit && is_down &&
-            (over_overlay || InterlockedExchangeAdd(&s_mouse_buttons, 0) != 0)) {
+        if (bit && is_down && (over_overlay || captured_before != 0)) {
             InterlockedOr(&s_mouse_buttons, bit);
+            InterlockedExchange(&s_block_game_mouse, 1);
             if (overlay_down)
                 post_overlay_mouse(overlay_down, mouse, captured_mouse_key_state());
             return 1;
         }
 
-        if (bit && is_up && (InterlockedExchangeAdd(&s_mouse_buttons, 0) & bit)) {
+        if (bit && is_up && (captured_before & bit)) {
             if (overlay_up)
                 post_overlay_mouse(overlay_up, mouse, captured_mouse_key_state() & ~MK_LBUTTON);
             InterlockedAnd(&s_mouse_buttons, ~bit);
+            const LONG captured_after = captured_before & ~bit;
+            InterlockedExchange(&s_block_game_mouse,
+                                (over_overlay || captured_after != 0) ? 1 : 0);
             return 1;
         }
 
@@ -2125,11 +2279,18 @@ void menu_open() {
     InvalidateRect(s_overlay, NULL, TRUE);
     s_open = true;
     s_hovered = 0;
+    InterlockedExchange(&s_block_game_keyboard,
+                        (s_pm_name_edit || s_qty_editing) ? 2 : 1);
+
+    POINT cursor = {};
+    if (GetCursorPos(&cursor) && overlay_contains_screen_point(cursor))
+        InterlockedExchange(&s_block_game_mouse, 1);
 }
 
 void menu_close() {
     cancel_overlay_mouse_interaction();
     s_qty_editing = false;
+	s_qty_edit_item_id = 0;
 	picker_close();
     pm_reset_edit_state();
     ShowWindow(s_overlay, SW_HIDE);
@@ -2137,8 +2298,13 @@ void menu_close() {
     s_hovered = -1;
 }
 
-void menu_init(HINSTANCE hinst, HWND game_hwnd) {
+bool menu_init(HINSTANCE hinst, HWND game_hwnd) {
     s_game = game_hwnd;
+    s_game_tid = game_hwnd ? GetWindowThreadProcessId(game_hwnd, NULL) : 0;
+    InterlockedExchange(&s_block_game_mouse, 0);
+    InterlockedExchange(&s_block_game_keyboard, 0);
+    InterlockedExchange(&s_input_guard_pending, 0);
+    InterlockedExchange(&s_input_guard_installed, 0);
 
     movesdb_load("moves.txt");
 
@@ -2148,7 +2314,8 @@ void menu_init(HINSTANCE hinst, HWND game_hwnd) {
     wc.hInstance = hinst;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.lpszClassName = "TrainerOverlay";
-    RegisterClassExA(&wc);
+    if (!RegisterClassExA(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+        return false;
 
     s_overlay = CreateWindowExA(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
@@ -2158,9 +2325,70 @@ void menu_init(HINSTANCE hinst, HWND game_hwnd) {
         NULL, NULL, hinst, NULL
     );
 
+    if (!s_overlay) return false;
+
+    // Installer d'abord uniquement les hooks du thread RGSS. Les hooks LL
+    // sont rappeles sur le thread qui les installe : les poser avant la
+    // boucle de retry ci-dessous risquerait un retrait par LowLevelHooksTimeout.
+    if (s_game_tid) {
+        s_input_cwp_hook = SetWindowsHookExA(
+            WH_CALLWNDPROC, input_cwp_hook, hinst, s_game_tid);
+        s_input_getmsg_hook = SetWindowsHookExA(
+            WH_GETMESSAGE, input_getmsg_hook, hinst, s_game_tid);
+    }
+    if (!s_input_cwp_hook || !s_input_getmsg_hook) {
+        if (s_input_cwp_hook) {
+            UnhookWindowsHookEx(s_input_cwp_hook);
+            s_input_cwp_hook = NULL;
+        }
+        if (s_input_getmsg_hook) {
+            UnhookWindowsHookEx(s_input_getmsg_hook);
+            s_input_getmsg_hook = NULL;
+        }
+        DestroyWindow(s_overlay);
+        s_overlay = NULL;
+        movesdb_free();
+        return false;
+    }
+
+    // Ne jamais annoncer le trainer pret avant que le filtre RGSS contre les
+    // clics traversants soit effectivement installe sur le thread du jeu.
+    for (int attempt = 0;
+         attempt < 120 && InterlockedExchangeAdd(&s_input_guard_installed, 0) == 0;
+         ++attempt) {
+        post_input_guard_tick();
+        Sleep(100);
+    }
+    if (InterlockedExchangeAdd(&s_input_guard_installed, 0) == 0) {
+        UnhookWindowsHookEx(s_input_cwp_hook);
+        UnhookWindowsHookEx(s_input_getmsg_hook);
+        s_input_cwp_hook = NULL;
+        s_input_getmsg_hook = NULL;
+        DestroyWindow(s_overlay);
+        s_overlay = NULL;
+        movesdb_free();
+        return false;
+    }
+
+    // Le filtre RGSS est accuse : on peut maintenant poser les hooks globaux
+    // juste avant d'entrer dans la boucle de messages qui les dessert.
     s_watch_timer = SetTimer(s_overlay, 1, 200, NULL);
     s_kbd_hook = SetWindowsHookExA(WH_KEYBOARD_LL, KbdHook, hinst, 0);
     s_mouse_hook = SetWindowsHookExA(WH_MOUSE_LL, MouseHook, hinst, 0);
+    if (!s_watch_timer || !s_kbd_hook || !s_mouse_hook) {
+        if (s_kbd_hook) { UnhookWindowsHookEx(s_kbd_hook); s_kbd_hook = NULL; }
+        if (s_mouse_hook) { UnhookWindowsHookEx(s_mouse_hook); s_mouse_hook = NULL; }
+        if (s_watch_timer) { KillTimer(s_overlay, 1); s_watch_timer = 0; }
+        UnhookWindowsHookEx(s_input_cwp_hook);
+        UnhookWindowsHookEx(s_input_getmsg_hook);
+        s_input_cwp_hook = NULL;
+        s_input_getmsg_hook = NULL;
+        DestroyWindow(s_overlay);
+        s_overlay = NULL;
+        movesdb_free();
+        return false;
+    }
+    return true;
 }
 
 void menu_start_loop() {
@@ -2179,6 +2407,14 @@ void menu_start_loop() {
     if (s_mouse_hook) {
         UnhookWindowsHookEx(s_mouse_hook);
         s_mouse_hook = NULL;
+    }
+    if (s_input_cwp_hook) {
+        UnhookWindowsHookEx(s_input_cwp_hook);
+        s_input_cwp_hook = NULL;
+    }
+    if (s_input_getmsg_hook) {
+        UnhookWindowsHookEx(s_input_getmsg_hook);
+        s_input_getmsg_hook = NULL;
     }
     if (s_watch_timer) {
         KillTimer(s_overlay, 1);

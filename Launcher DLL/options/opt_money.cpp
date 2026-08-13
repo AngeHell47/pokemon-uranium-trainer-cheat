@@ -6,7 +6,8 @@ int g_money_value = 0;
 static char          s_ini[MAX_PATH];
 static HWND          s_game_hwnd = NULL;
 static DWORD         s_game_tid  = 0;
-static volatile LONG s_pending   = 0;  // 1=écrire argent, 2=lire argent
+static volatile LONG s_read_pending  = 0;
+static volatile LONG s_write_pending = 0;
 static volatile LONG s_pending_val = 0;
 
 static HHOOK s_hook_cwp    = NULL;
@@ -55,7 +56,7 @@ static void build_ruby_write(int val) {
     wsprintfA(s_ruby_write,
         "begin\n"
         "  if defined?($Trainer) && !$Trainer.nil?\n"
-        "    $Trainer.instance_variable_set(\"@money\",%d)\n"
+        "    $Trainer.money=%d\n"
         "  end\n"
         "rescue Exception\n"
         "end\n",
@@ -63,17 +64,16 @@ static void build_ruby_write(int val) {
 }
 
 static void on_game_thread_tick() {
-    if (!s_eval) return;
-    LONG p = InterlockedExchange(&s_pending, 0);
-    if (p == 1) {
-        // Écrire l'argent
+    if (!resolve()) return;
+    if (InterlockedExchange(&s_write_pending, 0) != 0) {
         LONG val = InterlockedExchangeAdd(&s_pending_val, 0);
         build_ruby_write((int)val);
         s_eval(s_ruby_write);
-    } else if (p == 2) {
-        // Lire l'argent courant depuis Ruby → g_money_value
+        // Relire la valeur validée par PokemonTrainer#money=.
         s_eval(s_ruby_read);
-        // g_money_value a été mis à jour par RtlMoveMemory dans Ruby
+        if (s_on_money_read) s_on_money_read(g_money_value);
+    } else if (InterlockedExchange(&s_read_pending, 0) != 0) {
+        s_eval(s_ruby_read);
         if (s_on_money_read) s_on_money_read(g_money_value);
     }
 }
@@ -114,17 +114,17 @@ void opt_money_set_hwnd_and_start(HWND hwnd) {
 
 void opt_money_read(void (*callback)(int)) {
     s_on_money_read = callback;
-    InterlockedExchange(&s_pending, 2);
+    InterlockedExchange(&s_read_pending, 1);
     if (s_game_hwnd) PostMessageA(s_game_hwnd, WM_NULL, 0, 0);
     if (s_game_tid)  PostThreadMessageA(s_game_tid, WM_NULL, 0, 0);
 }
 
 void opt_money_apply(int value) {
     if (value < 0)       value = 0;
-    if (value > 9999999) value = 9999999;
+    if (value > 999999) value = 999999;
     g_money_value = value;
     InterlockedExchange(&s_pending_val, (LONG)value);
-    InterlockedExchange(&s_pending, 1);
+    InterlockedExchange(&s_write_pending, 1);
     if (s_game_hwnd) PostMessageA(s_game_hwnd, WM_NULL, 0, 0);
     if (s_game_tid)  PostThreadMessageA(s_game_tid, WM_NULL, 0, 0);
 }

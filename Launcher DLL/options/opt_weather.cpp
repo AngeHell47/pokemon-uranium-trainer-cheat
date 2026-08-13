@@ -1,19 +1,22 @@
 #include "../options/opt_weather.h"
 #include "../trainer_runtime.h"
-#include <string.h>
+
 #include <stdio.h>
+#include <string.h>
 
 bool g_weather_enabled = false;
 int  g_weather_type    = -1;
 
 static char          s_ini[MAX_PATH];
-static HWND          s_game_hwnd  = NULL;
-static DWORD         s_game_tid   = 0;
+static HWND          s_game_hwnd = NULL;
+static DWORD         s_game_tid  = 0;
 
-static volatile LONG s_forced_weather = -1;  // -1 = OFF
-
-static HANDLE        s_timer      = NULL;
-static HANDLE        s_stop       = NULL;
+// Etat demande par l'UI. Ruby n'est appele que depuis le thread RGSS ; les
+// commandes venant de l'overlay sont transmises via des LONG atomiques.
+static volatile LONG s_desired_type = -1;
+static volatile LONG s_pending      = 0;
+static volatile LONG s_installed    = 0;
+static volatile LONG s_last_refresh = 0;
 
 static HHOOK s_hook_cwp    = NULL;
 static HHOOK s_hook_getmsg = NULL;
@@ -21,21 +24,15 @@ static HHOOK s_hook_getmsg = NULL;
 typedef int (__cdecl *RGSSEval_t)(const char*);
 static RGSSEval_t s_eval = NULL;
 
-static int s_shared[2]; // [0]=weather_type [1]=weather_max (from $game_screen)
+// [0] type visible via Game_Screen#weather_type, [1] wrapper installe.
+static volatile LONG s_shared[2] = {-1, 0};
+static char s_ruby[6144];
 
-static char s_ruby[2048];
-
-static char s_dbg_path[MAX_PATH];
-
-static void dbg(const char* text) {
-    (void)text;
-}
-
-static bool resolve() {
+static bool resolve_eval() {
     if (s_eval) return true;
-    HMODULE h = GetModuleHandleA("RGSS102E.dll");
-    if (!h) return false;
-    s_eval = (RGSSEval_t)GetProcAddress(h, "RGSSEval");
+    HMODULE rgss = GetModuleHandleA("RGSS102E.dll");
+    if (!rgss) return false;
+    s_eval = (RGSSEval_t)GetProcAddress(rgss, "RGSSEval");
     return s_eval != NULL;
 }
 
@@ -44,86 +41,100 @@ static void post_to_game() {
     if (s_game_tid)  PostThreadMessageA(s_game_tid, WM_NULL, 0, 0);
 }
 
-// ── Ruby tick ────────────────────────────────────────────────────────────────
-// Quand le cheat est actif : forcer la météo via $game_screen.weather()
-// et lire le type actuel.
-// Quand OFF : juste lire le type actuel.
-
-static void build_ruby_tick() {
-    LONG wtype = InterlockedExchangeAdd(&s_forced_weather, 0);
-    ULONG_PTR dst = (ULONG_PTR)s_shared;
-
-    if (wtype >= 0) {
-        // Forcer la météo en écrivant directement les variables internes
-        // de $game_screen, puis lire.
-        // On utilise weather(type,power,duration) avec duration=1 pour
-        // éviter le ZeroDivisionError, mais seulement quand le type change.
-        wsprintfA(s_ruby,
-            "begin\n"
-            "  if defined?($game_screen) && $game_screen\n"
-            "    if $game_screen.weather_type != %d\n"
-            "      $game_screen.weather(%d,8,1)\n"
-            "    end\n"
-            "    $game_screen.instance_variable_set(:@weather_type,%d)\n"
-            "    $game_screen.instance_variable_set(:@weather_type_target,%d)\n"
-            "    $game_screen.instance_variable_set(:@weather_max,40.0)\n"
-            "    $game_screen.instance_variable_set(:@weather_max_target,40.0)\n"
-            "    $game_screen.instance_variable_set(:@weather_duration,0)\n"
-            "  end\n"
-            "  w=Win32API.new(\"kernel32\",\"RtlMoveMemory\",[\"l\",\"p\",\"l\"],\"v\")\n"
-            "  wt=(defined?($game_screen)&&$game_screen) ? $game_screen.weather_type : -1\n"
-            "  w.call(%lu,[wt.to_i,0].pack(\"ll\"),8)\n"
-            "rescue Exception\n"
-            "end\n",
-            (int)wtype, (int)wtype, (int)wtype, (int)wtype, dst);
-    } else {
-        // Juste lire
-        wsprintfA(s_ruby,
-            "begin\n"
-            "  w=Win32API.new(\"kernel32\",\"RtlMoveMemory\",[\"l\",\"p\",\"l\"],\"v\")\n"
-            "  wt=(defined?($game_screen)&&$game_screen) ? $game_screen.weather_type : -1\n"
-            "  w.call(%lu,[wt.to_i,0].pack(\"ll\"),8)\n"
-            "rescue Exception\n"
-            "end\n",
-            dst);
-    }
+static void queue_tick() {
+    InterlockedExchange(&s_pending, 1);
+    post_to_game();
 }
 
-// ── Hook ─────────────────────────────────────────────────────────────────────
+// Le moteur consulte exclusivement les getters weather_type/weather_max pour
+// le rendu, les rencontres et la preparation des combats. Les variables
+// internes du Game_Screen continuent donc leur evolution naturelle en arriere-
+// plan. OFF revele instantanement cet etat, sans restauration approximative et
+// sans rien inscrire dans la sauvegarde du jeu.
+static void build_ruby_apply(int desired) {
+    const char* enabled = desired >= 0 ? "true" : "false";
+    const ULONG_PTR dst = (ULONG_PTR)s_shared;
 
-static volatile LONG s_do_tick = 0;
+    _snprintf(
+        s_ruby,
+        sizeof(s_ruby) - 1,
+        "installed=0\n"
+        "begin\n"
+        "  $__uranium_trainer_weather_enabled=%s\n"
+        "  $__uranium_trainer_weather_type=%d\n"
+        "  screen=(defined?($game_screen) ? $game_screen : nil)\n"
+        // Uranium expose ces lecteurs a l'instance, mais ils peuvent provenir
+        // d'un ancetre selon le chargeur de scripts RGSS. respond_to? est donc
+        // le test fiable. Les lecteurs natifs sont de simples attr_reader des
+        // ivars ci-dessous, ce qui evite un alias fragile entre ancetres.
+        "  if defined?(Game_Screen) && screen && screen.respond_to?(:weather_type) && screen.respond_to?(:weather_max)\n"
+        "    class Game_Screen\n"
+        "      unless instance_variable_get(:@__uranium_trainer_weather_wrapper)\n"
+        // Uranium emploie un chargeur qui peut placer les lecteurs dans un
+        // ancetre de Game_Screen ; define_method sur la classe concrete les
+        // surcharge de facon deterministe, contrairement a alias_method.
+        "        define_method(:weather_type) do\n"
+        "          $__uranium_trainer_weather_enabled ? $__uranium_trainer_weather_type : @weather_type\n"
+        "        end\n"
+        "        define_method(:weather_max) do\n"
+        "          $__uranium_trainer_weather_enabled ? ($__uranium_trainer_weather_type==0 ? 0.0 : 40.0) : @weather_max\n"
+        "        end\n"
+        "        instance_variable_set(:@__uranium_trainer_weather_wrapper,true)\n"
+        "      end\n"
+        "    end\n"
+        "    installed=1\n"
+        "  end\n"
+        "  current=screen ? screen.weather_type.to_i : -1\n"
+        "  writer=Win32API.new(\"kernel32\",\"RtlMoveMemory\",[\"l\",\"p\",\"l\"],\"v\")\n"
+        "  writer.call(%lu,[current,installed].pack(\"ll\"),8)\n"
+        "rescue Exception\n"
+        "end\n",
+        enabled,
+        desired,
+        (unsigned long)dst
+    );
+    s_ruby[sizeof(s_ruby) - 1] = '\0';
+}
+
+static void build_ruby_read() {
+    const ULONG_PTR dst = (ULONG_PTR)s_shared;
+    _snprintf(
+        s_ruby,
+        sizeof(s_ruby) - 1,
+        "begin\n"
+        "  screen=(defined?($game_screen) ? $game_screen : nil)\n"
+        "  current=screen ? screen.weather_type.to_i : -1\n"
+        "  writer=Win32API.new(\"kernel32\",\"RtlMoveMemory\",[\"l\",\"p\",\"l\"],\"v\")\n"
+        "  writer.call(%lu,[current,1].pack(\"ll\"),8)\n"
+        "rescue Exception\n"
+        "end\n",
+        (unsigned long)dst
+    );
+    s_ruby[sizeof(s_ruby) - 1] = '\0';
+}
 
 static void on_game_thread_tick() {
-    if (!resolve()) return;
+    if (InterlockedExchange(&s_pending, 0) == 0) return;
 
-    LONG do_it = InterlockedExchange(&s_do_tick, 0);
-    if (!do_it) return;
-
-    build_ruby_tick();
-    int rc = s_eval(s_ruby);
-
-    int read_type = s_shared[0];
-
-    // Mettre à jour les globales pour l'affichage menu
-    if (g_weather_enabled) {
-        // On affiche le type forcé
-        g_weather_type = (int)InterlockedExchangeAdd(&s_forced_weather, 0);
-    } else {
-        // On affiche le type actuel lu du jeu
-        g_weather_type = read_type;
+    if (!resolve_eval()) {
+        InterlockedExchange(&s_pending, 1);
+        return;
     }
 
-    static int log_count = 0;
-    static int last_type = -999;
-    LONG cur = InterlockedExchangeAdd(&s_forced_weather, 0);
-    if (log_count < 3 || cur != last_type) {
-        char buf[256];
-        wsprintfA(buf, "[weather] tick rc=%d forced=%ld read=%d",
-                  rc, cur, read_type);
-        dbg(buf);
-        last_type = (int)cur;
-        log_count++;
-    }
+    if (InterlockedExchangeAdd(&s_installed, 0) != 0)
+        build_ruby_read();
+    else
+        build_ruby_apply((int)InterlockedExchangeAdd(&s_desired_type, 0));
+
+    s_eval(s_ruby);
+
+    const LONG installed = InterlockedExchangeAdd(&s_shared[1], 0);
+    const LONG desired = InterlockedExchangeAdd(&s_desired_type, 0);
+    const LONG current = InterlockedExchangeAdd(&s_shared[0], 0);
+    InterlockedExchange(&s_installed, installed != 0 ? 1 : 0);
+    // Au menu titre, $game_screen n'existe pas encore : conserver le choix
+    // force dans l'UI jusqu'a la creation du premier Game_Screen.
+    g_weather_type = (int)(desired >= 0 ? desired : current);
 }
 
 static LRESULT CALLBACK cwp_hook(int code, WPARAM wp, LPARAM lp) {
@@ -137,99 +148,71 @@ static LRESULT CALLBACK getmsg_hook(int code, WPARAM wp, LPARAM lp) {
 }
 
 static void install_hooks() {
-    if (!s_game_tid) return;
-    HMODULE hSelf = g_trainer_module;
+    if (!s_game_tid || !g_trainer_module) return;
     if (!s_hook_cwp)
-        s_hook_cwp = SetWindowsHookExA(WH_CALLWNDPROC, cwp_hook, hSelf, s_game_tid);
+        s_hook_cwp = SetWindowsHookExA(
+            WH_CALLWNDPROC, cwp_hook, g_trainer_module, s_game_tid);
     if (!s_hook_getmsg)
-        s_hook_getmsg = SetWindowsHookExA(WH_GETMESSAGE, getmsg_hook, hSelf, s_game_tid);
+        s_hook_getmsg = SetWindowsHookExA(
+            WH_GETMESSAGE, getmsg_hook, g_trainer_module, s_game_tid);
 }
-
-// ── Timer thread ─────────────────────────────────────────────────────────────
-
-static DWORD WINAPI timer_thread(LPVOID) {
-    dbg("[weather] timer started");
-    while (WaitForSingleObject(s_stop, 500) == WAIT_TIMEOUT) {
-        InterlockedExchange(&s_do_tick, 1);
-        post_to_game();
-    }
-    return 0;
-}
-
-static void start_timer() {
-    if (s_timer) return;
-    ResetEvent(s_stop);
-    s_timer = CreateThread(NULL, 0, timer_thread, NULL, 0, NULL);
-}
-
-// ── API publique ──────────────────────────────────────────────────────────────
 
 void opt_weather_init(const char* ini_path) {
-    lstrcpyA(s_ini, ini_path);
-    memset(s_shared, 0, sizeof(s_shared));
-
-    char base[MAX_PATH];
-    lstrcpyA(base, s_ini);
-    char* p = strrchr(base, '\\');
-    if (p) *(p + 1) = '\0';
-    else lstrcpyA(base, ".\\");
-
-    lstrcpyA(s_dbg_path, base);
-    lstrcatA(s_dbg_path, "weather_debug.txt");
-
-    dbg("=== opt_weather_init ===");
+    lstrcpynA(s_ini, ini_path ? ini_path : "", MAX_PATH);
 
     int saved = GetPrivateProfileIntA("Settings", "WeatherType", -1, s_ini);
-    InterlockedExchange(&s_forced_weather, (LONG)saved);
-    g_weather_enabled = (saved >= 0);
+    if (saved < -1) saved = -1;
+    if (saved > 8) saved = 8;
+
+    InterlockedExchange(&s_desired_type, (LONG)saved);
+    InterlockedExchange(&s_pending, 1);
+    InterlockedExchange(&s_installed, 0);
+    InterlockedExchange(&s_last_refresh, 0);
+    InterlockedExchange(&s_shared[0], -1);
+    InterlockedExchange(&s_shared[1], 0);
+
+    g_weather_enabled = saved >= 0;
     g_weather_type = saved;
-
-    char buf[128];
-    wsprintfA(buf, "[weather] saved=%d enabled=%d", saved, g_weather_enabled ? 1 : 0);
-    dbg(buf);
-
-    s_stop = CreateEventA(NULL, TRUE, FALSE, NULL);
-    resolve();
+    resolve_eval();
 }
 
 void opt_weather_set_hwnd_and_start(HWND hwnd) {
     s_game_hwnd = hwnd;
-    if (hwnd) s_game_tid = GetWindowThreadProcessId(hwnd, NULL);
-
+    s_game_tid = hwnd ? GetWindowThreadProcessId(hwnd, NULL) : 0;
     install_hooks();
-    start_timer();
-
-    InterlockedExchange(&s_do_tick, 1);
-    post_to_game();
+    queue_tick();
 }
 
 void opt_weather_apply(int type) {
-    char buf[128];
-    wsprintfA(buf, "[weather] apply(%d)", type);
-    dbg(buf);
+    if (type < 0) type = -1;
+    if (type > 8) type = 8;
 
-    if (type < 0) {
-        g_weather_enabled = false;
-        g_weather_type = -1;
-        InterlockedExchange(&s_forced_weather, -1);
-        WritePrivateProfileStringA("Settings", "WeatherType", "-1", s_ini);
-    } else {
-        if (type > 8) type = 8;
-        g_weather_enabled = true;
-        g_weather_type = type;
-        InterlockedExchange(&s_forced_weather, (LONG)type);
+    g_weather_enabled = type >= 0;
+    g_weather_type = type;
+    InterlockedExchange(&s_desired_type, (LONG)type);
 
-        char vbuf[16];
-        wsprintfA(vbuf, "%d", type);
-        WritePrivateProfileStringA("Settings", "WeatherType", vbuf, s_ini);
-    }
+    char value[16];
+    wsprintfA(value, "%d", type);
+    WritePrivateProfileStringA("Settings", "WeatherType", value, s_ini);
 
-    InterlockedExchange(&s_do_tick, 1);
-    post_to_game();
+    // Le wrapper est deja en place apres le premier tick ; il suffit alors de
+    // mettre a jour ses globals Ruby une fois, au changement de selection.
+    InterlockedExchange(&s_installed, 0);
+    queue_tick();
 }
 
 void opt_weather_refresh_now() {
-    if (InterlockedExchangeAdd(&s_do_tick, 0) != 0) {
+    // Retry rapide tant que Game_Screen n'est pas defini, puis simple lecture
+    // d'etat pour rafraichir le libelle de l'overlay.
+    const DWORD now = GetTickCount();
+    const DWORD interval =
+        InterlockedExchangeAdd(&s_installed, 0) ? 1000u : 250u;
+    LONG previous = InterlockedExchangeAdd(&s_last_refresh, 0);
+
+    if ((DWORD)(now - (DWORD)previous) >= interval &&
+        InterlockedCompareExchange(&s_last_refresh, (LONG)now, previous) == previous) {
+        queue_tick();
+    } else if (InterlockedExchangeAdd(&s_pending, 0) != 0) {
         post_to_game();
     }
 }

@@ -22,6 +22,15 @@
 
 static char g_ini_path[MAX_PATH];
 HMODULE g_trainer_module = NULL;
+static HANDLE g_trainer_singleton = NULL;
+static HANDLE g_trainer_ready = NULL;
+
+static void release_trainer_singleton() {
+    if (g_trainer_singleton) {
+        CloseHandle(g_trainer_singleton);
+        g_trainer_singleton = NULL;
+    }
+}
 
 static BOOL CALLBACK find_game_window_cb(HWND hwnd, LPARAM param) {
     DWORD pid = 0;
@@ -45,7 +54,14 @@ static HWND find_own_game_window() {
 static DWORD WINAPI main_thread(LPVOID) {
     HMODULE hRgss = NULL;
     for (int i=0;i<60&&!hRgss;i++){hRgss=GetModuleHandleA("RGSS102E.dll");if(!hRgss)Sleep(500);}
-    if (!hRgss) return 0;
+    if (!hRgss) { release_trainer_singleton(); return 0; }
+
+    HWND game=NULL;
+    for (int i=0;i<60&&!game;i++){game=find_own_game_window();if(!game)Sleep(500);}
+    if(!game) { release_trainer_singleton(); return 0; }
+
+    HINSTANCE hinst=(HINSTANCE)g_trainer_module;
+    if (!menu_init(hinst,game)) { release_trainer_singleton(); return 0; }
 
     opt_pause_init(g_ini_path);
     opt_hp_init(g_ini_path);
@@ -62,11 +78,6 @@ static DWORD WINAPI main_thread(LPVOID) {
 	opt_heal_init(g_ini_path);
 	//opt_speedhack_init(g_ini_path);
     opt_zoom_init(g_ini_path);
-    
-    HWND game=NULL;
-    for (int i=0;i<60&&!game;i++){game=find_own_game_window();if(!game)Sleep(500);}
-    if(!game) return 0;
-
     opt_hp_set_hwnd_and_start(game);
     opt_pp_set_hwnd_and_start(game);
     //opt_ohk_set_hwnd_and_start(game);
@@ -82,13 +93,13 @@ static DWORD WINAPI main_thread(LPVOID) {
 	//opt_speedhack_set_hwnd_and_start(game);
     opt_zoom_set_hwnd_and_start(game);
 	
-    HINSTANCE hinst=(HINSTANCE)g_trainer_module;
-    menu_init(hinst,game);
     menu_open();
+    if (g_trainer_ready) SetEvent(g_trainer_ready);
     menu_start_loop();
     return 0;
 }
 
+#ifndef TRAINER_EXTERNAL_PAYLOAD
 static FARPROC fp[11];
 static HMODULE hReal;
 static const char* EXPORTS[]={
@@ -109,19 +120,45 @@ __declspec(naked) void __stdcall proxy_vln()    {__asm{jmp fp[8*4]}}
 __declspec(naked) void __stdcall proxy_vqva()   {__asm{jmp fp[9*4]}}
 __declspec(naked) void __stdcall proxy_vqvw()   {__asm{jmp fp[10*4]}}
 }
+#endif
 
 BOOL APIENTRY DllMain(HMODULE hm,DWORD reason,LPVOID){
     if(reason==DLL_PROCESS_ATTACH){
         g_trainer_module=hm;
         DisableThreadLibraryCalls(hm);
+        char mutex_name[96];
+        wsprintfA(mutex_name,"Local\\PolkamonUraniumTrainer_%lu",GetCurrentProcessId());
+        g_trainer_singleton=CreateMutexA(NULL,FALSE,mutex_name);
+        const bool first_trainer_instance =
+            g_trainer_singleton && GetLastError()!=ERROR_ALREADY_EXISTS;
+        if(first_trainer_instance){
+            char ready_name[96];
+            wsprintfA(ready_name,"Local\\PolkamonUraniumTrainerReady_%lu",GetCurrentProcessId());
+            g_trainer_ready=CreateEventA(NULL,TRUE,FALSE,ready_name);
+        } else if(g_trainer_singleton){
+            CloseHandle(g_trainer_singleton);
+            g_trainer_singleton=NULL;
+        }
         char base[MAX_PATH]; GetModuleFileNameA(NULL,base,MAX_PATH);
         char* p=base+lstrlenA(base); while(p>base&&*p!='\\')p--; *(p+1)=0;
         lstrcpyA(g_ini_path,base); lstrcatA(g_ini_path,"trainer.ini");
+#ifndef TRAINER_EXTERNAL_PAYLOAD
         char path[MAX_PATH]; GetSystemDirectoryA(path,MAX_PATH); lstrcatA(path,"\\version.dll");
         hReal=LoadLibraryA(path);
         for(int i=0;i<11;i++) fp[i]=GetProcAddress(hReal,EXPORTS[i]);
-        CloseHandle(CreateThread(NULL,0,main_thread,NULL,0,NULL));
+#endif
+        if(first_trainer_instance){
+            HANDLE thread=CreateThread(NULL,0,main_thread,NULL,0,NULL);
+            if(thread) CloseHandle(thread);
+            else {
+                if(g_trainer_ready){ CloseHandle(g_trainer_ready); g_trainer_ready=NULL; }
+                release_trainer_singleton();
+            }
+        }
     }
-    if(reason==DLL_PROCESS_DETACH&&hReal) FreeLibrary(hReal);
+        if(reason==DLL_PROCESS_DETACH){
+        if(g_trainer_singleton){ CloseHandle(g_trainer_singleton); g_trainer_singleton=NULL; }
+        if(g_trainer_ready){ CloseHandle(g_trainer_ready); g_trainer_ready=NULL; }
+    }
     return TRUE;
 }

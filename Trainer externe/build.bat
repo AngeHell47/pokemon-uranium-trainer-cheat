@@ -16,7 +16,10 @@ if not exist "build\payload_obj" mkdir "build\payload_obj"
 
 set "DLLSRC=..\Launcher DLL"
 
-cl /nologo /O1 /GS- /MT /LD /utf-8 ^
+rc /nologo /fo build\payload_resources.res payload_resources.rc
+if errorlevel 1 exit /b 1
+
+cl /nologo /O1 /GS- /MT /LD /utf-8 /DTRAINER_EXTERNAL_PAYLOAD ^
   "%DLLSRC%\version_proxy.cpp" ^
   "%DLLSRC%\trainer_menu.cpp" ^
   "%DLLSRC%\moves_db.cpp" ^
@@ -33,8 +36,9 @@ cl /nologo /O1 /GS- /MT /LD /utf-8 ^
   "%DLLSRC%\options\opt_time.cpp" ^
   "%DLLSRC%\options\opt_weather.cpp" ^
   "%DLLSRC%\options\opt_heal.cpp" ^
+  build\payload_resources.res ^
   /Fo:build\payload_obj\ /Fe:build\trainer_payload.dll ^
-  /link /DEF:trainer_payload.def /MACHINE:X86 psapi.lib kernel32.lib user32.lib gdi32.lib d3d9.lib
+  /link /MACHINE:X86 psapi.lib kernel32.lib user32.lib gdi32.lib d3d9.lib
 if errorlevel 1 exit /b 1
 
 rc /nologo /fo trainer_external.res trainer_external.rc
