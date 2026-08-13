@@ -22,6 +22,7 @@ cl /nologo /O1 /GS- /MT /LD /utf-8 ^
   "%DLLSRC%\moves_db.cpp" ^
   "%DLLSRC%\options\opt_pause.cpp" ^
   "%DLLSRC%\options\opt_hp.cpp" ^
+  "%DLLSRC%\options\opt_pp.cpp" ^
   "%DLLSRC%\options\opt_money.cpp" ^
   "%DLLSRC%\options\opt_bagitem.cpp" ^
   "%DLLSRC%\options\opt_noclip.cpp" ^

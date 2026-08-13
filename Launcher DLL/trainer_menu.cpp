@@ -1,6 +1,7 @@
 #include "trainer_menu.h"
 #include "options/opt_pause.h"
 #include "options/opt_hp.h"
+#include "options/opt_pp.h"
 //#include "options/opt_ohk.h"
 #include "options/opt_money.h"
 #include "options/opt_bagitem.h"
@@ -60,6 +61,9 @@ MenuItem g_items[] = {
 
     { "Bloquer HP a 999", ITEM_TYPE_TOGGLE,
       &g_hp_lock, opt_hp_toggle, NULL,0,0,NULL },
+
+    { "PP infinis", ITEM_TYPE_TOGGLE,
+      &g_pp_lock, opt_pp_toggle, NULL,0,0,NULL },
 
     //{ "One Hit Kill", ITEM_TYPE_TOGGLE,
     //  &g_ohk_lock, opt_ohk_toggle, NULL,0,0,NULL },
@@ -148,6 +152,8 @@ static HWND  s_game          = NULL;
 static bool  s_open          = false;
 static int   s_hovered       = -1;
 static HHOOK s_kbd_hook      = NULL;
+static HHOOK s_mouse_hook    = NULL;
+static LONG  s_mouse_buttons = 0;
 static bool  s_dragging_menu = false;
 static int   s_drag_ox = 0, s_drag_oy = 0;
 static bool  s_slider_drag   = false;
@@ -157,6 +163,9 @@ static char  s_qty_buf[8]    = "0";
 static int   s_qty_len       = 1;
 static UINT_PTR s_watch_timer = 0;
 static DWORD s_heal_flash_until = 0;  // GetTickCount() until which to show flash
+
+static bool menu_keyboard_should_capture();
+static void cancel_overlay_mouse_interaction();
 
 // ------------------------------------------------------------
 // PARTYMON PANEL STATE
@@ -652,10 +661,33 @@ static void on_money_read(int val) {
 // GAME <-> OVERLAY SYNC
 // ------------------------------------------------------------
 
+static void cancel_overlay_mouse_interaction() {
+    InterlockedExchange(&s_mouse_buttons, 0);
+    s_dragging_menu = false;
+    s_drag_ox = 0;
+    s_drag_oy = 0;
+    s_slider_drag = false;
+    s_slider_idx = -1;
+    s_picker_scroll_drag = false;
+    s_picker_scroll_drag_dy = 0;
+
+    if (s_overlay && GetCapture() == s_overlay)
+        ReleaseCapture();
+}
+
 static void sync_overlay_to_game() {
     if (!s_overlay || !s_game || !s_open) return;
 
+    // Une perte de foreground annule toute interaction native en cours. Le
+    // prochain evenement physique doit rester disponible pour l'autre appli.
+    if (!menu_keyboard_should_capture()) {
+        cancel_overlay_mouse_interaction();
+        ShowWindow(s_overlay, SW_HIDE);
+        return;
+    }
+
     if (IsIconic(s_game) || !IsWindowVisible(s_game)) {
+        cancel_overlay_mouse_interaction();
         ShowWindow(s_overlay, SW_HIDE);
         return;
     }
@@ -1440,6 +1472,16 @@ static bool partymon_on_keydown(WPARAM vk) {
 
 static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
+    case WM_NCHITTEST:
+        // Hors contexte RGSS, l'overlay topmost reste visible mais ne doit
+        // intercepter aucun clic destine a une autre application.
+        return menu_keyboard_should_capture() ? HTCLIENT : HTTRANSPARENT;
+
+    case WM_MOUSEACTIVATE:
+        // Garder RGSS au premier plan (le clavier continue de piloter le jeu),
+        // tout en laissant l'overlay recevoir le message souris courant.
+        return MA_NOACTIVATE;
+
     case WM_PAINT:
         paint(hw);
         return 0;
@@ -1925,6 +1967,135 @@ static LRESULT CALLBACK KbdHook(int code, WPARAM wp, LPARAM lp) {
     return CallNextHookEx(s_kbd_hook, code, wp, lp);
 }
 
+// ------------------------------------------------------------
+// GLOBAL MOUSE HOOK
+// ------------------------------------------------------------
+
+enum CapturedMouseButton {
+    CMB_LEFT   = 1 << 0,
+    CMB_RIGHT  = 1 << 1,
+    CMB_MIDDLE = 1 << 2,
+    CMB_X1     = 1 << 3,
+    CMB_X2     = 1 << 4
+};
+
+static bool overlay_contains_screen_point(const POINT& pt) {
+    if (!s_open || !s_overlay || !IsWindowVisible(s_overlay)) return false;
+    RECT rc = {};
+    return GetWindowRect(s_overlay, &rc) && PtInRect(&rc, pt) != FALSE;
+}
+
+static LPARAM overlay_client_lparam(const POINT& screen_pt) {
+    POINT client_pt = screen_pt;
+    ScreenToClient(s_overlay, &client_pt);
+    return MAKELPARAM((short)client_pt.x, (short)client_pt.y);
+}
+
+static WPARAM captured_mouse_key_state() {
+    WPARAM state = 0;
+    LONG buttons = InterlockedExchangeAdd(&s_mouse_buttons, 0);
+    if (buttons & CMB_LEFT)   state |= MK_LBUTTON;
+    if (buttons & CMB_RIGHT)  state |= MK_RBUTTON;
+    if (buttons & CMB_MIDDLE) state |= MK_MBUTTON;
+    if (buttons & CMB_X1) state |= MK_XBUTTON1;
+    if (buttons & CMB_X2) state |= MK_XBUTTON2;
+    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)  state |= MK_SHIFT;
+    if (GetAsyncKeyState(VK_CONTROL) & 0x8000) state |= MK_CONTROL;
+    return state;
+}
+
+static void post_overlay_mouse(UINT message, const MSLLHOOKSTRUCT* mouse, WPARAM state) {
+    if (!s_overlay || !IsWindow(s_overlay)) return;
+    PostMessageA(s_overlay, message, state, overlay_client_lparam(mouse->pt));
+}
+
+static LRESULT CALLBACK MouseHook(int code, WPARAM wp, LPARAM lp) {
+    if (code == HC_ACTION && s_overlay) {
+        // Le hook est global au bureau. Ne jamais avaler un evenement lorsque
+        // RGSS (ou l'overlay lui-meme) n'est plus la fenetre de premier plan.
+        if (!menu_keyboard_should_capture()) {
+            cancel_overlay_mouse_interaction();
+            // Retirer immediatement la fenetre topmost avant de rendre
+            // l'evenement au systeme garantit que l'application foreground
+            // recevra aussi ce tout premier clic.
+            if (IsWindowVisible(s_overlay))
+                ShowWindow(s_overlay, SW_HIDE);
+            return CallNextHookEx(s_mouse_hook, code, wp, lp);
+        }
+
+        const MSLLHOOKSTRUCT* mouse = (const MSLLHOOKSTRUCT*)lp;
+        const bool over_overlay = overlay_contains_screen_point(mouse->pt);
+        LONG bit = 0;
+        UINT overlay_down = 0;
+        UINT overlay_up = 0;
+
+        switch ((UINT)wp) {
+        case WM_LBUTTONDOWN:
+        case WM_LBUTTONUP:
+            bit = CMB_LEFT;
+            overlay_down = WM_LBUTTONDOWN;
+            overlay_up = WM_LBUTTONUP;
+            break;
+        case WM_RBUTTONDOWN:
+        case WM_RBUTTONUP:
+            bit = CMB_RIGHT;
+            break;
+        case WM_MBUTTONDOWN:
+        case WM_MBUTTONUP:
+            bit = CMB_MIDDLE;
+            break;
+        case WM_XBUTTONDOWN:
+        case WM_XBUTTONUP:
+            bit = (HIWORD(mouse->mouseData) == XBUTTON2) ? CMB_X2 : CMB_X1;
+            break;
+        default:
+            break;
+        }
+
+        const bool is_down = (wp == WM_LBUTTONDOWN || wp == WM_RBUTTONDOWN ||
+                              wp == WM_MBUTTONDOWN || wp == WM_XBUTTONDOWN);
+        const bool is_up = (wp == WM_LBUTTONUP || wp == WM_RBUTTONUP ||
+                            wp == WM_MBUTTONUP || wp == WM_XBUTTONUP);
+
+        // Une fois un bouton capture par l'overlay, les boutons additionnels
+        // appartiennent a la meme interaction, meme si un glisser a deja
+        // amene le pointeur hors du rectangle.
+        if (bit && is_down &&
+            (over_overlay || InterlockedExchangeAdd(&s_mouse_buttons, 0) != 0)) {
+            InterlockedOr(&s_mouse_buttons, bit);
+            if (overlay_down)
+                post_overlay_mouse(overlay_down, mouse, captured_mouse_key_state());
+            return 1;
+        }
+
+        if (bit && is_up && (InterlockedExchangeAdd(&s_mouse_buttons, 0) & bit)) {
+            if (overlay_up)
+                post_overlay_mouse(overlay_up, mouse, captured_mouse_key_state() & ~MK_LBUTTON);
+            InterlockedAnd(&s_mouse_buttons, ~bit);
+            return 1;
+        }
+
+        if (wp == WM_MOUSEMOVE && InterlockedExchangeAdd(&s_mouse_buttons, 0) != 0) {
+            post_overlay_mouse(WM_MOUSEMOVE, mouse, captured_mouse_key_state());
+            return 1;
+        }
+
+        if (wp == WM_MOUSEWHEEL && over_overlay) {
+            WPARAM wheel = MAKEWPARAM(captured_mouse_key_state(), HIWORD(mouse->mouseData));
+            // WM_MOUSEWHEEL utilise des coordonnees ecran dans lParam.
+            PostMessageA(s_overlay, WM_MOUSEWHEEL, wheel,
+                         MAKELPARAM((short)mouse->pt.x, (short)mouse->pt.y));
+            return 1;
+        }
+
+        if (wp == WM_MOUSEHWHEEL && over_overlay) {
+            return 1;
+        }
+    }
+
+    return CallNextHookEx(s_mouse_hook, code, wp, lp);
+}
+
 
 // ------------------------------------------------------------
 // PUBLIC API
@@ -1957,6 +2128,7 @@ void menu_open() {
 }
 
 void menu_close() {
+    cancel_overlay_mouse_interaction();
     s_qty_editing = false;
 	picker_close();
     pm_reset_edit_state();
@@ -1987,7 +2159,8 @@ void menu_init(HINSTANCE hinst, HWND game_hwnd) {
     );
 
     s_watch_timer = SetTimer(s_overlay, 1, 200, NULL);
-    s_kbd_hook = SetWindowsHookExA(WH_KEYBOARD_LL, KbdHook, NULL, 0);
+    s_kbd_hook = SetWindowsHookExA(WH_KEYBOARD_LL, KbdHook, hinst, 0);
+    s_mouse_hook = SetWindowsHookExA(WH_MOUSE_LL, MouseHook, hinst, 0);
 }
 
 void menu_start_loop() {
@@ -1997,9 +2170,15 @@ void menu_start_loop() {
         DispatchMessageA(&msg);
     }
 
+    cancel_overlay_mouse_interaction();
+
     if (s_kbd_hook) {
         UnhookWindowsHookEx(s_kbd_hook);
         s_kbd_hook = NULL;
+    }
+    if (s_mouse_hook) {
+        UnhookWindowsHookEx(s_mouse_hook);
+        s_mouse_hook = NULL;
     }
     if (s_watch_timer) {
         KillTimer(s_overlay, 1);
