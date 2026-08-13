@@ -1,0 +1,48 @@
+@echo off
+setlocal
+cd /d "%~dp0"
+
+set "VCVARS=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars32.bat"
+if not exist "%VCVARS%" (
+    echo Visual Studio 2022 avec les outils C++ x86 est requis.
+    exit /b 1
+)
+
+call "%VCVARS%" >nul
+if errorlevel 1 exit /b 1
+
+if not exist "build" mkdir "build"
+if not exist "build\payload_obj" mkdir "build\payload_obj"
+
+set "DLLSRC=..\Launcher DLL"
+
+cl /nologo /O1 /GS- /MT /LD /utf-8 ^
+  "%DLLSRC%\version_proxy.cpp" ^
+  "%DLLSRC%\trainer_menu.cpp" ^
+  "%DLLSRC%\moves_db.cpp" ^
+  "%DLLSRC%\options\opt_pause.cpp" ^
+  "%DLLSRC%\options\opt_hp.cpp" ^
+  "%DLLSRC%\options\opt_money.cpp" ^
+  "%DLLSRC%\options\opt_bagitem.cpp" ^
+  "%DLLSRC%\options\opt_noclip.cpp" ^
+  "%DLLSRC%\options\opt_speed.cpp" ^
+  "%DLLSRC%\options\opt_zoom.cpp" ^
+  "%DLLSRC%\options\opt_noenc.cpp" ^
+  "%DLLSRC%\options\opt_partymon.cpp" ^
+  "%DLLSRC%\options\opt_time.cpp" ^
+  "%DLLSRC%\options\opt_weather.cpp" ^
+  "%DLLSRC%\options\opt_heal.cpp" ^
+  /Fo:build\payload_obj\ /Fe:build\trainer_payload.dll ^
+  /link /DEF:trainer_payload.def /MACHINE:X86 psapi.lib kernel32.lib user32.lib gdi32.lib d3d9.lib
+if errorlevel 1 exit /b 1
+
+rc /nologo /fo trainer_external.res trainer_external.rc
+if errorlevel 1 exit /b 1
+
+cl /nologo /O2 /GS /MT /EHsc /std:c++17 /utf-8 trainer_external.cpp trainer_external.res ^
+  /Fe:UraniumTrainer.exe /link /SUBSYSTEM:WINDOWS /MACHINE:X86 user32.lib gdi32.lib comctl32.lib
+if errorlevel 1 exit /b 1
+
+echo.
+echo Build termine : %CD%\UraniumTrainer.exe
+endlocal

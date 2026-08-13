@@ -1,0 +1,4 @@
+#include "resource.h"
+
+IDR_TRAINER_PAYLOAD RCDATA "build\\trainer_payload.dll"
+1 RT_MANIFEST "trainer_external.manifest"

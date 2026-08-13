@@ -1,0 +1,13 @@
+LIBRARY trainer_payload
+EXPORTS
+    GetFileVersionInfoA      = proxy_gfvia
+    GetFileVersionInfoSizeA  = proxy_gfvisa
+    GetFileVersionInfoSizeW  = proxy_gfvisw
+    GetFileVersionInfoW      = proxy_gfviw
+    VerFindFileA             = proxy_vffa
+    VerFindFileW             = proxy_vffw
+    VerInstallFileA          = proxy_vifa
+    VerInstallFileW          = proxy_vifw
+    VerLanguageName          = proxy_vln
+    VerQueryValueA           = proxy_vqva
+    VerQueryValueW           = proxy_vqvw

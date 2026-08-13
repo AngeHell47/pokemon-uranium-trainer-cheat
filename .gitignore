@@ -1,0 +1,33 @@
+# Build products
+*.obj
+*.o
+*.exp
+*.lib
+*.pdb
+*.ilk
+*.res
+*.dll
+*.exe
+*.zip
+
+# Generated build directories
+Trainer externe/build/
+Trainer externe/trainer_external.res
+
+# Vendored/legacy material not used by the external trainer build
+Launcher DLL/imgui/
+Launcher DLL - Chat/
+Launcher exe/
+
+# Runtime state
+trainer.ini
+*.log
+*_debug.txt
+
+# IDE / OS
+.vs/
+.vscode/
+*.user
+*.suo
+Thumbs.db
+Desktop.ini
