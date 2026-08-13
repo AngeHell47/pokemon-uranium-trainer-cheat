@@ -30,6 +30,21 @@ build.bat
 
 Le binaire généré se trouve dans `Trainer externe/UraniumTrainer.exe`.
 
+L'EXE contient également la base des attaques nécessaire au panneau Pokémon ;
+aucun fichier `moves.txt` ni DLL auxiliaire n'est requis à l'utilisation.
+
+## Fonctions actuelles
+
+- HP à 999 et PP infinis pour les Pokémon du joueur.
+- Météo et heure forcées, réversibles sans modifier leur état sauvegardé.
+- Noclip, blocage des rencontres, soin de l'équipe et vitesses de déplacement.
+- Argent, quantité de l'objet sélectionné et édition du premier Pokémon.
+- Dézoom logique de la carte en conservant la taille physique de la fenêtre.
+
+Les clics reçus par l'overlay sont bloqués avant d'atteindre le jeu. Les limites
+de validation et les essais restant à effectuer en situation réelle sont
+détaillés dans [l'audit de stabilité](docs/STABILITY_AUDIT.md).
+
 ## Organisation
 
 - `Trainer externe/` : sélecteur de processus, injection et empaquetage.
