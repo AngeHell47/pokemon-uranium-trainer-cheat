@@ -166,6 +166,24 @@ static void draw_text(HDC dc, const RECT& rect, const char* text,
     DrawTextA(dc, text ? text : "", -1, &copy, flags);
 }
 
+static void draw_edit_caret(HDC dc, const RECT& text_rect,
+                            const char* text, bool centered) {
+    // Ces champs sont dessines a la main et ne disposent donc pas du caret
+    // Win32 d'un controle EDIT. On en dessine un a la fin de la saisie.
+    if ((GetTickCount() / 500) % 2 != 0) return;
+    SIZE extent = {};
+    const char* value = text ? text : "";
+    GetTextExtentPoint32A(dc, value, lstrlenA(value), &extent);
+    int x = centered
+        ? text_rect.left + ((text_rect.right - text_rect.left - extent.cx) / 2) +
+              extent.cx
+        : text_rect.left + extent.cx;
+    if (x < text_rect.left) x = text_rect.left;
+    if (x > text_rect.right - 2) x = text_rect.right - 2;
+    RECT caret = {x, text_rect.top + 4, x + 2, text_rect.bottom - 4};
+    fill_rect(dc, caret, RGB(235, 235, 255));
+}
+
 static void draw_button(HDC dc, const RECT& rect, const char* text,
                         COLORREF color) {
     fill_rect(dc, rect, color);
@@ -551,6 +569,7 @@ static void draw_labeled_field(HDC dc, int x, int y, int width,
                       value_rect.right - 4, value_rect.bottom};
     draw_text(dc, text_rect, shown, editable ? COLOR_TEXT : COLOR_DIM,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (editable && active) draw_edit_caret(dc, text_rect, shown, false);
     if (editable) add_pokemon_hit(value_rect, field, sub_index, text, initial);
 }
 
@@ -820,6 +839,8 @@ static void draw_pokemon_add(HDC dc) {
     draw_text(dc, search_text,
               s_edit.kind == EDIT_SPECIES_SEARCH ? s_edit.buffer : s_species_search,
               COLOR_TEXT, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (s_edit.kind == EDIT_SPECIES_SEARCH)
+        draw_edit_caret(dc, search_text, s_edit.buffer, false);
 
     s_species_list_rect = {326, 136, 820, 576};
     fill_rect(dc, s_species_list_rect, COLOR_PANEL);
@@ -861,6 +882,8 @@ static void draw_pokemon_add(HDC dc) {
     draw_text(dc, s_create_level_rect,
               s_edit.kind == EDIT_CREATE_LEVEL ? s_edit.buffer : level,
               COLOR_TEXT, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    if (s_edit.kind == EDIT_CREATE_LEVEL)
+        draw_edit_caret(dc, s_create_level_rect, s_edit.buffer, true);
 
     RECT selection = {836, 177, 1038, 250};
     fill_rect(dc, selection, COLOR_PANEL_ALT);
@@ -1089,6 +1112,8 @@ static void paint_inventory(HWND window) {
               "Cliquer puis saisir un nom ou un ID...", shown_search[0] ?
               COLOR_TEXT : COLOR_DIM,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (s_edit.kind == EDIT_ITEM_SEARCH)
+        draw_edit_caret(dc, search_text, s_edit.buffer, false);
 
     draw_inventory_lists(dc);
 
@@ -1117,6 +1142,8 @@ static void paint_inventory(HWND window) {
     draw_text(dc, s_inventory_quantity_rect,
               s_edit.kind == EDIT_INVENTORY_QUANTITY ? s_edit.buffer : quantity,
               COLOR_TEXT, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    if (s_edit.kind == EDIT_INVENTORY_QUANTITY)
+        draw_edit_caret(dc, s_inventory_quantity_rect, s_edit.buffer, true);
 
     s_inventory_set_rect = {176, 590, 326, 622};
     s_inventory_give_rect = {336, 590, 486, 622};
@@ -1405,6 +1432,33 @@ static void move_dragged_window(HWND window, int x, int y) {
                  SWP_NOACTIVATE | SWP_NOSIZE);
 }
 
+static bool pokemon_point_is_editable(int x, int y) {
+    if (s_pokemon_add_mode) {
+        return point_in(s_species_search_rect, x, y) ||
+               point_in(s_create_level_rect, x, y);
+    }
+    for (int i = 0; i < s_pokemon_hit_count; ++i) {
+        if (point_in(s_pokemon_hits[i].rect, x, y)) return true;
+    }
+    return false;
+}
+
+static bool inventory_point_is_editable(int x, int y) {
+    return point_in(s_inventory_search_rect, x, y) ||
+           point_in(s_inventory_quantity_rect, x, y);
+}
+
+static LRESULT set_editor_cursor(HWND window, bool pokemon_window) {
+    POINT point = {};
+    GetCursorPos(&point);
+    ScreenToClient(window, &point);
+    const bool editable = pokemon_window
+        ? pokemon_point_is_editable(point.x, point.y)
+        : inventory_point_is_editable(point.x, point.y);
+    SetCursor(LoadCursor(NULL, editable ? IDC_IBEAM : IDC_ARROW));
+    return TRUE;
+}
+
 static LRESULT CALLBACK PokemonWindowProc(HWND window, UINT message,
                                           WPARAM wparam, LPARAM lparam) {
     switch (message) {
@@ -1412,6 +1466,8 @@ static LRESULT CALLBACK PokemonWindowProc(HWND window, UINT message,
         return same_process_foreground() ? HTCLIENT : HTTRANSPARENT;
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
+    case WM_SETCURSOR:
+        return set_editor_cursor(window, true);
     case WM_ERASEBKGND:
         return 1;
     case WM_PAINT:
@@ -1468,6 +1524,8 @@ static LRESULT CALLBACK InventoryWindowProc(HWND window, UINT message,
         return same_process_foreground() ? HTCLIENT : HTTRANSPARENT;
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
+    case WM_SETCURSOR:
+        return set_editor_cursor(window, false);
     case WM_ERASEBKGND:
         return 1;
     case WM_PAINT:
