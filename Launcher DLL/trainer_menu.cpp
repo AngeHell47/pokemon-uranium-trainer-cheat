@@ -611,14 +611,6 @@ static void cancel_overlay_mouse_interaction() {
 static void sync_overlay_to_game() {
     if (!s_overlay || !s_game || !s_open) return;
 
-    // Une perte de foreground annule toute interaction native en cours. Le
-    // prochain evenement physique doit rester disponible pour l'autre appli.
-    if (!menu_keyboard_should_capture()) {
-        cancel_overlay_mouse_interaction();
-        ShowWindow(s_overlay, SW_HIDE);
-        return;
-    }
-
     if (IsIconic(s_game) || !IsWindowVisible(s_game)) {
         cancel_overlay_mouse_interaction();
         ShowWindow(s_overlay, SW_HIDE);
@@ -633,6 +625,17 @@ static void sync_overlay_to_game() {
             trainer_editors_contains_screen_point(cursor);
         InterlockedExchange(&s_block_game_mouse,
                             cursor_over_editor ? 1 : 0);
+        return;
+    }
+
+    // Garder l'overlay visible lorsque RGSS perd le premier plan. Il reste
+    // click-through via WM_NCHITTEST et ne capture ni souris ni clavier tant
+    // que le jeu n'est pas redevenu l'application active.
+    if (!menu_keyboard_should_capture()) {
+        cancel_overlay_mouse_interaction();
+        ShowWindow(s_overlay, SW_SHOWNOACTIVATE);
+        SetWindowPos(s_overlay, HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
         return;
     }
 
@@ -1897,11 +1900,8 @@ static LRESULT CALLBACK MouseHook(int code, WPARAM wp, LPARAM lp) {
         // RGSS (ou l'overlay lui-meme) n'est plus la fenetre de premier plan.
         if (!menu_keyboard_should_capture()) {
             cancel_overlay_mouse_interaction();
-            // Retirer immediatement la fenetre topmost avant de rendre
-            // l'evenement au systeme garantit que l'application foreground
-            // recevra aussi ce tout premier clic.
-            if (IsWindowVisible(s_overlay))
-                ShowWindow(s_overlay, SW_HIDE);
+            // L'overlay reste affiche mais WM_NCHITTEST le rend transparent :
+            // le clic est transmis intact a l'application au premier plan.
             return CallNextHookEx(s_mouse_hook, code, wp, lp);
         }
 

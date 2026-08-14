@@ -230,11 +230,12 @@ static bool same_process_foreground() {
 
 static void sync_window(HWND window, bool open) {
     if (!window) return;
-    if (!open || !same_process_foreground() || !IsWindowVisible(s_game) ||
-        IsIconic(s_game)) {
+    if (!open || !IsWindowVisible(s_game) || IsIconic(s_game)) {
         ShowWindow(window, SW_HIDE);
         return;
     }
+    // Les editeurs restent visibles en arriere-plan. Leur WM_NCHITTEST les
+    // rend transparents tant qu'une autre application a le premier plan.
     ShowWindow(window, SW_SHOWNOACTIVATE);
     SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0,
                  SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
