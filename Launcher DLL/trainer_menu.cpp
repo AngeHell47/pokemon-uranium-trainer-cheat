@@ -806,23 +806,11 @@ static void sync_overlay_to_game() {
     InterlockedExchange(&s_block_game_keyboard,
                         menu_has_keyboard_editor() ? 2 : 1);
 
-    RECT gr;
-    GetWindowRect(s_game, &gr);
-
-    RECT or_;
-    GetWindowRect(s_overlay, &or_);
-
-    int ox = or_.left;
-    int oy = or_.top;
-    int mh = menu_height();
-
-    if (ox < gr.left) ox = gr.left;
-    if (oy < gr.top) oy = gr.top;
-    if (ox > gr.right - MENU_TOTAL_W) ox = gr.right - MENU_TOTAL_W;
-    if (oy > gr.bottom - mh) oy = gr.bottom - mh;
-
-    SetWindowPos(s_overlay, HWND_TOPMOST, ox, oy, MENU_TOTAL_W, mh,
-                 SWP_NOACTIVATE | SWP_NOSIZE);
+    // L'overlay est une fenetre top-level independante : ne pas le ramener
+    // dans le rectangle du jeu. Il peut ainsi rester sur le bureau ou sur un
+    // autre ecran tout en conservant son comportement topmost/no-activate.
+    SetWindowPos(s_overlay, HWND_TOPMOST, 0, 0, 0, 0,
+                 SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
 
     POINT cursor = {};
     const LONG captured = InterlockedExchangeAdd(&s_mouse_buttons, 0);
@@ -1834,18 +1822,11 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
         }
 		
         if (s_dragging_menu) {
-            RECT wr, gr;
+            RECT wr;
             GetWindowRect(hw, &wr);
-            GetWindowRect(s_game, &gr);
     
             int nx = wr.left + x - s_drag_ox;
             int ny = wr.top  + y - s_drag_oy;
-            int mh = menu_height();
-    
-            if (nx < gr.left) nx = gr.left;
-            if (ny < gr.top)  ny = gr.top;
-            if (nx > gr.right - MENU_TOTAL_W) nx = gr.right - MENU_TOTAL_W;
-            if (ny > gr.bottom - mh)          ny = gr.bottom - mh;
     
             SetWindowPos(hw, HWND_TOPMOST, nx, ny, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
         }
