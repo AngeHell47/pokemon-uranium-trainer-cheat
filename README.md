@@ -24,25 +24,13 @@ change pas le comportement d'un démarrage normal de `Uranium.exe`.
 Le jeu et le trainer doivent fonctionner au même niveau de privilèges. Si le
 jeu est administrateur, le trainer doit l'être également.
 
-### Préparation du God mode total
+### Portabilité et modifications du jeu
 
-Le verrouillage complet des PV est installé dans le `Scripts.rxdata` déchiffré
-du jeu afin d'intercepter aussi le poison, la confusion, le recul et les mises à
-zéro forcées. Le dépôt ne distribue aucune donnée du jeu. À partir d'une copie
-extraite correspondant à Uranium 1.2/1.3 :
-
-```bat
-py -3 -m pip install -r tools\requirements-godmode.txt
-py -3 tools\patch_godmode_scripts.py ^
-  "C:\chemin\extrait\Data\Scripts.rxdata" ^
-  "C:\chemin\Uranium\Data\Scripts.rxdata"
-```
-
-Place ensuite tout le dossier `Data` extrait à côté de `Uranium.exe` et
-conserve l'archive `Uranium.rgssad` sous un autre nom, par exemple
-`Uranium.rgssad.original`, pour que RGSS charge ces données. L'archive reste
-ainsi restaurable. Le chemin de `trainer.ini` est déduit automatiquement de la
-destination ; `--trainer-ini` permet de le préciser si nécessaire.
+Le trainer n'altère ni `Data/Scripts.rxdata`, ni l'archive du jeu. Les gardes
+Ruby du God mode, des PP infinis et des CS effaçables sont installés uniquement
+en mémoire à chaque injection, puis disparaissent avec le processus du jeu.
+Python n'est requis ni pour utiliser le trainer, ni pour préparer une nouvelle
+installation : `UraniumTrainer.exe` contient déjà tout le payload nécessaire.
 
 ## Compilation
 

@@ -19,9 +19,9 @@ imbriqués à `Graphics.update` sans réentrer dans les callbacks du trainer.
 - Éclosion : le gestionnaire `Events.onStepTaken` décrémente `eggsteps`, puis
   appelle `pbHatch`. Un getter virtuel à 1 conserve l'animation et ne modifie
   pas le compteur réel si l'option est désactivée avant le prochain pas.
-- CS effaçables : `pbIsHiddenMove?` n'est appelé qu'une fois dans les scripts
-  du jeu, par `PokemonSummary#pbStartForgetScreen`. Le rendre faux sur demande
-  n'affecte donc pas l'utilisation des CS sur la carte ni les objets HM.
+- CS effaçables : `PokemonSummary#pbStartForgetScreen` contient l'unique refus
+  d'oublier une CS dans les scripts du jeu. Le wrapper saute ce refus sur
+  demande sans affecter l'utilisation des CS sur la carte ni les objets HM.
 
 ## Éditeurs persistants
 
@@ -114,22 +114,20 @@ est plus prévisible. L'action devra être refusée hors `Scene_Map`, pendant un
 
 ## Combat et vitesse
 
-Le God mode confirmé ne falsifie pas `isFainted?` et ne restaure pas les PV à
-chaque image. Le générateur `tools/patch_godmode_scripts.py` modifie les trois
-points centraux du `Scripts.rxdata` déchiffré :
+Le God mode ne falsifie pas `isFainted?` et ne restaure pas les PV à chaque
+image. Le payload réinstalle dynamiquement trois petites méthodes natives avec
+un garde optionnel, sans modifier `Scripts.rxdata` :
 
-- `PokeBattle_Move#pbReduceHPDamage` annule les dégâts d'attaque avant toute
-  animation ou écriture de PV ;
 - `PokeBattle_Battler#pbReduceHP` et son writer `hp=` bloquent les dégâts
   résiduels, le recul et les sacrifices forcés pour les battlers du joueur ;
 - `PokeBattle_Pokemon#hp=` protège l'objet de l'équipe lui-même, notamment
   contre le poison hors combat et les écritures directes.
 
-Les trois protections consultent `$__uranium_trainer_hp_lock` et prouvent la
+Les protections consultent `$__uranium_trainer_hp_lock` et prouvent la
 propriété via `pbOwnedByPlayer?` ou l'identité dans `$Trainer.party`. Le payload
-natif ne fait que synchroniser cette globale avec le bouton et `trainer.ini`.
-Cette séparation évite les remplacements tardifs de méthodes Ruby et, surtout,
-ne maintient jamais artificiellement un Pokémon KO dans le combat.
+natif synchronise cette globale avec le bouton et `trainer.ini`. Les wrappers
+sont recréés à chaque injection et disparaissent à la fermeture du jeu ; ils ne
+maintiennent jamais artificiellement un Pokémon KO dans le combat.
 
 Le prototype historique `opt_ohk.cpp` et l'ancien `opt_speedhack.cpp` restent
 exclus du payload. Ils ne doivent pas être réactivés tels quels : le premier

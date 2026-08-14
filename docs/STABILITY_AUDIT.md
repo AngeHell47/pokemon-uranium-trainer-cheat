@@ -10,11 +10,11 @@ seule le comportement d'un combat complet.
 | Injection externe | Payload intégré, PID x86, mutex par processus, événement Ready + overlay exigés | Même niveau de privilèges requis | Refaire le smoke test après une évolution du bootstrap |
 | Entrées overlay | Hooks limités au jeu au premier plan ; messages consommés/reroutés ; état physique masqué dans `Input.getstate` | Tester les boutons latéraux selon la souris | Glisser hors fenêtre, molette et boutons X1/X2 sur une session réelle |
 | Pause inactive | Sauvegarde et restaure les octets d'origine ; vérifie `VirtualProtect` et vide le cache d'instructions | Signature propre à RGSS102E de cette version | Basculer ON/OFF puis changer plusieurs fois de fenêtre |
-| God mode | HP/HP max réels ; `pbReduceHP` et les baisses directes sont annulés uniquement pour les battlers du joueur | Les effets secondaires d'une attaque peuvent toujours se déclencher | Combat simple/double, dégâts directs, poison, recul, drain, OFF en combat |
+| God mode | Gardes mémoire de `PokeBattle_Battler#hp=`, `pbReduceHP` et `PokeBattle_Pokemon#hp=`, uniquement pour les Pokémon du joueur ; aucun fichier modifié | Les effets secondaires d'une attaque peuvent toujours se déclencher | Combat simple/double, dégâts directs, poison, recul, drain, OFF en combat |
 | PP infinis | Wrapper de `pbSetPP`, joueur uniquement ; couvre usage, Pressure, Grudge et Spite | L'activation remplit les PP réels, donc ce remplissage peut être sauvegardé | Attaque normale, Pressure/Spite, adversaire intact, OFF puis décrément |
 | Capture garantie | Étend `BallHandlers.isUnconditional?` sans remplacer `pbThrowPokeBall` ; les refus du jeu sont évalués avant | Ne permet pas les espèces à rareté nulle ni les Pokémon de Dresseur, comme une Master Ball normale | Plusieurs Balls, Safari, rareté faible, OFF puis échec possible |
 | Éclosion instantanée | Le getter `eggsteps` expose virtuellement 1 au gestionnaire de pas natif ; `pbHatch` et son animation restent inchangés | Le pas qui déclenche l'éclosion est une modification volontaire et sauvegardable | Œuf existant/nouveau, équipe pleine, OFF avant le premier pas, plusieurs œufs |
-| CS effaçables | `pbIsHiddenMove?` délègue à l'original sur OFF et ne renvoie `false` que sur ON ; c'est son unique appel dans les scripts du jeu | L'attaque remplacée est une modification volontaire et sauvegardable | Apprentissage par niveau/CT, CS avec ON, même CS refusée après OFF |
+| CS effaçables | Wrappers mémoire de `pbIsHiddenMove?` et `PokemonSummary#pbStartForgetScreen` ; délégation intégrale sur OFF, aucun fichier modifié | L'attaque remplacée est une modification volontaire et sauvegardable | Apprentissage par niveau/CT, CS avec ON, même CS refusée après OFF |
 | Météo | Getters virtuels ; la météo naturelle continue en arrière-plan et réapparaît sur OFF | Les constantes historiques sont incohérentes, le menu suit le renderer réel | Chaque type 0–8 sur une carte, combat et OFF |
 | Heure | Wrapper unique de `pbGetTimeNow`, délégation native sur OFF ; caches jour/nuit invalidés uniquement au changement | Les événements dépendants de l'heure doivent être testés individuellement | 00 h, midi, 23 h 59, OFF, changement de carte |
 | Argent | Setter natif, limite `999999`, lecture séparée des écritures | Modification volontairement sauvegardable | Valeurs 0/max, achats et sauvegarde |
@@ -43,6 +43,9 @@ seule le comportement d'un combat complet.
   payload et base des attaques correctement embarqués dans l'EXE.
 - Injection du binaire final : événement Ready signalé, fenêtre
   `TrainerOverlay` présente, jeu réactif et exactement un payload chargé.
+- Sur un `Scripts.rxdata` original, acquittement mémoire confirmé pour les
+  hooks God mode, PP infinis, éclosion et CS effaçables ; empreinte SHA-256 du
+  fichier strictement inchangée avant et après l'injection.
   Une seconde connexion a conservé ce nombre à un.
 - Test dynamique des entrées : bouton gauche maintenu hors overlay lu à `1`
   par RGSS ; le même bouton sur l'overlay lu à `0` ; flèche Haut capturée par le

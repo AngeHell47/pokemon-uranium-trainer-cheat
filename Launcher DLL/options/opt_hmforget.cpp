@@ -16,9 +16,9 @@ static void post_to_game() {
     rgss_safe_dispatch_notify();
 }
 
-// Uranium ne consulte pbIsHiddenMove? que dans PokemonSummary, au moment de
-// refuser la selection d'une CS comme attaque a oublier. Le wrapper ne change
-// donc ni l'utilisation des CS sur la carte, ni le statut des objets HM.
+// Reinstalle en memoire le petit corps natif de pbIsHiddenMove? avec un garde
+// optionnel. Ce point unique est appele par l'ecran de remplacement et ne
+// change ni les objets HM ni l'utilisation des CS sur la carte.
 static void build_ruby() {
     const char* enabled =
         InterlockedExchangeAdd(&s_enabled, 0) ? "true" : "false";
@@ -27,20 +27,20 @@ static void build_ruby() {
         "installed=0\n"
         "begin\n"
         "  $__uranium_trainer_hm_forget=%s\n"
-        "  has_method=Object.private_method_defined?(:pbIsHiddenMove?) || Object.method_defined?(:pbIsHiddenMove?)\n"
-        "  if has_method\n"
-        "    class Object\n"
-        "      unless private_method_defined?(:__uranium_trainer_original_pbIsHiddenMove) || method_defined?(:__uranium_trainer_original_pbIsHiddenMove)\n"
-        "        alias_method :__uranium_trainer_original_pbIsHiddenMove, :pbIsHiddenMove?\n"
-        "        def pbIsHiddenMove?(move)\n"
-        "          return false if $__uranium_trainer_hm_forget\n"
-        "          __uranium_trainer_original_pbIsHiddenMove(move)\n"
-        "        end\n"
-        "        private :pbIsHiddenMove?\n"
+        "  class Object\n"
+        "    def pbIsHiddenMove?(move)\n"
+        "      return false if $__uranium_trainer_hm_forget\n"
+        "      return false if !$ItemData\n"
+        "      for i in 0...$ItemData.length\n"
+        "        next if !pbIsHiddenMachine?(i)\n"
+        "        atk=$ItemData[i][ITEMMACHINE]\n"
+        "        return true if move==atk\n"
         "      end\n"
+        "      return false\n"
         "    end\n"
-        "    installed=1\n"
+        "    private :pbIsHiddenMove?\n"
         "  end\n"
+        "  installed=1\n"
         "rescue Exception\n"
         "end\n"
         "begin\n"
