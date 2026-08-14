@@ -94,6 +94,9 @@ très chargées en autotiles animés restent à qualifier plus longuement.
 - Migration de toutes les options du build vers un répartiteur
   `Graphics.update` unique ; `opt_ohk.cpp`, encore historique, reste exclu du
   payload.
+- Mise en veille complète des gestionnaires Inventaire et Pokémon lorsque leurs
+  fenêtres sont fermées. Leurs gros instantanés Ruby ne sont plus reconstruits
+  toutes les 650–900 ms pendant une session de jeu normale.
 - Remplacement de la lecture no-clip via `Input.getstate` par
   `GetAsyncKeyState`, avec bouton de raccourci configurable et persistance dans
   `trainer.ini`.

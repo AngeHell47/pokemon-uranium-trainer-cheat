@@ -53,6 +53,9 @@ ne doit rester à côté de `Uranium.exe`.
   immuables et des files FIFO ciblées par ID d'objet ou emplacement
   équipe/boîte. Un rafraîchissement ou un second clic ne peut donc pas mélanger
   la cible et la valeur d'une commande précédente.
+- Les instantanés périodiques du sac et des Pokémon ne sont produits que tant
+  que l'éditeur correspondant est ouvert. Fermer l'éditeur arrête son timer :
+  aucune évaluation Ruby volumineuse ne continue pendant le jeu normal.
 - Les suppressions demandent un second clic de confirmation et le dernier
   Pokémon de l'équipe ne peut pas être supprimé.
 - Les ressources nécessaires au trainer, dont la base des attaques, sont

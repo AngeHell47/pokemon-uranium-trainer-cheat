@@ -123,6 +123,7 @@ enum {
 
 bool opt_pokemon_manager_init(const char* ini_path);
 void opt_pokemon_manager_start();
+void opt_pokemon_manager_stop();
 void opt_pokemon_manager_shutdown();
 
 void opt_pokemon_manager_refresh();

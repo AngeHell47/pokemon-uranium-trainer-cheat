@@ -793,13 +793,17 @@ void opt_pokemon_manager_start() {
     s_timer = CreateThread(NULL, 0, timer_thread, NULL, 0, NULL);
 }
 
-void opt_pokemon_manager_shutdown() {
+void opt_pokemon_manager_stop() {
     if (s_timer) {
         SetEvent(s_stop);
         WaitForSingleObject(s_timer, 2000);
         CloseHandle(s_timer);
         s_timer = NULL;
     }
+}
+
+void opt_pokemon_manager_shutdown() {
+    opt_pokemon_manager_stop();
     rgss_safe_dispatch_unregister(on_game_thread_tick, NULL);
     if (s_stop) {
         CloseHandle(s_stop);

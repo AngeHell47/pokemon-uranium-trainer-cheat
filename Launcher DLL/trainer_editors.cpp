@@ -1149,6 +1149,7 @@ static void paint_inventory(HWND window) {
 static void close_pokemon() {
     if (s_edit.window == s_pokemon_window) cancel_edit();
     s_pokemon_open = false;
+    opt_pokemon_manager_stop();
     s_pokemon_add_mode = false;
     ShowWindow(s_pokemon_window, SW_HIDE);
     if (s_keyboard_window == s_pokemon_window)
@@ -1158,6 +1159,7 @@ static void close_pokemon() {
 static void close_inventory() {
     if (s_edit.window == s_inventory_window) cancel_edit();
     s_inventory_open = false;
+    opt_inventory_manager_stop();
     ShowWindow(s_inventory_window, SW_HIDE);
     if (s_keyboard_window == s_inventory_window)
         s_keyboard_window = s_pokemon_open ? s_pokemon_window : NULL;
@@ -1572,8 +1574,6 @@ bool trainer_editors_init(HINSTANCE instance, HWND game_window,
     }
     SetTimer(s_pokemon_window, 1, 250, NULL);
     SetTimer(s_inventory_window, 1, 250, NULL);
-    opt_pokemon_manager_start();
-    opt_inventory_manager_start();
     return true;
 }
 
@@ -1599,6 +1599,7 @@ void trainer_editors_show_pokemon() {
     s_pokemon_open = true;
     s_keyboard_window = s_pokemon_window;
     refresh_pokemon_cache();
+    opt_pokemon_manager_start();
     opt_pokemon_manager_refresh();
     position_editor(s_pokemon_window, POKEMON_WINDOW_WIDTH,
                     POKEMON_WINDOW_HEIGHT, 0);
@@ -1611,6 +1612,7 @@ void trainer_editors_show_inventory() {
     s_inventory_open = true;
     s_keyboard_window = s_inventory_window;
     refresh_inventory_cache();
+    opt_inventory_manager_start();
     opt_inventory_manager_refresh();
     position_editor(s_inventory_window, INVENTORY_WINDOW_WIDTH,
                     INVENTORY_WINDOW_HEIGHT, 24);
@@ -1625,6 +1627,8 @@ void trainer_editors_hide_all() {
         ReleaseCapture();
     s_pokemon_open = false;
     s_inventory_open = false;
+    opt_pokemon_manager_stop();
+    opt_inventory_manager_stop();
     s_keyboard_window = NULL;
     if (s_pokemon_window) ShowWindow(s_pokemon_window, SW_HIDE);
     if (s_inventory_window) ShowWindow(s_inventory_window, SW_HIDE);

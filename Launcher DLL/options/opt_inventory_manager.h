@@ -23,6 +23,7 @@ enum {
 
 bool opt_inventory_manager_init(const char* ini_path);
 void opt_inventory_manager_start();
+void opt_inventory_manager_stop();
 void opt_inventory_manager_shutdown();
 void opt_inventory_manager_refresh();
 
