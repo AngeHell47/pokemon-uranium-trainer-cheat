@@ -9,6 +9,7 @@
 #include "options/opt_hp.h"
 #include "options/opt_pp.h"
 #include "options/opt_capture.h"
+#include "options/opt_egghatch.h"
 //#include "options/opt_ohk.h"
 #include "options/opt_money.h"
 #include "options/opt_bagitem.h"
@@ -88,6 +89,7 @@ static DWORD WINAPI main_thread(LPVOID) {
     opt_hp_init(g_ini_path);
     opt_pp_init(g_ini_path);
     opt_capture_init(g_ini_path);
+    opt_egghatch_init(g_ini_path);
     //opt_ohk_init(g_ini_path);
     opt_money_init(g_ini_path);
     opt_bagitem_init(g_ini_path);
@@ -103,6 +105,7 @@ static DWORD WINAPI main_thread(LPVOID) {
     opt_hp_set_hwnd_and_start(game);
     opt_pp_set_hwnd_and_start(game);
     opt_capture_set_hwnd_and_start(game);
+    opt_egghatch_set_hwnd_and_start(game);
     //opt_ohk_set_hwnd_and_start(game);
     opt_money_set_hwnd_and_start(game);
     opt_bagitem_set_hwnd_and_start(game);

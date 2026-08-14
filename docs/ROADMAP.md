@@ -22,7 +22,7 @@
 - Accélération du jeu uniquement pendant le maintien d'une touche.
 - Téléportation vers un point mémorisé avec contrôle de carte et coordonnées.
 - Choix du Pokémon sauvage et de son niveau.
-- Éclosion instantanée et CS effaçables.
+- CS effaçables ; l'éclosion au prochain pas est disponible.
 
 ## Combat et capture
 

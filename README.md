@@ -45,6 +45,7 @@ aucun fichier `moves.txt` ni DLL auxiliaire n'est requis à l'utilisation.
 - Démarrage direct sur la sauvegarde, sans intro ni simulation de saisie.
 - God mode à HP réels et PP infinis pour les Pokémon du joueur.
 - Capture garantie des Pokémon sauvages capturables, quelle que soit la Ball.
+- Éclosion des œufs au prochain pas, avec animation et données natives.
 - Météo et heure forcées, réversibles sans modifier leur état sauvegardé.
 - Noclip pendant le maintien d'une touche configurable (`Ctrl` par défaut), ou
   actif en permanence si aucune touche n'est assignée, blocage des rencontres,
