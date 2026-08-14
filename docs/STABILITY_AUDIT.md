@@ -6,16 +6,17 @@ seule le comportement d'un combat complet.
 
 | Fonction | Protection actuelle | Risque ou limite connue | Validation requise en jeu |
 |---|---|---|---|
+| Démarrage direct | Marqueur éphémère par processus ; intro et écran de chargement headless ; branche `Continue` originale | En l'absence de sauvegarde valide, revient au menu de chargement normal | Sauvegarde unique/multiple, autosave plus récente, sauvegarde corrompue |
 | Injection externe | Payload intégré, PID x86, mutex par processus, événement Ready + overlay exigés | Même niveau de privilèges requis | Refaire le smoke test après une évolution du bootstrap |
 | Entrées overlay | Hooks limités au jeu au premier plan ; messages consommés/reroutés ; état physique masqué dans `Input.getstate` | Tester les boutons latéraux selon la souris | Glisser hors fenêtre, molette et boutons X1/X2 sur une session réelle |
 | Pause inactive | Sauvegarde et restaure les octets d'origine ; vérifie `VirtualProtect` et vide le cache d'instructions | Signature propre à RGSS102E de cette version | Basculer ON/OFF puis changer plusieurs fois de fenêtre |
-| HP à 999 | HP/HP max virtuels uniquement pour les battlers du joueur ; aucune écriture dans le Pokémon sauvegardable | Les calculs fondés sur le pourcentage utilisent volontairement 999/999 | Combat simple/double, dégâts directs, poison, recul, drain, OFF en combat |
+| God mode | HP/HP max réels ; `pbReduceHP` et les baisses directes sont annulés uniquement pour les battlers du joueur | Les effets secondaires d'une attaque peuvent toujours se déclencher | Combat simple/double, dégâts directs, poison, recul, drain, OFF en combat |
 | PP infinis | Wrapper de `pbSetPP`, joueur uniquement ; couvre usage, Pressure, Grudge et Spite | L'activation remplit les PP réels, donc ce remplissage peut être sauvegardé | Attaque normale, Pressure/Spite, adversaire intact, OFF puis décrément |
 | Météo | Getters virtuels ; la météo naturelle continue en arrière-plan et réapparaît sur OFF | Les constantes historiques sont incohérentes, le menu suit le renderer réel | Chaque type 0–8 sur une carte, combat et OFF |
 | Heure | Wrapper unique de `pbGetTimeNow`, délégation native sur OFF ; caches jour/nuit invalidés uniquement au changement | Les événements dépendants de l'heure doivent être testés individuellement | 00 h, midi, 23 h 59, OFF, changement de carte |
 | Argent | Setter natif, limite `999999`, lecture séparée des écritures | Modification volontairement sauvegardable | Valeurs 0/max, achats et sauvegarde |
 | Sac | `pbStoreItem`/`pbDeleteItem`, limite native 99, ID+quantité figés dans une FIFO | L'élément sélectionné peut changer après suppression à 0 | 0, 1, 99, poche pleine, objet clé |
-| Noclip | Surclasse temporairement `@through` pendant `passable?`, puis restaure l'état original | Les limites externes de carte restent actives | Murs, événements, portes, bords de carte, état scripted-through |
+| Noclip | Surclasse temporairement `@through` pendant `passable?` seulement si `Ctrl` est maintenu, puis restaure l'état original | Les limites externes de carte restent actives | Murs, événements, portes, bords de carte, état scripted-through |
 | Sans rencontres | Wrapper de `PokemonEncounters#pbCanEncounter?`, sans toucher à la sauvegarde | N'empêche pas les combats déclenchés par script | Herbes/grottes/surf, ON puis OFF |
 | Vitesse joueur | Appliquée au dernier point avant le calcul de distance, `Game_Character#update_move`, avec retry temporisé jusqu'à acquittement | Les routes forcées gardent leur vitesse de script | Marche/course/surf/vélo/glace, toutes valeurs 1–8 |
 | Dézoom | Dimensions logiques 4:3 + facteur inverse ; cache du sol et translation rapide des tuiles ; événements lointains en veille mais tous les sprites visibles actualisés | Le vide hors des limites d'une carte devient visible près d'un bord ; les cartes à très nombreux autotiles animés restent à qualifier | Carte réelle, déplacements/transferts, menu, combat, 100/133/187/200/300/400/500 % |
@@ -24,6 +25,13 @@ seule le comportement d'un combat complet.
 
 ## Validations réalisées
 
+- Bouton de démarrage direct vérifié sur une vraie sauvegarde : aucune scène
+  d'intro ou de sélection affichée, arrivée directe sur `Scene_Map`, overlay
+  différé jusqu'à la carte et aucune boîte d'erreur après stabilisation. Un
+  lancement normal sans marqueur affiche toujours l'intro complète.
+- Les empreintes SHA-256 de `Uranium.rxdata` et
+  `Uranium_autosave.rxdata` sont restées strictement identiques avant/après le
+  smoke test de chargement direct.
 - Build complet x86 final avec niveau d'avertissement `/W4` : aucune erreur ;
   payload et base des attaques correctement embarqués dans l'EXE.
 - Injection du binaire final : événement Ready signalé, fenêtre

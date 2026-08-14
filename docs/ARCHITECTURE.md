@@ -6,6 +6,14 @@
 processus compatibles, extrait son payload DLL embarqué dans le dossier
 temporaire de Windows, puis le charge dans le processus RGSS sélectionné.
 
+Le bouton de lancement direct crée `Uranium.exe` avec un marqueur de ligne de
+commande propre à cette instance, injecte le payload dès que RGSS est chargé,
+puis attend l'arrivée sur la carte. Le payload remplace la scène d'intro par
+une scène vide et rend l'écran de chargement headless. Il ne simule aucun clic :
+la branche `Continue` originale d'Uranium effectue encore le choix de la
+sauvegarde par défaut, les contrôles d'intégrité, les migrations et la
+désérialisation. Sans ce marqueur, un lancement normal reste inchangé.
+
 Le payload crée une fenêtre d'overlay indépendante au-dessus du jeu. Les
 fonctions Ruby/RGSS ne sont jamais appelées depuis le thread de l'interface :
 les demandes sont mises en attente dans des structures atomiques ou des FIFO,
@@ -16,7 +24,8 @@ UraniumTrainer.exe
   -> sélection du PID x86/RGSS
   -> extraction du payload versionné dans %TEMP%
   -> LoadLibraryW dans Uranium.exe
-     -> overlay TrainerOverlay
+     -> démarrage direct headless éventuel
+     -> overlay TrainerOverlay après l'arrivée sur la carte
      -> commandes atomiques / FIFO
      -> consommation dans les wrappers Ruby du jeu
 ```
@@ -33,6 +42,8 @@ ne doit rester à côté de `Uranium.exe`.
   immédiatement à l'implémentation d'origine quand elles sont désactivées.
 - HP, météo, noclip et blocage des rencontres ne modifient pas les objets
   sérialisés de la sauvegarde.
+- Le god mode conserve les HP réels et annule seulement leurs diminutions en
+  combat ; il ne remplace plus les accesseurs par un affichage 999/999.
 - PP infinis remplit les PP à l'activation et empêche ensuite les diminutions
   des Pokémon possédés par le joueur. Les PP remplis peuvent naturellement
   être sauvegardés si le joueur sauvegarde ensuite sa partie.

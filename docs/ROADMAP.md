@@ -19,7 +19,6 @@
 
 ## Exploration
 
-- Traversée des murs uniquement pendant le maintien d'une touche.
 - Accélération du jeu uniquement pendant le maintien d'une touche.
 - Téléportation vers un point mémorisé avec contrôle de carte et coordonnées.
 - Choix du Pokémon sauvage et de son niveau.
@@ -27,7 +26,6 @@
 
 ## Combat et capture
 
-- God mode réel basé sur l'annulation des dégâts, distinct de l'affichage 999/999.
 - KO en un coup et multiplicateur de dégâts, limités explicitement au camp voulu.
 - Taux de capture à 100 % et étude séparée de la capture d'un Pokémon adverse.
 - Multiplicateur de taux shiny avec affichage de la probabilité effective.

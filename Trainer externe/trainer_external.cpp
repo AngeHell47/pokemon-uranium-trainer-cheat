@@ -23,6 +23,7 @@ constexpr int kProcessCombo = 1001;
 constexpr int kRefreshButton = 1002;
 constexpr int kAttachButton = 1003;
 constexpr int kStatusText = 1004;
+constexpr int kLaunchButton = 1005;
 
 struct ProcessEntry {
     DWORD pid;
@@ -33,6 +34,7 @@ struct ProcessEntry {
 HINSTANCE g_instance = nullptr;
 HWND g_process_combo = nullptr;
 HWND g_attach_button = nullptr;
+HWND g_launch_button = nullptr;
 HWND g_status_text = nullptr;
 HFONT g_font = nullptr;
 std::vector<ProcessEntry> g_processes;
@@ -67,6 +69,36 @@ bool contains_case_insensitive(const std::wstring& value, const wchar_t* needle)
     std::transform(left.begin(), left.end(), left.begin(), towlower);
     std::transform(right.begin(), right.end(), right.begin(), towlower);
     return left.find(right) != std::wstring::npos;
+}
+
+std::wstring parent_directory(const std::wstring& path) {
+    const size_t slash = path.find_last_of(L"\\/");
+    return slash == std::wstring::npos ? std::wstring() : path.substr(0, slash);
+}
+
+bool regular_file_exists(const std::wstring& path) {
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+           (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
+std::wstring locate_game_executable() {
+    wchar_t module_path[MAX_PATH] = {};
+    if (!GetModuleFileNameW(nullptr, module_path, ARRAYSIZE(module_path)))
+        return std::wstring();
+
+    const std::wstring trainer_directory = parent_directory(module_path);
+    const std::wstring parent = parent_directory(trainer_directory);
+    const std::wstring grandparent = parent_directory(parent);
+    const std::wstring candidates[] = {
+        trainer_directory + L"\\Uranium.exe",
+        parent + L"\\Uranium.exe",
+        grandparent + L"\\Uranium.exe"
+    };
+    for (const std::wstring& candidate : candidates) {
+        if (regular_file_exists(candidate)) return candidate;
+    }
+    return std::wstring();
 }
 
 bool is_process_32_bit(HANDLE process) {
@@ -313,14 +345,14 @@ bool inject_payload(DWORD pid, const std::wstring& payload_path, std::wstring& e
     HANDLE existing_trainer = OpenMutexW(SYNCHRONIZE, FALSE, mutex_name);
     if (existing_trainer) {
         CloseHandle(existing_trainer);
-        if (wait_for_trainer_ready(pid, 15000)) return true;
+        if (wait_for_trainer_ready(pid, 60000)) return true;
         error = L"Le payload est charge, mais son overlay n'a pas termine son initialisation.";
         return false;
     }
 
     const std::wstring payload_name = basename_of(payload_path);
     if (remote_module_base(pid, payload_name.c_str())) {
-        if (wait_for_trainer_ready(pid, 15000)) return true;
+        if (wait_for_trainer_ready(pid, 60000)) return true;
         error = L"Le payload est present, mais son overlay n'est pas disponible. Redemarre le jeu avant de reessayer.";
         return false;
     }
@@ -388,11 +420,95 @@ bool inject_payload(DWORD pid, const std::wstring& payload_path, std::wstring& e
     CloseHandle(thread);
     CloseHandle(process);
     if (!ok) return false;
-    if (!wait_for_trainer_ready(pid, 15000)) {
+    if (!wait_for_trainer_ready(pid, 60000)) {
         error = L"Le payload a ete charge, mais l'overlay ne s'est pas initialise. Redemarre le jeu avant de reessayer.";
         return false;
     }
     return true;
+}
+
+void select_process(DWORD pid) {
+    refresh_processes();
+    for (size_t i = 0; i < g_processes.size(); ++i) {
+        if (g_processes[i].pid == pid) {
+            SendMessageW(g_process_combo, CB_SETCURSEL, i, 0);
+            break;
+        }
+    }
+}
+
+void launch_game_and_load(HWND window) {
+    const std::wstring game_path = locate_game_executable();
+    if (game_path.empty()) {
+        set_status(window,
+            L"Uranium.exe est introuvable. Place le trainer dans le dossier du jeu ou dans son dossier Launcher.",
+            RGB(185, 28, 28));
+        return;
+    }
+
+    std::wstring payload_path;
+    std::wstring error;
+    if (!extract_payload(payload_path, error)) {
+        set_status(window, error, RGB(185, 28, 28));
+        return;
+    }
+
+    const std::wstring game_directory = parent_directory(game_path);
+
+    std::wstring command_line =
+        L"\"" + game_path + L"\" --trainer-direct-load";
+    std::vector<wchar_t> mutable_command(command_line.begin(), command_line.end());
+    mutable_command.push_back(L'\0');
+
+    STARTUPINFOW startup = {};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process = {};
+    EnableWindow(g_launch_button, FALSE);
+    EnableWindow(g_attach_button, FALSE);
+    set_status(window, L"Lancement direct du jeu et de la sauvegarde...", RGB(37, 99, 235));
+
+    if (!CreateProcessW(game_path.c_str(), mutable_command.data(), nullptr, nullptr,
+                        FALSE, 0, nullptr, game_directory.c_str(), &startup, &process)) {
+        error = L"Impossible de lancer Uranium.exe : " + win32_error(GetLastError());
+        set_status(window, error, RGB(185, 28, 28));
+        EnableWindow(g_launch_button, TRUE);
+        EnableWindow(g_attach_button, TRUE);
+        return;
+    }
+    CloseHandle(process.hThread);
+
+    const DWORD started = GetTickCount();
+    bool rgss_ready = false;
+    while (GetTickCount() - started < 15000) {
+        if (WaitForSingleObject(process.hProcess, 0) == WAIT_OBJECT_0) break;
+        if (process_has_rgss(process.dwProcessId)) {
+            rgss_ready = true;
+            break;
+        }
+        Sleep(20);
+    }
+
+    bool connected = false;
+    if (!rgss_ready) {
+        error = L"Le moteur RGSS du jeu ne s'est pas initialise a temps.";
+    } else {
+        connected = inject_payload(process.dwProcessId, payload_path, error);
+    }
+    CloseHandle(process.hProcess);
+    select_process(process.dwProcessId);
+
+    if (!connected) {
+        set_status(window, error, RGB(185, 28, 28));
+        EnableWindow(g_launch_button, TRUE);
+        EnableWindow(g_attach_button, TRUE);
+        return;
+    }
+
+    SetWindowTextW(g_attach_button, L"Connecte");
+    SetWindowTextW(g_launch_button, L"Jeu lance");
+    set_status(window,
+        L"Jeu lance : intro supprimee et sauvegarde par defaut chargee directement.",
+        RGB(21, 128, 61));
 }
 
 void attach_selected_process(HWND window) {
@@ -432,6 +548,10 @@ DWORD requested_pid_from_command_line() {
     return marker ? wcstoul(marker + 6, nullptr, 10) : 0;
 }
 
+bool launch_requested_from_command_line() {
+    return wcsstr(GetCommandLineW(), L"--launch") != nullptr;
+}
+
 LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
     case WM_CREATE: {
@@ -444,7 +564,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         set_control_font(title);
 
         HWND help = CreateWindowExW(0, L"STATIC",
-            L"Lance le jeu, choisis son processus puis clique sur Connecter.",
+            L"Lancement direct recommande, ou connexion a un jeu deja ouvert.",
             WS_CHILD | WS_VISIBLE, 22, 50, 510, 22, window, nullptr, g_instance, nullptr);
         set_control_font(help);
 
@@ -458,13 +578,19 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             422, 82, 110, 30, window, reinterpret_cast<HMENU>(kRefreshButton), g_instance, nullptr);
         set_control_font(refresh);
 
-        g_attach_button = CreateWindowExW(0, WC_BUTTONW, L"Connecter",
+        g_launch_button = CreateWindowExW(0, WC_BUTTONW,
+            L"Lancer le jeu + chargement direct",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
-            22, 126, 510, 38, window, reinterpret_cast<HMENU>(kAttachButton), g_instance, nullptr);
+            22, 126, 510, 38, window, reinterpret_cast<HMENU>(kLaunchButton), g_instance, nullptr);
+        set_control_font(g_launch_button);
+
+        g_attach_button = CreateWindowExW(0, WC_BUTTONW, L"Connecter au jeu selectionne",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            22, 174, 510, 38, window, reinterpret_cast<HMENU>(kAttachButton), g_instance, nullptr);
         set_control_font(g_attach_button);
 
         g_status_text = CreateWindowExW(0, L"STATIC", L"Recherche des processus 32 bits...",
-            WS_CHILD | WS_VISIBLE | SS_LEFT, 22, 179, 510, 48,
+            WS_CHILD | WS_VISIBLE | SS_LEFT, 22, 227, 510, 54,
             window, reinterpret_cast<HMENU>(kStatusText), g_instance, nullptr);
         set_control_font(g_status_text);
 
@@ -489,6 +615,9 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             return 0;
         case kAttachButton:
             if (HIWORD(wparam) == BN_CLICKED) attach_selected_process(window);
+            return 0;
+        case kLaunchButton:
+            if (HIWORD(wparam) == BN_CLICKED) launch_game_and_load(window);
             return 0;
         default:
             break;
@@ -535,7 +664,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
     if (!RegisterClassExW(&window_class)) return 1;
 
     constexpr int width = 572;
-    constexpr int height = 286;
+    constexpr int height = 334;
     RECT desktop = {};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &desktop, 0);
     const int x = desktop.left + ((desktop.right - desktop.left) - width) / 2;
@@ -548,6 +677,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
 
     ShowWindow(window, show_command);
     UpdateWindow(window);
+
+    if (launch_requested_from_command_line()) {
+        PostMessageW(window, WM_COMMAND, MAKEWPARAM(kLaunchButton, BN_CLICKED),
+            reinterpret_cast<LPARAM>(g_launch_button));
+    }
 
     const DWORD requested_pid = requested_pid_from_command_line();
     if (requested_pid) {

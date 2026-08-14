@@ -24,6 +24,7 @@ cl /nologo /O1 /GS- /MT /LD /W4 /utf-8 /DTRAINER_EXTERNAL_PAYLOAD ^
   "%DLLSRC%\rgss_safe_dispatch.cpp" ^
   "%DLLSRC%\trainer_menu.cpp" ^
   "%DLLSRC%\moves_db.cpp" ^
+  "%DLLSRC%\options\opt_startup.cpp" ^
   "%DLLSRC%\options\opt_pause.cpp" ^
   "%DLLSRC%\options\opt_hp.cpp" ^
   "%DLLSRC%\options\opt_pp.cpp" ^

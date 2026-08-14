@@ -60,7 +60,7 @@ MenuItem g_items[] = {
     { "Pause si fenetre inactive", ITEM_TYPE_TOGGLE,
       &g_pause_on_inactive, opt_pause_toggle, NULL,0,0,NULL },
 
-    { "Bloquer HP a 999", ITEM_TYPE_TOGGLE,
+    { "God mode (aucun degat)", ITEM_TYPE_TOGGLE,
       &g_hp_lock, opt_hp_toggle, NULL,0,0,NULL },
 
     { "PP infinis", ITEM_TYPE_TOGGLE,
@@ -69,7 +69,7 @@ MenuItem g_items[] = {
     //{ "One Hit Kill", ITEM_TYPE_TOGGLE,
     //  &g_ohk_lock, opt_ohk_toggle, NULL,0,0,NULL },
 	  
-    { "No-clip (traverser murs)", ITEM_TYPE_TOGGLE,
+    { "No-clip (maintenir CTRL)", ITEM_TYPE_TOGGLE,
       &g_noclip, opt_noclip_toggle, NULL,0,0,NULL },
 	  
     { "Sans rencontres sauvages", ITEM_TYPE_TOGGLE,

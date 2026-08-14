@@ -8,11 +8,15 @@ thread. Aucun `version.dll` ne doit être copié à côté du jeu.
 
 ## Utilisation
 
-1. Lancer Pokémon Uranium et attendre l'ouverture de sa fenêtre.
-2. Lancer `UraniumTrainer.exe`.
-3. Sélectionner le processus marqué `[Jeu]`.
-4. Cliquer sur **Connecter**.
-5. Utiliser `Inser` pour masquer ou réafficher l'overlay.
+1. Lancer `UraniumTrainer.exe`.
+2. Cliquer sur **Lancer le jeu + chargement direct** pour supprimer l'intro et
+   arriver directement sur la sauvegarde par défaut.
+3. Pour un jeu déjà ouvert normalement, sélectionner le processus marqué
+   `[Jeu]` puis cliquer sur **Connecter au jeu sélectionné**.
+4. Utiliser `Inser` pour masquer ou réafficher l'overlay.
+
+Le lancement direct est éphémère : il n'écrit aucun réglage persistant et ne
+change pas le comportement d'un démarrage normal de `Uranium.exe`.
 
 Le jeu et le trainer doivent fonctionner au même niveau de privilèges. Si le
 jeu est administrateur, le trainer doit l'être également.
@@ -35,9 +39,11 @@ aucun fichier `moves.txt` ni DLL auxiliaire n'est requis à l'utilisation.
 
 ## Fonctions actuelles
 
-- HP à 999 et PP infinis pour les Pokémon du joueur.
+- Démarrage direct sur la sauvegarde, sans intro ni simulation de saisie.
+- God mode à HP réels et PP infinis pour les Pokémon du joueur.
 - Météo et heure forcées, réversibles sans modifier leur état sauvegardé.
-- Noclip, blocage des rencontres, soin de l'équipe et vitesses de déplacement.
+- Noclip en maintenant `Ctrl`, blocage des rencontres, soin de l'équipe et
+  vitesses de déplacement.
 - Argent, quantité de l'objet sélectionné et édition du premier Pokémon.
 - Dézoom logique de la carte en conservant la taille physique de la fenêtre.
 

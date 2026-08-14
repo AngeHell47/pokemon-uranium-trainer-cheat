@@ -5,6 +5,7 @@
 #include "trainer_runtime.h"
 #include "rgss_safe_dispatch.h"
 #include "options/opt_pause.h"
+#include "options/opt_startup.h"
 #include "options/opt_hp.h"
 #include "options/opt_pp.h"
 //#include "options/opt_ohk.h"
@@ -54,15 +55,25 @@ static HWND find_own_game_window() {
 
 static DWORD WINAPI main_thread(LPVOID) {
     HMODULE hRgss = NULL;
-    for (int i=0;i<60&&!hRgss;i++){hRgss=GetModuleHandleA("RGSS102E.dll");if(!hRgss)Sleep(500);}
+    for (int i=0;i<3000&&!hRgss;i++){hRgss=GetModuleHandleA("RGSS102E.dll");if(!hRgss)Sleep(10);}
     if (!hRgss) { release_trainer_singleton(); return 0; }
 
     HWND game=NULL;
-    for (int i=0;i<60&&!game;i++){game=find_own_game_window();if(!game)Sleep(500);}
+    for (int i=0;i<3000&&!game;i++){game=find_own_game_window();if(!game)Sleep(10);}
     if(!game) { release_trainer_singleton(); return 0; }
 
     HINSTANCE hinst=(HINSTANCE)g_trainer_module;
+    opt_startup_init(g_ini_path);
     if (!rgss_safe_dispatch_start(g_trainer_module, game, 15000)) {
+        release_trainer_singleton();
+        return 0;
+    }
+    opt_startup_set_hwnd_and_start(game);
+    // Les autres wrappers (notamment le dezoom) ne sont installes qu'une fois
+    // la carte atteinte. Cela evite toute evaluation concurrente pendant le
+    // chargement headless de la sauvegarde.
+    if (!opt_startup_wait_for_game(30000) && g_auto_load_save) {
+        rgss_safe_dispatch_shutdown();
         release_trainer_singleton();
         return 0;
     }
