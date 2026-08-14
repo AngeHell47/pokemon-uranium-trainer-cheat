@@ -27,7 +27,8 @@
 ## Combat et capture
 
 - KO en un coup et multiplicateur de dégâts, limités explicitement au camp voulu.
-- Taux de capture à 100 % et étude séparée de la capture d'un Pokémon adverse.
+- Étudier séparément la capture d'un Pokémon adverse ; la capture sauvage à
+  100 % est disponible sans contourner les refus de scénario.
 - Multiplicateur de taux shiny avec affichage de la probabilité effective.
 - Objets consommables infinis (Poké Balls, soins, CT, baies) via les méthodes
   centrales de retrait, sans balayage mémoire.

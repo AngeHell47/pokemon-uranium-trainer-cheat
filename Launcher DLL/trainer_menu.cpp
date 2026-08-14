@@ -2,6 +2,7 @@
 #include "options/opt_pause.h"
 #include "options/opt_hp.h"
 #include "options/opt_pp.h"
+#include "options/opt_capture.h"
 //#include "options/opt_ohk.h"
 #include "options/opt_money.h"
 #include "options/opt_bagitem.h"
@@ -116,6 +117,20 @@ MenuItem g_items[] = {
 
 const int ITEM_COUNT = sizeof(g_items) / sizeof(g_items[0]);
 
+struct QuickToggle {
+    const char* label;
+    bool* value;
+    void (*on_toggle)(bool);
+};
+
+static QuickToggle s_quick_toggles[] = {
+    { "Capture garantie", &g_capture_guaranteed, opt_capture_toggle },
+};
+
+static const int QUICK_TOGGLE_COUNT =
+    sizeof(s_quick_toggles) / sizeof(s_quick_toggles[0]);
+static const int QUICK_TOGGLE_TOP = TITLE_H + 380;
+
 // ------------------------------------------------------------
 // LAYOUT HELPERS
 // ------------------------------------------------------------
@@ -144,6 +159,20 @@ static int item_h(int idx) {
     if (g_items[idx].type == ITEM_TYPE_SLIDER)   return SLIDER_H;
     if (g_items[idx].type == ITEM_TYPE_BAGITEM)  return BAGITEM_H;
     return ITEM_H;
+}
+
+static int navigation_item_count() {
+    return ITEM_COUNT + QUICK_TOGGLE_COUNT;
+}
+
+static RECT quick_toggle_rect(int index) {
+    RECT result = {
+        MENU_LEFT_W + MENU_GAP + 8,
+        QUICK_TOGGLE_TOP + 24 + index * ITEM_H,
+        MENU_TOTAL_W - 8,
+        QUICK_TOGGLE_TOP + 24 + (index + 1) * ITEM_H
+    };
+    return result;
 }
 
 // ------------------------------------------------------------
@@ -1035,6 +1064,57 @@ static void paint_partymon_panel(HDC mem, int x, int y, int w, int h, HFONT fN, 
     }
 }
 
+static void paint_quick_toggles(HDC mem, HFONT fN, HFONT fB) {
+    SelectObject(mem, fB);
+    SetTextColor(mem, COL_TEXT);
+    RECT title = {
+        MENU_LEFT_W + MENU_GAP + 12,
+        QUICK_TOGGLE_TOP,
+        MENU_TOTAL_W - 12,
+        QUICK_TOGGLE_TOP + 22
+    };
+    DrawTextA(mem, "Options rapides", -1, &title,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(mem, fN);
+
+    for (int i = 0; i < QUICK_TOGGLE_COUNT; ++i) {
+        RECT row = quick_toggle_rect(i);
+        if (s_hovered == ITEM_COUNT + i) {
+            HBRUSH hover = CreateSolidBrush(COL_HOVER);
+            FillRect(mem, &row, hover);
+            DeleteObject(hover);
+        }
+
+        HPEN sep = CreatePen(PS_SOLID, 1, RGB(40,40,60));
+        HPEN old_sep = (HPEN)SelectObject(mem, sep);
+        MoveToEx(mem, row.left, row.bottom - 1, NULL);
+        LineTo(mem, row.right, row.bottom - 1);
+        SelectObject(mem, old_sep);
+        DeleteObject(sep);
+
+        RECT label = {row.left + 4, row.top, row.right - 64, row.bottom};
+        SetTextColor(mem, COL_TEXT);
+        DrawTextA(mem, s_quick_toggles[i].label, -1, &label,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+        const bool value = *s_quick_toggles[i].value;
+        RECT button = {row.right - 54, row.top + 8,
+                       row.right - 6, row.bottom - 8};
+        HBRUSH button_brush = CreateSolidBrush(value ? COL_ON : COL_OFF);
+        HPEN button_pen = CreatePen(PS_NULL, 0, 0);
+        HBRUSH old_brush = (HBRUSH)SelectObject(mem, button_brush);
+        HPEN old_pen = (HPEN)SelectObject(mem, button_pen);
+        RoundRect(mem, button.left, button.top, button.right, button.bottom,
+                  4, 4);
+        SelectObject(mem, old_brush);
+        SelectObject(mem, old_pen);
+        DeleteObject(button_brush);
+        DeleteObject(button_pen);
+        DrawTextA(mem, value ? "ON" : "OFF", -1, &button,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+}
+
 // ------------------------------------------------------------
 // PAINT
 // ------------------------------------------------------------
@@ -1357,6 +1437,7 @@ static void paint(HWND hw) {
         H - TITLE_H - 20,
         fN, fS, fB
     );
+    paint_quick_toggles(mem, fN, fB);
     paint_picker(mem, fN, fS);
 
     // Footer gauche
@@ -1387,6 +1468,14 @@ static int item_at_y(int y) {
     for (int i = 0; i < ITEM_COUNT; i++) {
         int iy = item_y(i);
         if (y >= iy && y < iy + item_h(i)) return i;
+    }
+    return -1;
+}
+
+static int quick_toggle_at(int x, int y) {
+    for (int i = 0; i < QUICK_TOGGLE_COUNT; ++i) {
+        RECT row = quick_toggle_rect(i);
+        if (ptin(row, x, y)) return i;
     }
     return -1;
 }
@@ -1442,6 +1531,14 @@ static void toggle_item(int i) {
     if (i < 0 || i >= ITEM_COUNT || g_items[i].type != ITEM_TYPE_TOGGLE) return;
     *g_items[i].value = !*g_items[i].value;
     if (g_items[i].on_toggle) g_items[i].on_toggle(*g_items[i].value);
+    InvalidateRect(s_overlay, NULL, FALSE);
+}
+
+static void toggle_quick_item(int i) {
+    if (i < 0 || i >= QUICK_TOGGLE_COUNT) return;
+    QuickToggle& item = s_quick_toggles[i];
+    *item.value = !*item.value;
+    if (item.on_toggle) item.on_toggle(*item.value);
     InvalidateRect(s_overlay, NULL, FALSE);
 }
 
@@ -1730,6 +1827,11 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
     
         // Clic dans le panneau Pokemon à droite
         if (x >= MENU_LEFT_W + MENU_GAP) {
+            const int quick = quick_toggle_at(x, y);
+            if (quick >= 0) {
+                toggle_quick_item(quick);
+                return 0;
+            }
             if (partymon_on_lbuttondown(x, y)) return 0;
             return 0;
         }
@@ -1858,8 +1960,11 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
         else {
             // Pas de hover sur le panneau Pokemon à droite
             if (x >= MENU_LEFT_W + MENU_GAP) {
-                if (s_hovered != -1) {
-                    s_hovered = -1;
+                const int quick = quick_toggle_at(x, y);
+                const int hovered =
+                    quick >= 0 ? ITEM_COUNT + quick : -1;
+                if (s_hovered != hovered) {
+                    s_hovered = hovered;
                     InvalidateRect(hw, NULL, FALSE);
                 }
             } else {
@@ -1979,12 +2084,14 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
 
         case VK_UP:
-            s_hovered = (s_hovered <= 0) ? ITEM_COUNT - 1 : s_hovered - 1;
+            s_hovered = (s_hovered <= 0)
+                ? navigation_item_count() - 1 : s_hovered - 1;
             InvalidateRect(hw, NULL, FALSE);
             return 0;
 
         case VK_DOWN:
-            s_hovered = (s_hovered >= ITEM_COUNT - 1) ? 0 : s_hovered + 1;
+            s_hovered = (s_hovered >= navigation_item_count() - 1)
+                ? 0 : s_hovered + 1;
             InvalidateRect(hw, NULL, FALSE);
             return 0;
 
@@ -2006,6 +2113,10 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
 
         case VK_RETURN:
         case VK_SPACE:
+            if (s_hovered >= ITEM_COUNT) {
+                toggle_quick_item(s_hovered - ITEM_COUNT);
+                return 0;
+            }
             if (s_hovered >= 0 && g_items[s_hovered].type == ITEM_TYPE_TIME) {
                 RECT tbox = {
                     MENU_LEFT_W - 78,
