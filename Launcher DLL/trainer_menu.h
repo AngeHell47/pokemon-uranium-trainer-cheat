@@ -5,7 +5,7 @@
 #define MENU_W    300
 #define TITLE_H    28
 #define ITEM_H     32
-#define SLIDER_H   62
+#define SLIDER_H   50
 #define BAGITEM_H  50
 #define PAD        10
 

@@ -114,6 +114,23 @@ est plus prévisible. L'action devra être refusée hors `Scene_Map`, pendant un
 
 ## Combat et vitesse
 
+Le God mode confirmé ne falsifie pas `isFainted?` et ne restaure pas les PV à
+chaque image. Le générateur `tools/patch_godmode_scripts.py` modifie les trois
+points centraux du `Scripts.rxdata` déchiffré :
+
+- `PokeBattle_Move#pbReduceHPDamage` annule les dégâts d'attaque avant toute
+  animation ou écriture de PV ;
+- `PokeBattle_Battler#pbReduceHP` et son writer `hp=` bloquent les dégâts
+  résiduels, le recul et les sacrifices forcés pour les battlers du joueur ;
+- `PokeBattle_Pokemon#hp=` protège l'objet de l'équipe lui-même, notamment
+  contre le poison hors combat et les écritures directes.
+
+Les trois protections consultent `$__uranium_trainer_hp_lock` et prouvent la
+propriété via `pbOwnedByPlayer?` ou l'identité dans `$Trainer.party`. Le payload
+natif ne fait que synchroniser cette globale avec le bouton et `trainer.ini`.
+Cette séparation évite les remplacements tardifs de méthodes Ruby et, surtout,
+ne maintient jamais artificiellement un Pokémon KO dans le combat.
+
 Le prototype historique `opt_ohk.cpp` et l'ancien `opt_speedhack.cpp` restent
 exclus du payload. Ils ne doivent pas être réactivés tels quels : le premier
 n'a pas encore la matrice de validation simple/double combat, et le second pose
@@ -129,7 +146,6 @@ d'images. Elle ne modifie ni `timeGetTime` ni la cadence du processus entier.
 Les méthodes Ruby entourant le rendu, notamment les transitions spéciales,
 continuent d'être mises à jour à chaque tick logique.
 
-Pour KO en un coup ou un multiplicateur de dégâts, le prochain audit doit
-identifier le dernier point de réduction de HP et prouver le camp avec
-`pbOwnedByPlayer?`, y compris confusion, poison, recul, drain, dégâts de zone et
+Pour KO en un coup ou un multiplicateur de dégâts reçu, réutiliser ces points
+centraux et conserver la preuve du camp avec `pbOwnedByPlayer?`, y compris en
 combat double.

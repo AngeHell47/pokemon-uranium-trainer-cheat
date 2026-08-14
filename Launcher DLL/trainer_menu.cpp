@@ -87,7 +87,7 @@ MenuItem g_items[] = {
     { "Vitesse globale", ITEM_TYPE_TOGGLE,
       &g_game_speed_enabled, opt_gamespeed_toggle, NULL,0,0,NULL },
 
-    { "Multiplicateur du jeu (x)", ITEM_TYPE_SLIDER,
+    { "Multiplicateur", ITEM_TYPE_SLIDER,
       NULL,NULL, &g_game_speed_factor,1,5,opt_gamespeed_apply },
 	  
     { "Sans rencontres sauvages", ITEM_TYPE_TOGGLE,
@@ -135,7 +135,7 @@ struct QuickToggle {
 };
 
 static QuickToggle s_quick_toggles[] = {
-    { "Capture garantie", &g_capture_guaranteed, opt_capture_toggle },
+    { "Capture 100%", &g_capture_guaranteed, opt_capture_toggle },
     { "Eclosion instantanee", &g_egg_hatch_instant, opt_egghatch_toggle },
     { "CS effacables", &g_hm_forget_enabled, opt_hmforget_toggle },
 };
@@ -143,15 +143,21 @@ static QuickToggle s_quick_toggles[] = {
 static const int QUICK_TOGGLE_COUNT =
     sizeof(s_quick_toggles) / sizeof(s_quick_toggles[0]);
 static const int QUICK_TOGGLE_TOP = TITLE_H + 10;
+static const int QUICK_TOGGLE_INSERT_SLOT = 5;
 
 // Options du menu principal affichees dans la colonne "Options rapides".
 // Les indices correspondent a God mode, PP, noclip, rencontres, heure,
 // meteo, soin et argent dans g_items.
-static const int s_quick_menu_items[] = {1, 2, 3, 6, 7, 8, 9, 10};
+static const int s_quick_menu_items[] = {1, 2, 3, 4, 6, 7, 8, 9, 10};
 static const int QUICK_MENU_ITEM_COUNT =
     sizeof(s_quick_menu_items) / sizeof(s_quick_menu_items[0]);
 
 static bool is_quick_menu_item(int item_index) {
+    // Le multiplicateur est dessine dans la ligne de son toggle et ne doit
+    // plus apparaitre comme une option autonome dans la colonne gauche.
+    if (item_index >= 0 && item_index < ITEM_COUNT &&
+        g_items[item_index].on_slide == opt_gamespeed_apply)
+        return true;
     for (int i = 0; i < QUICK_MENU_ITEM_COUNT; ++i) {
         if (s_quick_menu_items[i] == item_index) return true;
     }
@@ -168,11 +174,13 @@ static int quick_menu_items_height() {
 }
 
 static int quick_menu_item_y(int slot) {
-    int y = QUICK_TOGGLE_TOP + 24;
+    int y = QUICK_TOGGLE_TOP;
     for (int i = 0; i < slot; ++i) {
         const int item = s_quick_menu_items[i];
         y += g_items[item].type == ITEM_TYPE_SLIDER ? SLIDER_H : ITEM_H;
     }
+    if (slot >= QUICK_TOGGLE_INSERT_SLOT)
+        y += QUICK_TOGGLE_COUNT * ITEM_H;
     return y;
 }
 
@@ -187,14 +195,18 @@ static int quick_menu_slot_from_item(int item_index) {
 // LAYOUT HELPERS
 // ------------------------------------------------------------
 
+static int item_h(int idx) {
+    if (g_items[idx].type == ITEM_TYPE_SLIDER) return SLIDER_H;
+    return ITEM_H;
+}
+
 static int menu_height() {
     int left = TITLE_H + 20;
     for (int i = 0; i < ITEM_COUNT; i++) {
         if (is_quick_menu_item(i)) continue;
-        if      (g_items[i].type == ITEM_TYPE_SLIDER) left += SLIDER_H;
-        else                                          left += ITEM_H;
+        left += item_h(i);
     }
-    const int right = QUICK_TOGGLE_TOP + 24 + quick_menu_items_height() +
+    const int right = QUICK_TOGGLE_TOP + quick_menu_items_height() +
                       QUICK_TOGGLE_COUNT * ITEM_H + 20;
     return left > right ? left : right;
 }
@@ -203,23 +215,40 @@ static int item_y(int idx) {
     int y = TITLE_H;
     for (int i = 0; i < idx; i++) {
         if (is_quick_menu_item(i)) continue;
-        if      (g_items[i].type == ITEM_TYPE_SLIDER)   y += SLIDER_H;
-        else                                            y += ITEM_H;
+        y += item_h(i);
     }
     return y;
-}
-
-static int item_h(int idx) {
-    if (g_items[idx].type == ITEM_TYPE_SLIDER)   return SLIDER_H;
-    return ITEM_H;
 }
 
 static int navigation_item_count() {
     return ITEM_COUNT + QUICK_TOGGLE_COUNT;
 }
 
+static bool navigation_item_hidden(int index) {
+    return index >= 0 && index < ITEM_COUNT &&
+           g_items[index].on_slide == opt_gamespeed_apply;
+}
+
+static int navigation_step(int current, int direction) {
+    const int count = navigation_item_count();
+    int next = current;
+    for (int i = 0; i < count; ++i) {
+        next += direction;
+        if (next < 0) next = count - 1;
+        if (next >= count) next = 0;
+        if (!navigation_item_hidden(next)) return next;
+    }
+    return current;
+}
+
 static RECT quick_toggle_rect(int index) {
-    const int top = QUICK_TOGGLE_TOP + 24 + quick_menu_items_height();
+    int top = QUICK_TOGGLE_TOP;
+    for (int slot = 0;
+         slot < QUICK_TOGGLE_INSERT_SLOT && slot < QUICK_MENU_ITEM_COUNT;
+         ++slot) {
+        const int item = s_quick_menu_items[slot];
+        top += g_items[item].type == ITEM_TYPE_SLIDER ? SLIDER_H : ITEM_H;
+    }
     RECT result = {
         MENU_LEFT_W + MENU_GAP + 8,
         top + index * ITEM_H,
@@ -753,6 +782,14 @@ static RECT quick_noclip_key_rect(int slot) {
     return rect;
 }
 
+static RECT quick_gamespeed_track_rect(int slot) {
+    RECT row = quick_menu_item_rect(slot);
+    RECT key = quick_noclip_key_rect(slot);
+    RECT rect = {row.left + 98, row.top + 11,
+                 key.left - 8, row.top + 21};
+    return rect;
+}
+
 static RECT quick_time_box_rect(int slot) {
     RECT row = quick_menu_item_rect(slot);
     RECT rect = {row.right - 78, row.top + 8,
@@ -769,8 +806,8 @@ static RECT quick_weather_box_rect(int slot) {
 
 static RECT quick_slider_track_rect(int slot) {
     RECT row = quick_menu_item_rect(slot);
-    RECT rect = {row.left + 4, row.top + ITEM_H + 4,
-                 row.right - 4, row.top + ITEM_H + 18};
+    RECT rect = {row.left + 4, row.top + ITEM_H + 2,
+                 row.right - 4, row.top + ITEM_H + 14};
     return rect;
 }
 
@@ -812,13 +849,66 @@ static void paint_quick_menu_items(HDC mem, HFONT fN, HFONT fB, HFONT fS) {
         SelectObject(mem, fN);
         SetTextColor(mem, COL_TEXT);
         if (item.type == ITEM_TYPE_TOGGLE) {
-            const bool noclip = is_noclip_item(item_index);
+            const bool hold_key = is_hold_key_item(item_index);
+            const bool gamespeed = is_gamespeed_item(item_index);
             RECT label = {row.left + 4, row.top,
-                          noclip ? row.right - 122 : row.right - 62,
+                          gamespeed ? row.left + 94 :
+                          (hold_key ? row.right - 122 : row.right - 62),
                           row.top + ITEM_H};
             DrawTextA(mem, item.label, -1, &label,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            if (noclip) {
+            if (gamespeed) {
+                int slider_index = -1;
+                for (int j = 0; j < ITEM_COUNT; ++j) {
+                    if (g_items[j].on_slide == opt_gamespeed_apply) {
+                        slider_index = j;
+                        break;
+                    }
+                }
+                if (slider_index >= 0) {
+                    RECT track = quick_gamespeed_track_rect(slot);
+                    const int mn = g_items[slider_index].slider_min;
+                    const int mx = g_items[slider_index].slider_max;
+                    const int val = *g_items[slider_index].slider_val;
+                    const int width = track.right - track.left;
+                    const int fill_width = mx > mn
+                        ? (int)((long long)(val - mn) * width / (mx - mn)) : 0;
+                    HBRUSH track_bg = CreateSolidBrush(RGB(30,30,50));
+                    FillRect(mem, &track, track_bg);
+                    DeleteObject(track_bg);
+                    if (fill_width > 0) {
+                        RECT fill = {track.left, track.top,
+                                     track.left + fill_width, track.bottom};
+                        HBRUSH fill_bg = CreateSolidBrush(COL_SLIDER);
+                        FillRect(mem, &fill, fill_bg);
+                        DeleteObject(fill_bg);
+                    }
+                    HPEN track_pen = CreatePen(PS_SOLID, 1, COL_BORDER);
+                    HPEN old_track_pen = (HPEN)SelectObject(mem, track_pen);
+                    HBRUSH old_track_brush =
+                        (HBRUSH)SelectObject(mem, null_brush);
+                    Rectangle(mem, track.left, track.top,
+                              track.right, track.bottom);
+                    SelectObject(mem, old_track_pen);
+                    SelectObject(mem, old_track_brush);
+                    DeleteObject(track_pen);
+                    RECT thumb = {track.left + fill_width - 3, track.top - 3,
+                                  track.left + fill_width + 3, track.bottom + 3};
+                    HBRUSH thumb_bg = CreateSolidBrush(RGB(200,200,255));
+                    FillRect(mem, &thumb, thumb_bg);
+                    DeleteObject(thumb_bg);
+                    char factor[8];
+                    wsprintfA(factor, "x%d", val);
+                    SelectObject(mem, fS);
+                    SetTextColor(mem, COL_TEXT);
+                    RECT factor_rect = {track.left, row.top,
+                                        track.right, row.bottom};
+                    DrawTextA(mem, factor, -1, &factor_rect,
+                              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                    SelectObject(mem, fN);
+                }
+            }
+            if (hold_key) {
                 RECT key = quick_noclip_key_rect(slot);
                 HBRUSH key_bg = CreateSolidBrush(RGB(25,25,40));
                 FillRect(mem, &key, key_bg);
@@ -833,7 +923,7 @@ static void paint_quick_menu_items(HDC mem, HFONT fN, HFONT fB, HFONT fS) {
                 DeleteObject(key_pen);
                 char key_name[32] = {};
                 if (s_hold_key_capture_item == item_index) lstrcpyA(key_name, "...");
-                else opt_noclip_get_hold_key_name(key_name, sizeof(key_name));
+                else get_hold_key_name(item_index, key_name, sizeof(key_name));
                 SelectObject(mem, fS);
                 DrawTextA(mem, key_name, -1, &key,
                           DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
@@ -930,17 +1020,7 @@ static void paint_quick_menu_items(HDC mem, HFONT fN, HFONT fB, HFONT fS) {
     SetTextColor(mem, COL_TEXT);
 }
 
-static void paint_quick_toggles(HDC mem, HFONT fN, HFONT fB) {
-    SelectObject(mem, fB);
-    SetTextColor(mem, COL_TEXT);
-    RECT title = {
-        MENU_LEFT_W + MENU_GAP + 12,
-        QUICK_TOGGLE_TOP,
-        MENU_TOTAL_W - 12,
-        QUICK_TOGGLE_TOP + 22
-    };
-    DrawTextA(mem, "Options rapides", -1, &title,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+static void paint_quick_toggles(HDC mem, HFONT fN) {
     SelectObject(mem, fN);
 
     for (int i = 0; i < QUICK_TOGGLE_COUNT; ++i) {
@@ -1214,8 +1294,8 @@ static void paint(HWND hw) {
             int mx  = g_items[i].slider_max;
 
             int bx1 = PAD, bx2 = MENU_LEFT_W - PAD;
-            int by  = y + ITEM_H + 4;
-            int bh  = 14;
+            int by  = y + ITEM_H + 2;
+            int bh  = 12;
 
             char vbuf[32];
             if (g_items[i].on_slide == opt_gamespeed_apply)
@@ -1257,16 +1337,6 @@ static void paint(HWND hw) {
             FillRect(mem, &thumb, thbr);
             DeleteObject(thbr);
 
-            SelectObject(mem, fS);
-            SetTextColor(mem, COL_DIMTEXT);
-            char mns[16], mxs[16];
-            wsprintfA(mns, "%d", mn);
-            wsprintfA(mxs, "%d", mx);
-            RECT mnr = {bx1, by + bh + 1, bx1 + 50, by + bh + 12};
-            RECT mxr = {bx2 - 50, by + bh + 1, bx2, by + bh + 12};
-            DrawTextA(mem, mns, -1, &mnr, DT_LEFT | DT_TOP | DT_SINGLELINE);
-            DrawTextA(mem, mxs, -1, &mxr, DT_RIGHT | DT_TOP | DT_SINGLELINE);
-            SelectObject(mem, fN);
         }
     }
 
@@ -1279,7 +1349,7 @@ static void paint(HWND hw) {
     DeleteObject(vpen);
 
     paint_quick_menu_items(mem, fN, fB, fS);
-    paint_quick_toggles(mem, fN, fB);
+    paint_quick_toggles(mem, fN);
     paint_picker(mem, fN);
 
     // Footer gauche
@@ -1324,9 +1394,22 @@ static int quick_menu_item_at(int x, int y) {
 }
 
 static int quick_slider_val_from_x(int item_index, int x) {
-    const int slot = quick_menu_slot_from_item(item_index);
-    if (slot < 0) return *g_items[item_index].slider_val;
-    RECT track = quick_slider_track_rect(slot);
+    int slot = quick_menu_slot_from_item(item_index);
+    RECT track;
+    if (g_items[item_index].on_slide == opt_gamespeed_apply) {
+        slot = -1;
+        for (int i = 0; i < QUICK_MENU_ITEM_COUNT; ++i) {
+            if (is_gamespeed_item(s_quick_menu_items[i])) {
+                slot = i;
+                break;
+            }
+        }
+        if (slot < 0) return *g_items[item_index].slider_val;
+        track = quick_gamespeed_track_rect(slot);
+    } else {
+        if (slot < 0) return *g_items[item_index].slider_val;
+        track = quick_slider_track_rect(slot);
+    }
     int relative = x - track.left;
     const int width = track.right - track.left;
     if (relative < 0) relative = 0;
@@ -1355,7 +1438,7 @@ static int slider_val_from_x(int i, int x) {
 }
 
 static bool is_in_slider_track(int i, int x, int y) {
-    int by = item_y(i) + ITEM_H + 4;
+    int by = item_y(i) + ITEM_H + 2;
     return y >= by - 4 && y <= by + 18 && x >= PAD && x <= MENU_LEFT_W - PAD;
 }
 
@@ -1684,14 +1767,34 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             const int item = quick_menu_item_at(x, y);
             if (item >= 0) {
                 const int slot = quick_menu_slot_from_item(item);
-                const bool in_noclip_key = is_noclip_item(item) &&
+                const bool in_hold_key = is_hold_key_item(item) &&
                     ptin(quick_noclip_key_rect(slot), x, y);
-                if (!in_noclip_key) s_hold_key_capture_item = -1;
+                const bool in_gamespeed_track = is_gamespeed_item(item) &&
+                    ptin(quick_gamespeed_track_rect(slot), x, y);
+                if (!in_hold_key) s_hold_key_capture_item = -1;
                 if (g_items[item].type == ITEM_TYPE_TOGGLE) {
-                    if (in_noclip_key) {
+                    if (in_hold_key) {
                         s_hold_key_capture_item = item;
                         InterlockedExchange(&s_block_game_keyboard, 2);
                         InvalidateRect(hw, NULL, FALSE);
+                    } else if (in_gamespeed_track) {
+                        int slider_item = -1;
+                        for (int j = 0; j < ITEM_COUNT; ++j) {
+                            if (g_items[j].on_slide == opt_gamespeed_apply) {
+                                slider_item = j;
+                                break;
+                            }
+                        }
+                        if (slider_item >= 0) {
+                            s_slider_drag = true;
+                            s_slider_idx = slider_item;
+                            s_slider_start_value =
+                                *g_items[slider_item].slider_val;
+                            s_slider_in_quick_column = true;
+                            SetCapture(hw);
+                            apply_slider(slider_item,
+                                quick_slider_val_from_x(slider_item, x), false);
+                        }
                     } else {
                         s_hold_key_capture_item = -1;
                         toggle_item(item);
@@ -1937,14 +2040,12 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
 
         case VK_UP:
-            s_hovered = (s_hovered <= 0)
-                ? navigation_item_count() - 1 : s_hovered - 1;
+            s_hovered = navigation_step(s_hovered < 0 ? 0 : s_hovered, -1);
             InvalidateRect(hw, NULL, FALSE);
             return 0;
 
         case VK_DOWN:
-            s_hovered = (s_hovered >= navigation_item_count() - 1)
-                ? 0 : s_hovered + 1;
+            s_hovered = navigation_step(s_hovered, 1);
             InvalidateRect(hw, NULL, FALSE);
             return 0;
 
