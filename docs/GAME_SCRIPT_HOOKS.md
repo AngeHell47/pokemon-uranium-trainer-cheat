@@ -19,9 +19,11 @@ imbriqués à `Graphics.update` sans réentrer dans les callbacks du trainer.
 - Éclosion : le gestionnaire `Events.onStepTaken` décrémente `eggsteps`, puis
   appelle `pbHatch`. Un getter virtuel à 1 conserve l'animation et ne modifie
   pas le compteur réel si l'option est désactivée avant le prochain pas.
-- CS effaçables : `PokemonSummary#pbStartForgetScreen` contient l'unique refus
-  d'oublier une CS dans les scripts du jeu. Le wrapper saute ce refus sur
+- CS effaçables : `PokemonSummary#pbStartForgetScreen` appelle
+  `pbIsHiddenMove?` pour son unique refus. Le helper mémoire renvoie faux sur
   demande sans affecter l'utilisation des CS sur la carte ni les objets HM.
+  Le helper mémoire est reposé périodiquement pour résister aux chargements
+  tardifs de scripts d'Uranium.
 
 ## Éditeurs persistants
 
@@ -126,7 +128,8 @@ un garde optionnel, sans modifier `Scripts.rxdata` :
 Les protections consultent `$__uranium_trainer_hp_lock` et prouvent la
 propriété via `pbOwnedByPlayer?` ou l'identité dans `$Trainer.party`. Le payload
 natif synchronise cette globale avec le bouton et `trainer.ini`. Les wrappers
-sont recréés à chaque injection et disparaissent à la fermeture du jeu ; ils ne
+sont recréés à chaque injection, puis reposés périodiquement en mémoire pour
+résister aux chargements tardifs. Ils disparaissent à la fermeture du jeu et ne
 maintiennent jamais artificiellement un Pokémon KO dans le combat.
 
 Le prototype historique `opt_ohk.cpp` et l'ancien `opt_speedhack.cpp` restent

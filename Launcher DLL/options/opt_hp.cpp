@@ -10,6 +10,7 @@ static volatile LONG s_enabled = 0;
 static volatile LONG s_pending = 0;
 static volatile LONG s_installed = 0;
 static volatile LONG s_retry_started = 0;
+static LONG          s_refresh_frames = 0;
 static char          s_ruby[8192];
 
 static void post_to_game() {
@@ -96,7 +97,13 @@ static void build_ruby_apply() {
 }
 
 static void __cdecl on_game_thread_tick(void*) {
-    if (InterlockedExchange(&s_pending, 0) == 0) return;
+    if (InterlockedExchange(&s_pending, 0) == 0) {
+        // Uranium peut recharger tardivement ses classes de combat. Reposer
+        // les trois petits corps une fois par seconde rend le hook resistant
+        // a cet ecrasement sans aucune ecriture disque.
+        if (++s_refresh_frames < 60) return;
+    }
+    s_refresh_frames = 0;
     build_ruby_apply();
     if (rgss_safe_eval(s_ruby) != 0)
         InterlockedExchange(&s_pending, 1);
@@ -127,6 +134,7 @@ void opt_hp_init(const char* ini_path) {
     InterlockedExchange(&s_enabled, g_hp_lock ? 1 : 0);
     InterlockedExchange(&s_pending, 1);
     InterlockedExchange(&s_installed, 0);
+    s_refresh_frames = 0;
 }
 
 void opt_hp_set_hwnd(HWND hwnd) {
