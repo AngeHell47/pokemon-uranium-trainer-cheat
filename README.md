@@ -37,7 +37,7 @@ build.bat
 
 Le binaire généré se trouve dans `Trainer externe/UraniumTrainer.exe`.
 
-L'EXE contient également la base des attaques nécessaire au panneau Pokémon ;
+L'EXE contient également la base des attaques nécessaire à l'éditeur Pokémon ;
 aucun fichier `moves.txt` ni DLL auxiliaire n'est requis à l'utilisation.
 
 ## Fonctions actuelles
@@ -51,7 +51,9 @@ aucun fichier `moves.txt` ni DLL auxiliaire n'est requis à l'utilisation.
 - Noclip pendant le maintien d'une touche configurable (`Ctrl` par défaut), ou
   actif en permanence si aucune touche n'est assignée, blocage des rencontres,
   soin de l'équipe et vitesses de déplacement.
-- Argent, quantité de l'objet sélectionné et édition du premier Pokémon.
+- Argent et deux fenêtres autonomes : inventaire complet par poche/catalogue,
+  plus équipe et boîtes avec création, suppression et édition détaillée des
+  Pokémon (PV, IV/EV, nature, objet tenu, attaques, PP et provenance).
 - Dézoom logique de la carte en conservant la taille physique de la fenêtre.
 - Zoom avant/arrière directement en jeu avec la molette de la souris.
 

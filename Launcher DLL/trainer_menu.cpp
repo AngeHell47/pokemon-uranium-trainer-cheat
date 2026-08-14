@@ -7,11 +7,9 @@
 #include "options/opt_hmforget.h"
 //#include "options/opt_ohk.h"
 #include "options/opt_money.h"
-#include "options/opt_bagitem.h"
 #include "options/opt_noclip.h"
 #include "options/opt_speed.h"
 #include "options/opt_noenc.h"
-#include "options/opt_partymon.h"
 #include "options/opt_time.h"
 #include "options/opt_weather.h"
 #include "options/opt_heal.h"
@@ -19,6 +17,7 @@
 #include "options/opt_zoom.h"
 #include "moves_db.h"
 #include "rgss_safe_dispatch.h"
+#include "trainer_editors.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -40,6 +39,14 @@
 
 #ifndef ITEM_TYPE_ACTION
 #define ITEM_TYPE_ACTION 6
+#endif
+
+#ifndef ITEM_TYPE_POKEMON_MANAGER
+#define ITEM_TYPE_POKEMON_MANAGER 7
+#endif
+
+#ifndef ITEM_TYPE_INVENTORY_MANAGER
+#define ITEM_TYPE_INVENTORY_MANAGER 8
 #endif
 
 #ifndef PARTYMON_H
@@ -90,7 +97,10 @@ MenuItem g_items[] = {
 
     { "Argent ($)", ITEM_TYPE_SLIDER,
       NULL,NULL, &g_money_value,0,999999,opt_money_apply },
-    { "", ITEM_TYPE_BAGITEM,
+
+    { "Gerer tous les Pokemon", ITEM_TYPE_POKEMON_MANAGER,
+      NULL,NULL, NULL,0,0,NULL },
+    { "Gerer tout l'inventaire", ITEM_TYPE_INVENTORY_MANAGER,
       NULL,NULL, NULL,0,0,NULL },
 
     { "Dezoom camera (%)", ITEM_TYPE_SLIDER,
@@ -143,7 +153,6 @@ static int menu_height() {
     int h = TITLE_H + 20;
     for (int i = 0; i < ITEM_COUNT; i++) {
         if      (g_items[i].type == ITEM_TYPE_SLIDER)   h += SLIDER_H;
-        else if (g_items[i].type == ITEM_TYPE_BAGITEM)  h += BAGITEM_H;
         else                                            h += ITEM_H;
     }
     return h;
@@ -153,7 +162,6 @@ static int item_y(int idx) {
     int y = TITLE_H;
     for (int i = 0; i < idx; i++) {
         if      (g_items[i].type == ITEM_TYPE_SLIDER)   y += SLIDER_H;
-        else if (g_items[i].type == ITEM_TYPE_BAGITEM)  y += BAGITEM_H;
         else                                            y += ITEM_H;
     }
     return y;
@@ -161,7 +169,6 @@ static int item_y(int idx) {
 
 static int item_h(int idx) {
     if (g_items[idx].type == ITEM_TYPE_SLIDER)   return SLIDER_H;
-    if (g_items[idx].type == ITEM_TYPE_BAGITEM)  return BAGITEM_H;
     return ITEM_H;
 }
 
@@ -202,11 +209,7 @@ static int   s_drag_ox = 0, s_drag_oy = 0;
 static bool  s_slider_drag   = false;
 static int   s_slider_idx    = -1;
 static int   s_slider_start_value = 0;
-static bool  s_qty_editing   = false;
 static bool  s_noclip_key_capture = false;
-static char  s_qty_buf[8]    = "0";
-static int   s_qty_len       = 1;
-static int   s_qty_edit_item_id = 0;
 static UINT_PTR s_watch_timer = 0;
 static DWORD s_heal_flash_until = 0;  // GetTickCount() until which to show flash
 
@@ -294,38 +297,9 @@ static void post_input_guard_tick() {
     rgss_safe_dispatch_notify();
 }
 
-// ------------------------------------------------------------
-// PARTYMON PANEL STATE
-// ------------------------------------------------------------
-
-enum EditField {
-    EF_NONE = 0,
-    EF_PM_NAME,
-    EF_PM_LEVEL,
-    EF_PM_GENDER,
-    EF_PM_SHINY,
-    EF_PM_IV0, EF_PM_IV1, EF_PM_IV2, EF_PM_IV3, EF_PM_IV4, EF_PM_IV5,
-    EF_PM_EV0, EF_PM_EV1, EF_PM_EV2, EF_PM_EV3, EF_PM_EV4, EF_PM_EV5,
-    EF_PM_MOVE0, EF_PM_MOVE1, EF_PM_MOVE2, EF_PM_MOVE3
-};
-
-
-
-static EditField s_pm_field = EF_NONE;
-static bool s_pm_name_edit  = false;
 static bool menu_has_keyboard_editor() {
-    return s_pm_name_edit || s_qty_editing || s_noclip_key_capture;
+    return s_noclip_key_capture || trainer_editors_any_open();
 }
-// Pokemon Uranium limite nativement les surnoms a 11 caracteres.
-static char s_pm_name_buf[12] = {0};
-
-static RECT s_pm_rc_level  = {0};
-static RECT s_pm_rc_name   = {0};
-static RECT s_pm_rc_gender = {0};
-static RECT s_pm_rc_shiny  = {0};
-static RECT s_pm_rc_iv[6]  = {};
-static RECT s_pm_rc_ev[6]  = {};
-static RECT s_pm_rc_mv[4]  = {};
 
 static bool ptin(const RECT& r, int x, int y) {
     return x >= r.left && x < r.right && y >= r.top && y < r.bottom;
@@ -333,20 +307,12 @@ static bool ptin(const RECT& r, int x, int y) {
 
 enum PickerType {
     PICKER_NONE = 0,
-    PICKER_IV,
-    PICKER_EV,
-    PICKER_MOVE,
-    PICKER_LEVEL,
-    PICKER_GENDER,
-    PICKER_SHINY,
     PICKER_TIME,
-    PICKER_WEATHER,
-    PICKER_BAG_QTY
+    PICKER_WEATHER
 };
 
 static bool s_picker_scroll_drag = false;
 static int  s_picker_scroll_drag_dy = 0;
-static int  s_picker_bag_item_id = 0;
 
 static bool       s_picker_open   = false;
 static PickerType s_picker_type   = PICKER_NONE;
@@ -369,60 +335,6 @@ static void picker_close() {
     s_picker_scroll_drag = false;
     s_picker_scroll_drag_dy = 0;
     SetRectEmpty(&s_picker_rc);
-}
-
-static void picker_open_gender(const RECT& anchor) {
-    s_picker_open = true;
-    s_picker_type = PICKER_GENDER;
-    s_picker_index = 0;
-    s_picker_hover = -1;
-    s_picker_scroll = 0;
-    s_picker_count = 3;
-
-    s_picker_values[0] = 0; s_picker_labels[0] = "Male";
-    s_picker_values[1] = 2; s_picker_labels[1] = "Asexual";
-    s_picker_values[2] = 1; s_picker_labels[2] = "Female";
-
-    s_picker_rc.left   = anchor.left;
-    s_picker_rc.top    = anchor.bottom + 2;
-    s_picker_rc.right  = anchor.right + 40;
-    s_picker_rc.bottom = s_picker_rc.top + s_picker_count * 20 + 4;
-}
-
-static void picker_open_shiny(const RECT& anchor) {
-    s_picker_open = true;
-    s_picker_type = PICKER_SHINY;
-    s_picker_index = 0;
-    s_picker_hover = -1;
-    s_picker_scroll = 0;
-    s_picker_count = 2;
-
-    s_picker_values[0] = 1; s_picker_labels[0] = "Yes";
-    s_picker_values[1] = 0; s_picker_labels[1] = "No";
-
-    s_picker_rc.left   = anchor.left;
-    s_picker_rc.top    = anchor.bottom + 2;
-    s_picker_rc.right  = anchor.right + 40;
-    s_picker_rc.bottom = s_picker_rc.top + s_picker_count * 20 + 4;
-}
-
-static void picker_open_level(const RECT& anchor) {
-    s_picker_open = true;
-    s_picker_type = PICKER_LEVEL;
-    s_picker_index = 0;
-    s_picker_hover = -1;
-    s_picker_scroll = 0;
-    s_picker_count = 100;
-
-    for (int i = 0; i < 100; i++) {
-        s_picker_values[i] = i + 1;
-        s_picker_labels[i] = NULL;
-    }
-
-    s_picker_rc.left   = anchor.left;
-    s_picker_rc.top    = anchor.bottom + 2;
-    s_picker_rc.right  = anchor.right + 40;
-    s_picker_rc.bottom = s_picker_rc.top + 8 * 20 + 4;
 }
 
 static void picker_open_time(const RECT& anchor) {
@@ -469,75 +381,6 @@ static void picker_open_weather(const RECT& anchor) {
     s_picker_rc.top    = anchor.bottom + 2;
     s_picker_rc.right  = anchor.right + 60;
     s_picker_rc.bottom = s_picker_rc.top + 10 * 20 + 4;
-}
-
-static void picker_open_bag_qty(const RECT& anchor) {
-    s_picker_open = true;
-    s_picker_type = PICKER_BAG_QTY;
-    s_picker_index = 0;
-    s_picker_hover = -1;
-    s_picker_scroll = 0;
-    s_picker_bag_item_id = g_bag_item.item_id;
-    s_picker_count = 100;
-
-    for (int i = 0; i < 100; i++) {
-        s_picker_values[i] = i;
-        s_picker_labels[i] = NULL;
-    }
-
-    s_picker_rc.left   = anchor.left;
-    s_picker_rc.top    = anchor.bottom + 2;
-    s_picker_rc.right  = anchor.right + 40;
-    s_picker_rc.bottom = s_picker_rc.top + 8 * 20 + 4;
-}
-
-static void picker_open_iv(int stat_index, const RECT& anchor) {
-    s_picker_open = true;
-    s_picker_type = PICKER_IV;
-    s_picker_index = stat_index;
-    s_picker_hover = -1;
-    s_picker_scroll = 0;
-
-    s_picker_count = 32; // 0..31 (limite native des IV)
-
-    s_picker_rc.left   = anchor.left;
-    s_picker_rc.top    = anchor.bottom + 2;
-    s_picker_rc.right  = anchor.right + 60;
-    s_picker_rc.bottom = s_picker_rc.top + 8 * 20 + 4;
-}
-
-static void picker_open_ev(int stat_index, const RECT& anchor) {
-    s_picker_open = true;
-    s_picker_type = PICKER_EV;
-    s_picker_index = stat_index;
-    s_picker_hover = -1;
-    s_picker_scroll = 0;
-
-    s_picker_count = 256; // 0..255 (limite native par statistique)
-
-    s_picker_rc.left   = anchor.left;
-    s_picker_rc.top    = anchor.bottom + 2;
-    s_picker_rc.right  = anchor.right + 60;
-    s_picker_rc.bottom = s_picker_rc.top + 8 * 20 + 4;
-}
-
-static void picker_open_move(int slot, const RECT& anchor) {
-    s_picker_open = true;
-    s_picker_type = PICKER_MOVE;
-    s_picker_index = slot;
-    s_picker_hover = -1;
-    s_picker_scroll = 0;
-
-    s_picker_count = movesdb_count();
-    if (s_picker_count > 2048) s_picker_count = 2048;
-    for (int i = 0; i < s_picker_count; i++) {
-        s_picker_values[i] = movesdb_id_at(i);
-    }
-
-    s_picker_rc.left   = anchor.left;
-    s_picker_rc.top    = anchor.bottom + 2;
-    s_picker_rc.right  = anchor.right;
-    s_picker_rc.bottom = s_picker_rc.top + 8 * 20 + 4;
 }
 
 static int picker_visible_rows() {
@@ -597,7 +440,6 @@ static void picker_scroll_to_thumb_center(int y) {
     RECT sr = picker_scrollbar_rect();
     RECT th = picker_thumb_rect();
 
-    int visible = picker_visible_rows();
     int max_scroll = picker_max_scroll();
     int track_h = sr.bottom - sr.top;
     int thumb_h = th.bottom - th.top;
@@ -637,51 +479,19 @@ static void picker_apply(int idx) {
     if (!s_picker_open) return;
     if (idx < 0 || idx >= s_picker_count) return;
 
-    int val;
-    if (s_picker_type == PICKER_IV || s_picker_type == PICKER_EV)
-        val = idx;
-    else
-        val = s_picker_values[idx];
-
-    if (s_picker_type == PICKER_IV) {
-        opt_partymon_set_iv(s_picker_index, val);
-        s_pm_field = (EditField)(EF_PM_IV0 + s_picker_index);
-    }
-    else if (s_picker_type == PICKER_EV) {
-        opt_partymon_set_ev(s_picker_index, val);
-        s_pm_field = (EditField)(EF_PM_EV0 + s_picker_index);
-    }
-    else if (s_picker_type == PICKER_MOVE) {
-        opt_partymon_set_move(s_picker_index, val);
-        s_pm_field = (EditField)(EF_PM_MOVE0 + s_picker_index);
-    }
-    else if (s_picker_type == PICKER_GENDER) {
-        opt_partymon_set_gender(val);
-        s_pm_field = EF_PM_GENDER;
-    }
-    else if (s_picker_type == PICKER_SHINY) {
-        opt_partymon_set_shiny(val != 0);
-        s_pm_field = EF_PM_SHINY;
-    }
-    else if (s_picker_type == PICKER_BAG_QTY) {
-        opt_bagitem_set_quantity(s_picker_bag_item_id, val);
-    }
-    else if (s_picker_type == PICKER_TIME) {
+    const int val = s_picker_values[idx];
+    if (s_picker_type == PICKER_TIME) {
         opt_time_apply_hour(val);
     }
     else if (s_picker_type == PICKER_WEATHER) {
         opt_weather_apply(val);
-    }
-    else if (s_picker_type == PICKER_LEVEL) {
-        opt_partymon_set_level(val);
-        s_pm_field = EF_PM_LEVEL;
     }
 	
     picker_close();
     InvalidateRect(s_overlay, NULL, FALSE);
 }
 
-static void paint_picker(HDC mem, HFONT fN, HFONT fS) {
+static void paint_picker(HDC mem, HFONT fN) {
     if (!s_picker_open) return;
 
     HBRUSH bg = CreateSolidBrush(RGB(16,16,28));
@@ -719,24 +529,13 @@ static void paint_picker(HDC mem, HFONT fN, HFONT fS) {
 
         char buf[256];
         
-        if (s_picker_type == PICKER_MOVE) {
-            int move_id = s_picker_values[idx];
-            const char* name = movesdb_name_from_id(move_id);
-            wsprintfA(buf, "%d - %s", move_id, name ? name : "UNKNOWN");
-        }
-        else if (s_picker_type == PICKER_GENDER || s_picker_type == PICKER_SHINY) {
-            lstrcpynA(buf, s_picker_labels[idx] ? s_picker_labels[idx] : "", sizeof(buf));
-        }
-        else if (s_picker_type == PICKER_TIME) {
+        if (s_picker_type == PICKER_TIME) {
             if (s_picker_labels[idx]) lstrcpynA(buf, s_picker_labels[idx], sizeof(buf));
             else wsprintfA(buf, "%02dh", s_picker_values[idx]);
         }
         else if (s_picker_type == PICKER_WEATHER) {
             if (s_picker_labels[idx]) lstrcpynA(buf, s_picker_labels[idx], sizeof(buf));
             else wsprintfA(buf, "%d", s_picker_values[idx]);
-        }
-        else if (s_picker_type == PICKER_IV || s_picker_type == PICKER_EV) {
-            wsprintfA(buf, "%d", idx); // 🔥 valeur = index direct
         }
         else {
             wsprintfA(buf, "%d", s_picker_values[idx]);
@@ -769,16 +568,6 @@ static void paint_picker(HDC mem, HFONT fN, HFONT fS) {
         FillRect(mem, &th, tbr);
         DeleteObject(tbr);
     }
-}
-
-static void pm_reset_edit_state() {
-    s_pm_field = EF_NONE;
-    s_pm_name_edit = false;
-    s_pm_name_buf[0] = '\0';
-}
-
-static bool pm_is_editing() {
-    return s_pm_name_edit || s_pm_field != EF_NONE;
 }
 
 // ------------------------------------------------------------
@@ -836,6 +625,17 @@ static void sync_overlay_to_game() {
         return;
     }
 
+    if (trainer_editors_any_open()) {
+        ShowWindow(s_overlay, SW_HIDE);
+        InterlockedExchange(&s_block_game_keyboard, 2);
+        POINT cursor = {};
+        const bool cursor_over_editor = GetCursorPos(&cursor) &&
+            trainer_editors_contains_screen_point(cursor);
+        InterlockedExchange(&s_block_game_mouse,
+                            cursor_over_editor ? 1 : 0);
+        return;
+    }
+
     ShowWindow(s_overlay, SW_SHOWNOACTIVATE);
     InterlockedExchange(&s_block_game_keyboard,
                         menu_has_keyboard_editor() ? 2 : 1);
@@ -853,219 +653,6 @@ static void sync_overlay_to_game() {
     InterlockedExchange(&s_block_game_mouse,
                         (cursor_over || captured != 0) ? 1 : 0);
 
-    static int last_item_id = -1;
-    static int last_item_qty = -1;
-
-    int cid = g_bag_item.item_id;
-    int cqty = g_bag_item.quantity;
-    if (cid != last_item_id || cqty != last_item_qty) {
-        last_item_id = cid;
-        last_item_qty = cqty;
-        InvalidateRect(s_overlay, NULL, FALSE);
-    }
-
-    static int pm_valid   = -999;
-    static int pm_species = -999;
-    static int pm_level   = -999;
-    static int pm_hp      = -999;
-    static int pm_totalhp = -999;
-    static int pm_gender  = -999;
-    static int pm_shiny   = -999;
-    static int pm_index   = -999;
-    static char pm_name[32] = {0};
-    static int pm_moves[4] = {-999,-999,-999,-999};
-
-    bool changed = false;
-    if (g_partymon.valid      != pm_valid)   { pm_valid   = g_partymon.valid;      changed = true; }
-    if (g_partymon.species    != pm_species) { pm_species = g_partymon.species;    changed = true; }
-    if (g_partymon.level      != pm_level)   { pm_level   = g_partymon.level;      changed = true; }
-    if (g_partymon.hp         != pm_hp)      { pm_hp      = g_partymon.hp;         changed = true; }
-    if (g_partymon.totalhp    != pm_totalhp) { pm_totalhp = g_partymon.totalhp;    changed = true; }
-    if (g_partymon.gender     != pm_gender)  { pm_gender  = g_partymon.gender;     changed = true; }
-    if (g_partymon.shiny      != pm_shiny)   { pm_shiny   = g_partymon.shiny;      changed = true; }
-    if (g_partymon.party_index!= pm_index)   { pm_index   = g_partymon.party_index;changed = true; }
-
-    if (strncmp(pm_name, (const char*)g_partymon.name, 31) != 0) {
-        strncpy(pm_name, (const char*)g_partymon.name, 31);
-        pm_name[31] = '\0';
-        changed = true;
-    }
-
-    for (int i = 0; i < 4; i++) {
-        if (pm_moves[i] != g_partymon.move_ids[i]) {
-            pm_moves[i] = g_partymon.move_ids[i];
-            changed = true;
-        }
-    }
-
-    if (changed) {
-        InvalidateRect(s_overlay, NULL, FALSE);
-    }
-}
-
-// ------------------------------------------------------------
-// PARTYMON DRAW HELPERS
-// ------------------------------------------------------------
-
-static void draw_value_box(HDC mem, const RECT* r, const char* text, bool selected) {
-    HBRUSH br = CreateSolidBrush(selected ? RGB(70,70,120) : RGB(25,25,40));
-    FillRect(mem, r, br);
-    DeleteObject(br);
-
-    HPEN pen = CreatePen(PS_SOLID, 1, selected ? RGB(140,140,220) : COL_BORDER);
-    HPEN oldp = (HPEN)SelectObject(mem, pen);
-    HBRUSH oldb = (HBRUSH)SelectObject(mem, GetStockObject(NULL_BRUSH));
-    Rectangle(mem, r->left, r->top, r->right, r->bottom);
-    SelectObject(mem, oldp);
-    SelectObject(mem, oldb);
-    DeleteObject(pen);
-
-    SetBkMode(mem, TRANSPARENT);
-    SetTextColor(mem, COL_TEXT);
-    RECT tr = *r;
-    tr.left += 4;
-    tr.right -= 4;
-    DrawTextA(mem, text, -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-}
-
-static void paint_partymon_panel(HDC mem, int x, int y, int w, int h, HFONT fN, HFONT fS, HFONT fB) {
-    RECT panel = { x + 4, y + 4, x + w - 4, y + h - 4 };
-
-    HBRUSH bg = CreateSolidBrush(RGB(18,18,32));
-    FillRect(mem, &panel, bg);
-    DeleteObject(bg);
-
-    HPEN pen = CreatePen(PS_SOLID, 1, RGB(55,55,85));
-    HPEN oldp = (HPEN)SelectObject(mem, pen);
-    HBRUSH oldb = (HBRUSH)SelectObject(mem, GetStockObject(NULL_BRUSH));
-    Rectangle(mem, panel.left, panel.top, panel.right, panel.bottom);
-    SelectObject(mem, oldp);
-    SelectObject(mem, oldb);
-    DeleteObject(pen);
-
-    SetBkMode(mem, TRANSPARENT);
-    SetTextColor(mem, COL_TEXT);
-
-    SelectObject(mem, fB);
-    RECT ttl = { panel.left + 8, panel.top + 4, panel.right - 8, panel.top + 22 };
-    DrawTextA(mem, "Pokemon selectionne", -1, &ttl, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-    if (!g_partymon.valid) {
-        SelectObject(mem, fS);
-        SetTextColor(mem, COL_DIMTEXT);
-        RECT nr = { panel.left + 8, panel.top + 34, panel.right - 8, panel.top + 56 };
-        DrawTextA(mem, "Ouvre l'ecran equipe ou le resume Pokemon.", -1, &nr,
-                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        return;
-    }
-
-    char buf[256];
-
-    // Nom
-    SelectObject(mem, fN);
-    RECT nl = { panel.left + 8, panel.top + 28, panel.left + 50, panel.top + 48 };
-    DrawTextA(mem, "Nom", -1, &nl, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-    s_pm_rc_name.left   = panel.left + 50;
-    s_pm_rc_name.top    = panel.top + 26;
-    s_pm_rc_name.right  = panel.right - 8;
-    s_pm_rc_name.bottom = panel.top + 48;
-    char name_display[64];
-    if (s_pm_name_edit) {
-        wsprintfA(name_display, "%s_", s_pm_name_buf);
-    } else {
-        lstrcpynA(name_display, (const char*)g_partymon.name, sizeof(name_display));
-    }
-    
-    draw_value_box(mem, &s_pm_rc_name, name_display, s_pm_field == EF_PM_NAME);
-
-    // Level / Sexe / shiny
-    RECT ll = { panel.left + 8, panel.top + 56, panel.left + 50, panel.top + 76 };
-    DrawTextA(mem, "Level", -1, &ll, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-    s_pm_rc_level.left   = panel.left + 50;
-    s_pm_rc_level.top    = panel.top + 54;
-    s_pm_rc_level.right  = panel.left + 100;
-    s_pm_rc_level.bottom = panel.top + 76;
-    wsprintfA(buf, "%d", g_partymon.level);
-    draw_value_box(mem, &s_pm_rc_level, buf, s_pm_field == EF_PM_LEVEL);
-
-    RECT gl = { panel.left + 108, panel.top + 56, panel.left + 152, panel.top + 76 };
-    DrawTextA(mem, "Sexe", -1, &gl, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-    s_pm_rc_gender.left   = panel.left + 150;
-    s_pm_rc_gender.top    = panel.top + 54;
-    s_pm_rc_gender.right  = panel.left + 230;
-    s_pm_rc_gender.bottom = panel.top + 76;
-
-    const char* gtxt = "Male";
-    if (g_partymon.gender == 1) gtxt = "Femelle";
-    else if (g_partymon.gender == 2) gtxt = "Asexue";
-    draw_value_box(mem, &s_pm_rc_gender, gtxt, s_pm_field == EF_PM_GENDER);
-
-    RECT sl = { panel.left + 238, panel.top + 56, panel.left + 283, panel.top + 76 };
-    DrawTextA(mem, "Shiny", -1, &sl, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-    s_pm_rc_shiny.left   = panel.left + 283;
-    s_pm_rc_shiny.top    = panel.top + 54;
-    s_pm_rc_shiny.right  = panel.right - 8;
-    s_pm_rc_shiny.bottom = panel.top + 76;
-    draw_value_box(mem, &s_pm_rc_shiny, g_partymon.shiny ? "ON" : "OFF",
-                   s_pm_field == EF_PM_SHINY);
-
-    // Ligne info
-    SelectObject(mem, fS);
-    wsprintfA(buf, "Idx:%d  Species:%d  HP:%d/%d",
-              g_partymon.party_index, g_partymon.species,
-              g_partymon.hp, g_partymon.totalhp);
-    RECT ir = { panel.left + 8, panel.top + 84, panel.right - 8, panel.top + 100 };
-    DrawTextA(mem, buf, -1, &ir, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-    const char* stats[6] = { "HP", "ATK", "DEF", "SPD", "SATK", "SDEF" };
-
-    // IV / EV
-    SelectObject(mem, fN);
-    RECT ivt = { panel.left + 8, panel.top + 106, panel.left + 50, panel.top + 124 };
-    RECT evt = { panel.left + 138, panel.top + 106, panel.left + 180, panel.top + 124 };
-    DrawTextA(mem, "IV", -1, &ivt, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    DrawTextA(mem, "EV", -1, &evt, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-    for (int i = 0; i < 6; i++) {
-        int yy = panel.top + 126 + i * 20;
-
-        RECT sr = { panel.left + 8, yy, panel.left + 48, yy + 18 };
-        DrawTextA(mem, stats[i], -1, &sr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-        wsprintfA(buf, "%d", g_partymon.iv[i]);
-        s_pm_rc_iv[i].left   = panel.left + 48;
-        s_pm_rc_iv[i].top    = yy - 1;
-        s_pm_rc_iv[i].right  = panel.left + 104;
-        s_pm_rc_iv[i].bottom = yy + 18;
-        draw_value_box(mem, &s_pm_rc_iv[i], buf, s_pm_field == (EditField)(EF_PM_IV0 + i));
-
-        wsprintfA(buf, "%d", g_partymon.ev[i]);
-        s_pm_rc_ev[i].left   = panel.left + 176;
-        s_pm_rc_ev[i].top    = yy - 1;
-        s_pm_rc_ev[i].right  = panel.left + 242;
-        s_pm_rc_ev[i].bottom = yy + 18;
-        draw_value_box(mem, &s_pm_rc_ev[i], buf, s_pm_field == (EditField)(EF_PM_EV0 + i));
-    }
-
-    // Moves
-    RECT mvt = { panel.left + 8, panel.top + 248, panel.right - 8, panel.top + 264 };
-    DrawTextA(mem, "Attaques", -1, &mvt, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-    for (int i = 0; i < 4; i++) {
-        int yy = panel.top + 266 + i * 24;
-        const char* mname = movesdb_name_from_id(g_partymon.move_ids[i]);
-        wsprintfA(buf, "%d - %s", g_partymon.move_ids[i], mname ? mname : "UNKNOWN");
-
-        s_pm_rc_mv[i].left   = panel.left + 8;
-        s_pm_rc_mv[i].top    = yy - 1;
-        s_pm_rc_mv[i].right  = panel.right - 8;
-        s_pm_rc_mv[i].bottom = yy + 20;
-        draw_value_box(mem, &s_pm_rc_mv[i], buf, s_pm_field == (EditField)(EF_PM_MOVE0 + i));
-    }
 }
 
 static void paint_quick_toggles(HDC mem, HFONT fN, HFONT fB) {
@@ -1321,6 +908,27 @@ static void paint(HWND hw) {
             SetTextColor(mem, COL_TEXT);
             DrawTextA(mem, flashing ? "OK!" : "GO", -1, &brc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
+        else if (g_items[i].type == ITEM_TYPE_POKEMON_MANAGER ||
+                 g_items[i].type == ITEM_TYPE_INVENTORY_MANAGER) {
+            RECT lrc = {PAD, y, MENU_LEFT_W - 76, y + ITEM_H};
+            DrawTextA(mem, g_items[i].label, -1, &lrc,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+            RECT brc = {MENU_LEFT_W - 68, y + 6,
+                         MENU_LEFT_W - PAD, y + ITEM_H - 6};
+            HBRUSH bbr = CreateSolidBrush(RGB(70,80,155));
+            FillRect(mem, &brc, bbr);
+            DeleteObject(bbr);
+            HPEN bpn = CreatePen(PS_SOLID, 1, RGB(125,135,220));
+            HPEN obpn = (HPEN)SelectObject(mem, bpn);
+            HBRUSH obb = (HBRUSH)SelectObject(mem, nb);
+            Rectangle(mem, brc.left, brc.top, brc.right, brc.bottom);
+            SelectObject(mem, obpn);
+            SelectObject(mem, obb);
+            DeleteObject(bpn);
+            DrawTextA(mem, "OUVRIR", -1, &brc,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
         else if (g_items[i].type == ITEM_TYPE_SLIDER) {
             RECT lrc = {PAD, y, MENU_LEFT_W - 70, y + ITEM_H};
             DrawTextA(mem, g_items[i].label, -1, &lrc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -1381,47 +989,6 @@ static void paint(HWND hw) {
             DrawTextA(mem, mxs, -1, &mxr, DT_RIGHT | DT_TOP | DT_SINGLELINE);
             SelectObject(mem, fN);
         }
-        else if (g_items[i].type == ITEM_TYPE_BAGITEM) {
-            int id = g_bag_item.item_id;
-            if (id == 0) {
-                SetTextColor(mem, RGB(255,255,255));
-                SelectObject(mem, fN);
-                RECT nr = {PAD, y, MENU_LEFT_W - PAD, y + BAGITEM_H - 4};
-                DrawTextA(mem, "Ouvrir le sac et selectionner un item", -1, &nr,
-                          DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-            } else {
-                int qx1 = MENU_LEFT_W - 58, qx2 = MENU_LEFT_W - PAD;
-                int qy1 = y + 8, qy2 = y + ITEM_H - 8;
-
-                HBRUSH qbg = CreateSolidBrush(RGB(25,25,40));
-                RECT qbox = {qx1, qy1, qx2, qy2};
-                FillRect(mem, &qbox, qbg);
-                DeleteObject(qbg);
-
-                HPEN qpen = CreatePen(PS_SOLID, 1, s_qty_editing ? COL_SLIDER : COL_BORDER);
-                HPEN oqpen = (HPEN)SelectObject(mem, qpen);
-                HBRUSH oqnb = (HBRUSH)SelectObject(mem, nb);
-                Rectangle(mem, qbox.left, qbox.top, qbox.right, qbox.bottom);
-                SelectObject(mem, oqpen);
-                SelectObject(mem, oqnb);
-                DeleteObject(qpen);
-
-                char qstr[16];
-                wsprintfA(qstr, "%d", g_bag_item.quantity);
-                
-                SetTextColor(mem, COL_TEXT);
-                SelectObject(mem, fB);
-                RECT qtxt = {qbox.left + 3, qbox.top, qbox.right - 3, qbox.bottom};
-                DrawTextA(mem, qstr, -1, &qtxt, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-                SelectObject(mem, fN);
-
-                SetTextColor(mem, RGB(180,220,255));
-                SelectObject(mem, fB);
-                RECT nr = {PAD, y, qx1 - 4, y + ITEM_H};
-                DrawTextA(mem, (char*)g_bag_item.name, -1, &nr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-                SelectObject(mem, fN);
-            }
-        }
     }
 
     // Séparateur vertical
@@ -1432,17 +999,42 @@ static void paint(HWND hw) {
     SelectObject(mem, ovpen);
     DeleteObject(vpen);
 
-    // Colonne droite : panneau Pokemon
-    paint_partymon_panel(
-        mem,
-        MENU_LEFT_W + MENU_GAP,
-        TITLE_H,
-        MENU_RIGHT_W,
-        H - TITLE_H - 20,
-        fN, fS, fB
-    );
+    // Les anciens panneaux dependants de la selection dans le jeu sont
+    // remplaces par deux fenetres autonomes.
+    {
+        RECT panel = {MENU_LEFT_W + MENU_GAP + 8, TITLE_H + 10,
+                      MENU_TOTAL_W - 8, TITLE_H + 188};
+        HBRUSH panel_bg = CreateSolidBrush(RGB(25,25,40));
+        FillRect(mem, &panel, panel_bg);
+        DeleteObject(panel_bg);
+        HPEN panel_pen = CreatePen(PS_SOLID, 1, COL_BORDER);
+        HPEN old_panel_pen = (HPEN)SelectObject(mem, panel_pen);
+        HBRUSH old_panel_brush = (HBRUSH)SelectObject(mem, nb);
+        Rectangle(mem, panel.left, panel.top, panel.right, panel.bottom);
+        SelectObject(mem, old_panel_pen);
+        SelectObject(mem, old_panel_brush);
+        DeleteObject(panel_pen);
+
+        SelectObject(mem, fB);
+        SetTextColor(mem, COL_TEXT);
+        RECT heading = {panel.left + 10, panel.top + 8,
+                        panel.right - 10, panel.top + 32};
+        DrawTextA(mem, "Editeurs complets", -1, &heading,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(mem, fN);
+        SetTextColor(mem, RGB(175,185,225));
+        RECT description = {panel.left + 10, panel.top + 38,
+                            panel.right - 10, panel.bottom - 8};
+        DrawTextA(mem,
+                  "Pokemon : equipe + boites, PV, IV, EV, nature, objet, "
+                  "attaques, PP, provenance, creation et suppression.\n\n"
+                  "Inventaire : toutes les poches, catalogue complet, ajout, "
+                  "quantites et retrait.\n\n"
+                  "Les modifications deviennent persistantes apres sauvegarde.",
+                  -1, &description, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    }
     paint_quick_toggles(mem, fN, fB);
-    paint_picker(mem, fN, fS);
+    paint_picker(mem, fN);
 
     // Footer gauche
     SelectObject(mem, fS);
@@ -1499,12 +1091,6 @@ static bool is_in_slider_track(int i, int x, int y) {
     return y >= by - 4 && y <= by + 18 && x >= PAD && x <= MENU_LEFT_W - PAD;
 }
 
-static bool is_in_qty_box(int i, int x, int y) {
-    if (g_items[i].type != ITEM_TYPE_BAGITEM) return false;
-    int iy = item_y(i);
-    int qx1 = MENU_LEFT_W - 58, qx2 = MENU_LEFT_W - PAD, qy1 = iy + 8, qy2 = iy + ITEM_H - 8;
-    return x >= qx1 && x <= qx2 && y >= qy1 && y <= qy2 && g_bag_item.item_id != 0;
-}
 static bool is_in_time_box(int i, int x, int y) {
     if (g_items[i].type != ITEM_TYPE_TIME) return false;
     int iy = item_y(i);
@@ -1577,6 +1163,7 @@ static void apply_game_zoom_wheel(int direction) {
     }
 }
 
+#if 0 // Ancien editeur "objet/Pokemon selectionne" retire du payload actif.
 static void commit_qty_edit() {
     if (!s_qty_editing) return;
     s_qty_editing = false;
@@ -1743,6 +1330,7 @@ static bool partymon_on_keydown(WPARAM vk) {
 
     return false;
 }
+#endif
 
 // ------------------------------------------------------------
 // WINDOW PROC
@@ -1816,11 +1404,6 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             InvalidateRect(hw, NULL, FALSE);
             return 0;
         }
-        if (s_qty_editing) {
-            commit_qty_edit();
-            return 0;
-        }
-    
         if (y < TITLE_H) {
             s_dragging_menu = true;
             s_drag_ox = x;
@@ -1829,14 +1412,13 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
     
-        // Clic dans le panneau Pokemon à droite
+        // La colonne droite ne contient plus d'editeur lie a la selection du jeu.
         if (x >= MENU_LEFT_W + MENU_GAP) {
             const int quick = quick_toggle_at(x, y);
             if (quick >= 0) {
                 toggle_quick_item(quick);
                 return 0;
             }
-            if (partymon_on_lbuttondown(x, y)) return 0;
             return 0;
         }
     
@@ -1889,23 +1471,17 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
                 InvalidateRect(hw, NULL, FALSE);
                 return 0;
             }
-            else if (g_items[i].type == ITEM_TYPE_BAGITEM && is_in_qty_box(i, x, y)) {
-                if (i >= 0 && g_items[i].type == ITEM_TYPE_BAGITEM) {
-                    if (is_in_qty_box(i, x, y) && g_bag_item.item_id != 0) {
-                        RECT qbox = {
-                            MENU_LEFT_W - 58,
-                            item_y(i) + 8,
-                            MENU_LEFT_W - PAD,
-                            item_y(i) + ITEM_H - 8
-                        };
-                        picker_open_bag_qty(qbox);
-                        InvalidateRect(hw, NULL, FALSE);
-                        return 0;
-                    }
-                }
+            else if (g_items[i].type == ITEM_TYPE_POKEMON_MANAGER) {
+                trainer_editors_show_pokemon();
+                InterlockedExchange(&s_block_game_keyboard, 2);
+                return 0;
+            }
+            else if (g_items[i].type == ITEM_TYPE_INVENTORY_MANAGER) {
+                trainer_editors_show_inventory();
+                InterlockedExchange(&s_block_game_keyboard, 2);
+                return 0;
             }
             else {
-                pm_reset_edit_state();
                 InvalidateRect(hw, NULL, FALSE);
             }
         }
@@ -1920,7 +1496,6 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             RECT sr = picker_scrollbar_rect();
             RECT th = picker_thumb_rect();
         
-            int visible = picker_visible_rows();
             int max_scroll = picker_max_scroll();
             int track_h = sr.bottom - sr.top;
             int thumb_h = th.bottom - th.top;
@@ -2032,55 +1607,9 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
     }
 
     case WM_CHAR:
-        if (s_qty_editing) {
-            char c = (char)wp;
-            if (c >= '0' && c <= '9' && s_qty_len < 6) {
-                if (!(c == '0' && s_qty_len == 0)) {
-                    s_qty_buf[s_qty_len++] = c;
-                    s_qty_buf[s_qty_len] = '\0';
-                    InvalidateRect(hw, NULL, FALSE);
-                }
-            }
-            else if (c == '\b' && s_qty_len > 0) {
-                s_qty_buf[--s_qty_len] = '\0';
-                InvalidateRect(hw, NULL, FALSE);
-            }
-            else if (c == '\r') {
-                commit_qty_edit();
-            }
-            else if (c == '\x1b') {
-                s_qty_editing = false;
-                s_qty_edit_item_id = 0;
-                InvalidateRect(hw, NULL, FALSE);
-            }
-            return 0;
-        }
-
-        if (partymon_on_char(wp)) return 0;
         return 0;
 
     case WM_KEYDOWN:
-        if (s_qty_editing) {
-            if (wp == VK_RETURN) {
-                commit_qty_edit();
-            }
-            else if (wp == VK_ESCAPE) {
-                s_qty_editing = false;
-                s_qty_edit_item_id = 0;
-                SetWindowLongA(s_overlay, GWL_EXSTYLE,
-                    GetWindowLongA(s_overlay, GWL_EXSTYLE) | WS_EX_NOACTIVATE);
-                SetForegroundWindow(s_game);
-                InvalidateRect(hw, NULL, FALSE);
-            }
-            else if (wp == VK_BACK && s_qty_len > 0) {
-                s_qty_buf[--s_qty_len] = '\0';
-                InvalidateRect(hw, NULL, FALSE);
-            }
-            return 0;
-        }
-
-        if (partymon_on_keydown(wp)) return 0;
-
         switch (wp) {
         case VK_INSERT:
         case VK_ESCAPE:
@@ -2149,6 +1678,18 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
                 opt_heal_trigger();
                 s_heal_flash_until = GetTickCount() + 400;
                 InvalidateRect(hw, NULL, FALSE);
+                return 0;
+            }
+            if (s_hovered >= 0 &&
+                g_items[s_hovered].type == ITEM_TYPE_POKEMON_MANAGER) {
+                trainer_editors_show_pokemon();
+                InterlockedExchange(&s_block_game_keyboard, 2);
+                return 0;
+            }
+            if (s_hovered >= 0 &&
+                g_items[s_hovered].type == ITEM_TYPE_INVENTORY_MANAGER) {
+                trainer_editors_show_inventory();
+                InterlockedExchange(&s_block_game_keyboard, 2);
                 return 0;
             }
             toggle_item(s_hovered);
@@ -2227,61 +1768,64 @@ static LRESULT CALLBACK KbdHook(int code, WPARAM wp, LPARAM lp) {
         InterlockedExchange(&s_block_game_keyboard,
                             menu_has_keyboard_editor() ? 2 : 1);
 
-        if (!s_qty_editing && (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN)) {
-            // Si on édite le nom du Pokémon, on capture TOUT
-            if (s_pm_name_edit) {
-                // Laisser passer les modificateurs pour que GetKeyboardState
-                // voie Shift/Ctrl/Alt enfoncé lors de la touche suivante
-                switch (kb->vkCode) {
-                case VK_SHIFT: case VK_LSHIFT: case VK_RSHIFT:
-                case VK_CONTROL: case VK_LCONTROL: case VK_RCONTROL:
-                case VK_MENU: case VK_LMENU: case VK_RMENU:
-                case VK_CAPITAL: case VK_NUMLOCK: case VK_SCROLL:
-                case VK_LWIN: case VK_RWIN:
-                    return CallNextHookEx(s_kbd_hook, code, wp, lp);
-                }
-
-                // Échap et Entrée → envoyer comme WM_KEYDOWN
-                if (kb->vkCode == VK_ESCAPE || kb->vkCode == VK_RETURN) {
-                    PostMessageA(s_overlay, WM_KEYDOWN, kb->vkCode, 0);
-                    return 1;
-                }
-
-                // Backspace → envoyer UNIQUEMENT comme WM_KEYDOWN (pas WM_CHAR)
-                if (kb->vkCode == VK_BACK) {
-                    PostMessageA(s_overlay, WM_KEYDOWN, VK_BACK, 0);
-                    return 1;
-                }
-
-                // Pour les autres touches, convertir en caractère
-                // On construit l'état du clavier manuellement avec GetAsyncKeyState
-                // car GetKeyboardState est en retard d'une touche dans un hook low-level
-                BYTE ks[256];
-                memset(ks, 0, sizeof(ks));
-
-                // État des modificateurs en temps réel
-                if (GetAsyncKeyState(VK_SHIFT) & 0x8000)    ks[VK_SHIFT] = 0x80;
-                if (GetAsyncKeyState(VK_LSHIFT) & 0x8000)   ks[VK_LSHIFT] = 0x80;
-                if (GetAsyncKeyState(VK_RSHIFT) & 0x8000)   ks[VK_RSHIFT] = 0x80;
-                if (GetAsyncKeyState(VK_CONTROL) & 0x8000)  ks[VK_CONTROL] = 0x80;
-                if (GetAsyncKeyState(VK_LCONTROL) & 0x8000) ks[VK_LCONTROL] = 0x80;
-                if (GetAsyncKeyState(VK_RCONTROL) & 0x8000) ks[VK_RCONTROL] = 0x80;
-                if (GetAsyncKeyState(VK_MENU) & 0x8000)     ks[VK_MENU] = 0x80;
-                // CapsLock : le bit toggle (bit 0) indique si actif
-                if (GetKeyState(VK_CAPITAL) & 0x0001)       ks[VK_CAPITAL] = 0x01;
-
-                WCHAR wbuf[4] = {};
-                UINT scan = kb->scanCode;
-                if (kb->flags & LLKHF_EXTENDED) scan |= KF_EXTENDED;
-
-                int rc = ToUnicode((UINT)kb->vkCode, scan, ks, wbuf, 4, 0);
-                if (rc == 1 && wbuf[0] >= 32 && wbuf[0] < 127) {
-                    PostMessageA(s_overlay, WM_CHAR, (WPARAM)wbuf[0], 0);
-                }
-                // Bloquer la touche dans tous les cas pendant l'édition
-                return 1;
+        if (trainer_editors_any_open() &&
+            (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN)) {
+            InterlockedExchange(&s_block_game_keyboard, 2);
+            switch (kb->vkCode) {
+            case VK_SHIFT: case VK_LSHIFT: case VK_RSHIFT:
+            case VK_CONTROL: case VK_LCONTROL: case VK_RCONTROL:
+            case VK_MENU: case VK_LMENU: case VK_RMENU:
+            case VK_CAPITAL: case VK_NUMLOCK: case VK_SCROLL:
+            case VK_LWIN: case VK_RWIN:
+                return CallNextHookEx(s_kbd_hook, code, wp, lp);
+            default:
+                break;
             }
 
+            switch (kb->vkCode) {
+            case VK_ESCAPE:
+            case VK_RETURN:
+            case VK_BACK:
+            case VK_DELETE:
+            case VK_UP:
+            case VK_DOWN:
+            case VK_LEFT:
+            case VK_RIGHT:
+            case VK_PRIOR:
+            case VK_NEXT:
+            case VK_F5:
+                trainer_editors_post_keydown(kb->vkCode);
+                return 1;
+            default:
+                break;
+            }
+
+            if (trainer_editors_is_editing()) {
+                BYTE keyboard_state[256] = {};
+                if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
+                    keyboard_state[VK_SHIFT] = 0x80;
+                if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
+                    keyboard_state[VK_CONTROL] = 0x80;
+                if (GetAsyncKeyState(VK_MENU) & 0x8000)
+                    keyboard_state[VK_MENU] = 0x80;
+                if (GetKeyState(VK_CAPITAL) & 0x0001)
+                    keyboard_state[VK_CAPITAL] = 0x01;
+                WCHAR characters[4] = {};
+                UINT scan = kb->scanCode;
+                if (kb->flags & LLKHF_EXTENDED) scan |= KF_EXTENDED;
+                const int converted = ToUnicode(
+                    (UINT)kb->vkCode, scan, keyboard_state,
+                    characters, 4, 0);
+                if (converted == 1 && characters[0] >= 32 &&
+                    characters[0] <= 255) {
+                    trainer_editors_post_char((WPARAM)characters[0]);
+                }
+            }
+            // Une fenetre d'edition ouverte isole entierement le clavier du jeu.
+            return 1;
+        }
+
+        if (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN) {
             switch (kb->vkCode) {
             case VK_UP:
             case VK_DOWN:
@@ -2315,7 +1859,9 @@ enum CapturedMouseButton {
 };
 
 static bool overlay_contains_screen_point(const POINT& pt) {
-    if (!s_open || !s_overlay || !IsWindowVisible(s_overlay)) return false;
+    if (!s_open) return false;
+    if (trainer_editors_contains_screen_point(pt)) return true;
+    if (!s_overlay || !IsWindowVisible(s_overlay)) return false;
     RECT rc = {};
     return GetWindowRect(s_overlay, &rc) && PtInRect(&rc, pt) != FALSE;
 }
@@ -2416,6 +1962,8 @@ static LRESULT CALLBACK MouseHook(int code, WPARAM wp, LPARAM lp) {
 
         if (wp == WM_MOUSEWHEEL && over_overlay) {
             WPARAM wheel = MAKEWPARAM(captured_mouse_key_state(), HIWORD(mouse->mouseData));
+            if (trainer_editors_post_wheel_at(mouse->pt, wheel))
+                return 1;
             // WM_MOUSEWHEEL utilise des coordonnees ecran dans lParam.
             PostMessageA(s_overlay, WM_MOUSEWHEEL, wheel,
                          MAKELPARAM((short)mouse->pt.x, (short)mouse->pt.y));
@@ -2462,7 +2010,6 @@ void menu_open() {
     SetWindowPos(s_overlay, HWND_TOPMOST, sx, sy, MENU_TOTAL_W, mh,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
 
-    opt_partymon_refresh_now();
     opt_money_read(on_money_read);
 
     InvalidateRect(s_overlay, NULL, TRUE);
@@ -2478,10 +2025,8 @@ void menu_open() {
 
 void menu_close() {
     cancel_overlay_mouse_interaction();
-    s_qty_editing = false;
-	s_qty_edit_item_id = 0;
-	picker_close();
-    pm_reset_edit_state();
+    trainer_editors_hide_all();
+    picker_close();
     ShowWindow(s_overlay, SW_HIDE);
     s_open = false;
     s_hovered = -1;
@@ -2517,9 +2062,17 @@ bool menu_init(HINSTANCE hinst, HWND game_hwnd) {
 
     if (!s_overlay) return false;
 
+    if (!trainer_editors_init(hinst, game_hwnd, "trainer.ini")) {
+        DestroyWindow(s_overlay);
+        s_overlay = NULL;
+        movesdb_free();
+        return false;
+    }
+
     // Le wrapper Input est installe au safe point Graphics.update commun a
     // toutes les options. Aucun eval Ruby n'a lieu depuis un hook Windows.
     if (!rgss_safe_dispatch_register(input_guard_tick, NULL)) {
+        trainer_editors_shutdown();
         DestroyWindow(s_overlay);
         s_overlay = NULL;
         movesdb_free();
@@ -2541,6 +2094,7 @@ bool menu_init(HINSTANCE hinst, HWND game_hwnd) {
         if (s_mouse_hook) { UnhookWindowsHookEx(s_mouse_hook); s_mouse_hook = NULL; }
         if (s_watch_timer) { KillTimer(s_overlay, 1); s_watch_timer = 0; }
         rgss_safe_dispatch_unregister(input_guard_tick, NULL);
+        trainer_editors_shutdown();
         DestroyWindow(s_overlay);
         s_overlay = NULL;
         movesdb_free();
@@ -2572,5 +2126,6 @@ void menu_start_loop() {
         s_watch_timer = 0;
     }
 
+    trainer_editors_shutdown();
     movesdb_free();
 }

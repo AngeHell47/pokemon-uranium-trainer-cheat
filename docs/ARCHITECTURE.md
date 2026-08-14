@@ -49,9 +49,12 @@ ne doit rester à côté de `Uranium.exe`.
   être sauvegardés si le joueur sauvegarde ensuite sa partie.
 - Les écritures volontaires (argent, sac, Pokémon) passent autant que possible
   par les méthodes du jeu et respectent ses limites.
-- Les éditions du sac et du Pokémon utilisent des files FIFO de commandes
-  immuables. Un rafraîchissement ou un second clic ne peut donc pas mélanger la
-  cible et la valeur d'une commande précédente.
+- Les éditeurs complets du sac et des Pokémon utilisent des instantanés
+  immuables et des files FIFO ciblées par ID d'objet ou emplacement
+  équipe/boîte. Un rafraîchissement ou un second clic ne peut donc pas mélanger
+  la cible et la valeur d'une commande précédente.
+- Les suppressions demandent un second clic de confirmation et le dernier
+  Pokémon de l'équipe ne peut pas être supprimé.
 - Les ressources nécessaires au trainer, dont la base des attaques, sont
   embarquées dans le payload ; un fichier externe valide peut les remplacer
   pour le développement.

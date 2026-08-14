@@ -10,9 +10,10 @@
 
 ## Éditeurs de données
 
-- Fenêtre complète du groupe et des boîtes : création/suppression, espèce,
-  niveau, sexe, shiny, nature, attaques, PP, HP, IV et EV.
-- Inventaire complet par poche, ajout/suppression d'objets et quantités.
+- Les fenêtres complètes du groupe/boîtes et de l'inventaire par poche sont
+  disponibles, avec création/suppression et commandes ciblées immuables.
+- Ajouter un aperçu transactionnel global et une annulation multi-champs avant
+  les éditions de masse.
 - Sexe du personnage, temps de jeu, badges et Pokédex complet
   (vu/capturé, mâle/femelle, shiny).
 - Déblocage des destinations de vol et favoris de téléportation nommés.
@@ -37,8 +38,8 @@
 
 1. Étendre les tests automatisés et les sauvegardes de sécurité autour du
    répartiteur RGSS central désormais en place.
-2. Inventaire et groupe complets en lecture seule.
-3. Édition transactionnelle avec validation et annulation.
+2. Étendre les tests réels de l'inventaire et du groupe/boîtes complets.
+3. Ajouter prévisualisation transactionnelle et annulation multi-champs.
 4. Téléportation/vol et options d'exploration.
 5. Hooks de combat/capture, testés séparément en simple et double combat.
 

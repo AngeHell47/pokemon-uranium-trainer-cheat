@@ -10,6 +10,11 @@ Utilisation :
 4. Le menu s'ouvre automatiquement au-dessus du jeu.
 5. La touche Inser masque ou reaffiche le menu.
 
+Les boutons "Gerer tous les Pokemon" et "Gerer tout l'inventaire" ouvrent des
+fenetres autonomes. La premiere couvre l'equipe et les boites, y compris la
+creation/suppression et les attaques/PP/IV/EV. La seconde affiche toutes les
+poches et le catalogue complet pour ajouter, retirer ou fixer une quantite.
+
 No-clip : active l'option, puis maintiens la touche affichee dans le petit
 bouton (CTRL par defaut). Clique sur ce bouton et presse une autre touche pour
 changer le raccourci. Presse Echap, Retour arriere ou Suppr pour n'assigner

@@ -6,7 +6,7 @@
 #define TITLE_H    28
 #define ITEM_H     32
 #define SLIDER_H   62
-#define BAGITEM_H  50   // hauteur du panneau bag item
+#define BAGITEM_H  50
 #define PAD        10
 
 #define COL_BG      RGB(20,20,30)
@@ -21,12 +21,13 @@
 
 #define ITEM_TYPE_TOGGLE  0
 #define ITEM_TYPE_SLIDER  1
-#define ITEM_TYPE_BAGITEM 2   // affichage + édition item sac sélectionné
+#define ITEM_TYPE_BAGITEM 2
 #define ITEM_TYPE_PARTYMON 3
 #define ITEM_TYPE_TIME     4
 #define ITEM_TYPE_WEATHER  5
 #define ITEM_TYPE_ACTION   6
-#define PARTYMON_H 270
+#define ITEM_TYPE_POKEMON_MANAGER 7
+#define ITEM_TYPE_INVENTORY_MANAGER 8
 
 struct MenuItem {
     const char* label;

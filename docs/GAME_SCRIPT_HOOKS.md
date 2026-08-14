@@ -32,8 +32,9 @@ L'instance active est `$PokemonBag`. La dernière classe chargée se trouve dans
 basées sur `pbStoreItem`, `pbDeleteItem`, `pbCanStore?` et `pbQuantity` pour
 respecter les limites propres à chaque poche.
 
-La future fenêtre devra prendre un instantané immuable de toutes les poches,
-séparer lecture et écriture, puis appliquer une transaction identifiée. Le
+La fenêtre externe prend désormais un instantané immuable de toutes les poches,
+sépare lecture et écriture, déduplique les IDs puis applique des commandes
+ciblées. Le
 wrapper global de `pbDeleteItem` n'est pas une bonne implémentation des objets
 infinis : vente, dépôt, don et mise à la poubelle passent aussi par cette
 méthode. Il faudra entourer les chemins de consommation (`pbConsumeItemInBattle`
@@ -42,11 +43,11 @@ et les handlers d'utilisation hors combat) avec une portée explicite.
 ### Groupe et boîtes
 
 Le groupe est disponible via `$Trainer.party` et le stockage via
-`$PokemonStorage`. Les écrans natifs utilisent `PokemonStorageScreen`, mais une
-fenêtre externe complète doit lire un snapshot et ne jamais garder un pointeur
-Ruby vivant côté interface. Création, suppression et déplacement devront
-valider au minimum : groupe non vide, taille maximale 6, emplacement libre,
-œuf, espèce, niveau et recalcul des statistiques.
+`$PokemonStorage`. Les écrans natifs utilisent `PokemonStorageScreen`, mais la
+fenêtre externe complète lit un snapshot et ne garde jamais de pointeur Ruby
+vivant côté interface. Création et suppression valident notamment le groupe
+non vide, la taille maximale 6, l'emplacement libre, l'espèce, le niveau et le
+recalcul des statistiques.
 
 Avant toute édition en masse, ajouter une sauvegarde de sécurité, un aperçu des
 changements et une commande d'annulation. Les fichiers principal et autosave ne
