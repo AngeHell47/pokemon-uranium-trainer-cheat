@@ -259,6 +259,7 @@ static UINT_PTR s_watch_timer = 0;
 static DWORD s_heal_flash_until = 0;  // GetTickCount() until which to show flash
 
 static bool menu_keyboard_should_capture();
+static bool menu_context_is_foreground();
 static void cancel_overlay_mouse_interaction();
 static bool overlay_contains_screen_point(const POINT& pt);
 
@@ -671,7 +672,8 @@ static void sync_overlay_to_game() {
 
     if (trainer_editors_any_open()) {
         ShowWindow(s_overlay, SW_HIDE);
-        InterlockedExchange(&s_block_game_keyboard, 2);
+        InterlockedExchange(&s_block_game_keyboard,
+                            menu_keyboard_should_capture() ? 2 : 0);
         POINT cursor = {};
         const bool cursor_over_editor = GetCursorPos(&cursor) &&
             trainer_editors_contains_screen_point(cursor);
@@ -683,7 +685,7 @@ static void sync_overlay_to_game() {
     // Garder l'overlay visible lorsque RGSS perd le premier plan. Il reste
     // click-through via WM_NCHITTEST et ne capture ni souris ni clavier tant
     // que le jeu n'est pas redevenu l'application active.
-    if (!menu_keyboard_should_capture()) {
+    if (!menu_context_is_foreground()) {
         cancel_overlay_mouse_interaction();
         ShowWindow(s_overlay, SW_SHOWNOACTIVATE);
         SetWindowPos(s_overlay, HWND_TOPMOST, 0, 0, 0, 0,
@@ -693,7 +695,9 @@ static void sync_overlay_to_game() {
 
     ShowWindow(s_overlay, SW_SHOWNOACTIVATE);
     InterlockedExchange(&s_block_game_keyboard,
-                        menu_has_keyboard_editor() ? 2 : 1);
+                        menu_keyboard_should_capture()
+                            ? (menu_has_keyboard_editor() ? 2 : 1)
+                            : 0);
 
     // L'overlay est une fenetre top-level independante : ne pas le ramener
     // dans le rectangle du jeu. Il peut ainsi rester sur le bureau ou sur un
@@ -1583,12 +1587,12 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_NCHITTEST:
         // Hors contexte RGSS, l'overlay topmost reste visible mais ne doit
         // intercepter aucun clic destine a une autre application.
-        return menu_keyboard_should_capture() ? HTCLIENT : HTTRANSPARENT;
+        return menu_context_is_foreground() ? HTCLIENT : HTTRANSPARENT;
 
     case WM_MOUSEACTIVATE:
-        // Garder RGSS au premier plan (le clavier continue de piloter le jeu),
-        // tout en laissant l'overlay recevoir le message souris courant.
-        return MA_NOACTIVATE;
+        // Un clic donne le focus au trainer. Tant qu'aucun clic n'a eu lieu,
+        // l'ouverture du menu conserve le focus du jeu et son clavier.
+        return MA_ACTIVATE;
 
     case WM_PAINT:
         paint(hw);
@@ -1993,13 +1997,15 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
 
 static bool menu_keyboard_should_capture() {
     HWND fg = GetForegroundWindow();
+    return fg && (fg == s_overlay || trainer_editors_owns_window(fg));
+}
+
+static bool menu_context_is_foreground() {
+    HWND fg = GetForegroundWindow();
     if (!fg) return false;
 
-    // Le plus important : seulement quand le jeu est la fenetre active.
-    if (fg == s_game) return true;
-
-    // Securite : si un jour l'overlay devient activable.
-    if (fg == s_overlay) return true;
+    if (fg == s_game || fg == s_overlay || trainer_editors_owns_window(fg))
+        return true;
 
     // RGSS peut mettre au premier plan une fenetre top-level auxiliaire de son
     // propre processus. Ce n'est pas une perte de focus vers une autre appli.
@@ -2038,14 +2044,15 @@ static LRESULT CALLBACK KbdHook(int code, WPARAM wp, LPARAM lp) {
         // Insert ne pilote le trainer que lorsque le jeu (ou son overlay) est
         // actif. Il ne doit pas voler cette touche dans une autre application.
         if (kb->vkCode == VK_INSERT && wp == WM_KEYDOWN) {
-            if (menu_keyboard_should_capture()) {
+            if (menu_context_is_foreground()) {
                 s_open ? menu_close() : menu_open();
                 return 1;
             }
             return CallNextHookEx(s_kbd_hook, code, wp, lp);
         }
 
-        // A partir d'ici, on ne capture QUE si le jeu/menu a réellement le focus
+        // A partir d'ici, le trainer ne capture que si l'une de ses propres
+        // fenetres a le focus. Si le jeu a le focus, toutes les touches passent.
         if (!s_open || !s_overlay || !menu_keyboard_should_capture()) {
             InterlockedExchange(&s_block_game_keyboard, 0);
             return CallNextHookEx(s_kbd_hook, code, wp, lp);
@@ -2177,11 +2184,28 @@ static WPARAM captured_mouse_key_state() {
     return state;
 }
 
+static void activate_trainer_window_at_point(const POINT& point) {
+    HWND target = trainer_editors_window_at_screen_point(point);
+    if (!target && s_overlay && IsWindowVisible(s_overlay)) {
+        RECT rect = {};
+        if (GetWindowRect(s_overlay, &rect) && PtInRect(&rect, point))
+            target = s_overlay;
+    }
+    if (!target) return;
+
+    // Le hook bas niveau est appele avant la distribution du clic. Activer ici
+    // la vraie fenetre cible garantit que le DOWN qui suit lui appartient et
+    // que le filtre clavier voit immediatement le bon HWND de premier plan.
+    SetForegroundWindow(target);
+    SetActiveWindow(target);
+    SetFocus(target);
+}
+
 static LRESULT CALLBACK MouseHook(int code, WPARAM wp, LPARAM lp) {
     if (code == HC_ACTION && s_overlay) {
         // Le hook est global au bureau. Ne jamais avaler un evenement lorsque
         // RGSS (ou l'overlay lui-meme) n'est plus la fenetre de premier plan.
-        if (!menu_keyboard_should_capture()) {
+        if (!menu_context_is_foreground()) {
             cancel_overlay_mouse_interaction();
             // L'overlay reste affiche mais WM_NCHITTEST le rend transparent :
             // le clic est transmis intact a l'application au premier plan.
@@ -2220,6 +2244,9 @@ static LRESULT CALLBACK MouseHook(int code, WPARAM wp, LPARAM lp) {
                               wp == WM_MBUTTONDOWN || wp == WM_XBUTTONDOWN);
         const bool is_up = (wp == WM_LBUTTONUP || wp == WM_RBUTTONUP ||
                             wp == WM_MBUTTONUP || wp == WM_XBUTTONUP);
+
+        if (is_down && over_overlay)
+            activate_trainer_window_at_point(mouse->pt);
 
         // Ne pas avaler puis reinjecter DOWN/MOVE/UP. L'overlay topmost recoit
         // naturellement le DOWN et SetCapture route ensuite MOVE/UP, y compris
@@ -2299,7 +2326,9 @@ void menu_open() {
     s_open = true;
     s_hovered = 0;
     InterlockedExchange(&s_block_game_keyboard,
-                        menu_has_keyboard_editor() ? 2 : 1);
+                        menu_keyboard_should_capture()
+                            ? (menu_has_keyboard_editor() ? 2 : 1)
+                            : 0);
 
     POINT cursor = {};
     if (GetCursorPos(&cursor) && overlay_contains_screen_point(cursor))
@@ -2313,6 +2342,7 @@ void menu_close() {
     ShowWindow(s_overlay, SW_HIDE);
     s_open = false;
     s_hovered = -1;
+    InterlockedExchange(&s_block_game_keyboard, 0);
 }
 
 bool menu_init(HINSTANCE hinst, HWND game_hwnd) {
@@ -2336,7 +2366,7 @@ bool menu_init(HINSTANCE hinst, HWND game_hwnd) {
         return false;
 
     s_overlay = CreateWindowExA(
-        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
         "TrainerOverlay", "",
         WS_POPUP,
         0, 0, MENU_TOTAL_W, menu_height(),

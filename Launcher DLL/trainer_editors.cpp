@@ -276,8 +276,8 @@ static void sync_window(HWND window, bool open) {
         ShowWindow(window, SW_HIDE);
         return;
     }
-    // Les editeurs restent visibles en arriere-plan. Un clic sur eux redonne
-    // le premier plan au jeu afin qu'ils soient directement reutilisables.
+    // Garder la fenetre visible sans modifier le focus courant. Elle est
+    // activable normalement par un clic, comme toute fenetre du trainer.
     ShowWindow(window, SW_SHOWNOACTIVATE);
     SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0,
                  SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
@@ -295,7 +295,9 @@ static void position_editor(HWND window, int width, int height, int offset) {
     if (x < work.left) x = work.left;
     if (y < work.top) y = work.top;
     SetWindowPos(window, HWND_TOPMOST, x, y, width, height,
-                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                 SWP_SHOWWINDOW);
+    SetForegroundWindow(window);
+    SetFocus(window);
 }
 
 static void update_live_edit_value() {
@@ -1943,12 +1945,7 @@ static LRESULT CALLBACK PokemonWindowProc(HWND window, UINT message,
     case WM_NCHITTEST:
         return HTCLIENT;
     case WM_MOUSEACTIVATE:
-        if (s_game) {
-            SetForegroundWindow(s_game);
-            SetActiveWindow(s_game);
-            SetFocus(s_game);
-        }
-        return MA_NOACTIVATE;
+        return MA_ACTIVATE;
     case WM_SETCURSOR:
         return set_editor_cursor(window, true);
     case WM_ERASEBKGND:
@@ -2011,12 +2008,7 @@ static LRESULT CALLBACK InventoryWindowProc(HWND window, UINT message,
     case WM_NCHITTEST:
         return HTCLIENT;
     case WM_MOUSEACTIVATE:
-        if (s_game) {
-            SetForegroundWindow(s_game);
-            SetActiveWindow(s_game);
-            SetFocus(s_game);
-        }
-        return MA_NOACTIVATE;
+        return MA_ACTIVATE;
     case WM_SETCURSOR:
         return set_editor_cursor(window, false);
     case WM_ERASEBKGND:
@@ -2106,12 +2098,12 @@ bool trainer_editors_init(HINSTANCE instance, HWND game_window,
     }
 
     s_pokemon_window = CreateWindowExA(
-        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
         "TrainerPokemonEditor", "", WS_POPUP, 0, 0,
         POKEMON_WINDOW_WIDTH, POKEMON_WINDOW_HEIGHT,
         NULL, NULL, instance, NULL);
     s_inventory_window = CreateWindowExA(
-        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
         "TrainerInventoryEditor", "", WS_POPUP, 0, 0,
         INVENTORY_WINDOW_WIDTH, INVENTORY_WINDOW_HEIGHT,
         NULL, NULL, instance, NULL);
@@ -2197,6 +2189,12 @@ bool trainer_editors_is_editing() {
 
 bool trainer_editors_contains_screen_point(const POINT& point) {
     return trainer_editors_window_at_screen_point(point) != NULL;
+}
+
+bool trainer_editors_owns_window(HWND window) {
+    return window &&
+           ((s_pokemon_open && window == s_pokemon_window) ||
+            (s_inventory_open && window == s_inventory_window));
 }
 
 HWND trainer_editors_window_at_screen_point(const POINT& point) {

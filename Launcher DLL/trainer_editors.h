@@ -14,6 +14,7 @@ bool trainer_editors_any_open();
 bool trainer_editors_is_editing();
 
 bool trainer_editors_contains_screen_point(const POINT& point);
+bool trainer_editors_owns_window(HWND window);
 HWND trainer_editors_window_at_screen_point(const POINT& point);
 HWND trainer_editors_keyboard_window();
 void trainer_editors_post_keydown(WPARAM virtual_key);
