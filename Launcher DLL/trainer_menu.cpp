@@ -2100,7 +2100,8 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
 
         case VK_LEFT:
-            if (s_hovered >= 0 && g_items[s_hovered].type == ITEM_TYPE_SLIDER) {
+            if (s_hovered >= 0 && s_hovered < ITEM_COUNT &&
+                g_items[s_hovered].type == ITEM_TYPE_SLIDER) {
                 int step = (g_items[s_hovered].slider_max - g_items[s_hovered].slider_min) / 100;
                 if (step < 1) step = 1;
                 apply_slider(s_hovered, *g_items[s_hovered].slider_val - step);
@@ -2108,7 +2109,8 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
 
         case VK_RIGHT:
-            if (s_hovered >= 0 && g_items[s_hovered].type == ITEM_TYPE_SLIDER) {
+            if (s_hovered >= 0 && s_hovered < ITEM_COUNT &&
+                g_items[s_hovered].type == ITEM_TYPE_SLIDER) {
                 int step = (g_items[s_hovered].slider_max - g_items[s_hovered].slider_min) / 100;
                 if (step < 1) step = 1;
                 apply_slider(s_hovered, *g_items[s_hovered].slider_val + step);
