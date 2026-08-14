@@ -12,9 +12,9 @@ Utilisation :
 
 No-clip : active l'option, puis maintiens la touche affichee dans le petit
 bouton (CTRL par defaut). Clique sur ce bouton et presse une autre touche pour
-changer le raccourci. Presse Retour arriere ou Suppr pour n'assigner aucune
-touche : le no-clip reste alors actif en permanence tant que l'option est
-active. Le choix est memorise dans trainer.ini.
+changer le raccourci. Presse Echap, Retour arriere ou Suppr pour n'assigner
+aucune touche : le no-clip reste alors actif en permanence tant que l'option
+est active. Le choix est memorise dans trainer.ini.
 
 Le chargement direct ne modifie aucun reglage persistant : lancer Uranium.exe
 normalement conserve l'intro habituelle.
