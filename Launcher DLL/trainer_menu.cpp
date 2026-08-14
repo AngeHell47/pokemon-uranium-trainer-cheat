@@ -143,24 +143,67 @@ static QuickToggle s_quick_toggles[] = {
 
 static const int QUICK_TOGGLE_COUNT =
     sizeof(s_quick_toggles) / sizeof(s_quick_toggles[0]);
-static const int QUICK_TOGGLE_TOP = TITLE_H + 380;
+static const int QUICK_TOGGLE_TOP = TITLE_H + 10;
+
+// Options du menu principal affichees dans la colonne "Options rapides".
+// Les indices correspondent a God mode, PP, noclip, rencontres, heure,
+// meteo, soin et argent dans g_items.
+static const int s_quick_menu_items[] = {1, 2, 3, 4, 5, 6, 7, 8};
+static const int QUICK_MENU_ITEM_COUNT =
+    sizeof(s_quick_menu_items) / sizeof(s_quick_menu_items[0]);
+
+static bool is_quick_menu_item(int item_index) {
+    for (int i = 0; i < QUICK_MENU_ITEM_COUNT; ++i) {
+        if (s_quick_menu_items[i] == item_index) return true;
+    }
+    return false;
+}
+
+static int quick_menu_items_height() {
+    int height = 0;
+    for (int i = 0; i < QUICK_MENU_ITEM_COUNT; ++i) {
+        const int item = s_quick_menu_items[i];
+        height += g_items[item].type == ITEM_TYPE_SLIDER ? SLIDER_H : ITEM_H;
+    }
+    return height;
+}
+
+static int quick_menu_item_y(int slot) {
+    int y = QUICK_TOGGLE_TOP + 24;
+    for (int i = 0; i < slot; ++i) {
+        const int item = s_quick_menu_items[i];
+        y += g_items[item].type == ITEM_TYPE_SLIDER ? SLIDER_H : ITEM_H;
+    }
+    return y;
+}
+
+static int quick_menu_slot_from_item(int item_index) {
+    for (int i = 0; i < QUICK_MENU_ITEM_COUNT; ++i) {
+        if (s_quick_menu_items[i] == item_index) return i;
+    }
+    return -1;
+}
 
 // ------------------------------------------------------------
 // LAYOUT HELPERS
 // ------------------------------------------------------------
 
 static int menu_height() {
-    int h = TITLE_H + 20;
+    int left = TITLE_H + 20;
     for (int i = 0; i < ITEM_COUNT; i++) {
-        if      (g_items[i].type == ITEM_TYPE_SLIDER)   h += SLIDER_H;
-        else                                            h += ITEM_H;
+        if (is_quick_menu_item(i)) continue;
+        if      (g_items[i].type == ITEM_TYPE_SLIDER) left += SLIDER_H;
+        else                                          left += ITEM_H;
     }
-    return h;
+    const int right = QUICK_TOGGLE_TOP + 24 + quick_menu_items_height() +
+                      QUICK_TOGGLE_COUNT * ITEM_H + 20;
+    return left > right ? left : right;
 }
 
 static int item_y(int idx) {
     int y = TITLE_H;
     for (int i = 0; i < idx; i++) {
+        if (is_quick_menu_item(i)) continue;
         if      (g_items[i].type == ITEM_TYPE_SLIDER)   y += SLIDER_H;
         else                                            y += ITEM_H;
     }
@@ -177,11 +220,12 @@ static int navigation_item_count() {
 }
 
 static RECT quick_toggle_rect(int index) {
+    const int top = QUICK_TOGGLE_TOP + 24 + quick_menu_items_height();
     RECT result = {
         MENU_LEFT_W + MENU_GAP + 8,
-        QUICK_TOGGLE_TOP + 24 + index * ITEM_H,
+        top + index * ITEM_H,
         MENU_TOTAL_W - 8,
-        QUICK_TOGGLE_TOP + 24 + (index + 1) * ITEM_H
+        top + (index + 1) * ITEM_H
     };
     return result;
 }
@@ -209,6 +253,7 @@ static int   s_drag_ox = 0, s_drag_oy = 0;
 static bool  s_slider_drag   = false;
 static int   s_slider_idx    = -1;
 static int   s_slider_start_value = 0;
+static bool  s_slider_in_quick_column = false;
 static bool  s_noclip_key_capture = false;
 static UINT_PTR s_watch_timer = 0;
 static DWORD s_heal_flash_until = 0;  // GetTickCount() until which to show flash
@@ -352,9 +397,12 @@ static void picker_open_time(const RECT& anchor) {
         s_picker_labels[i + 1] = NULL;
     }
 
+    const int width = (anchor.right - anchor.left) + 40;
     s_picker_rc.left   = anchor.left;
+    if (s_picker_rc.left + width > MENU_TOTAL_W - 4)
+        s_picker_rc.left = MENU_TOTAL_W - 4 - width;
     s_picker_rc.top    = anchor.bottom + 2;
-    s_picker_rc.right  = anchor.right + 40;
+    s_picker_rc.right  = s_picker_rc.left + width;
     s_picker_rc.bottom = s_picker_rc.top + 8 * 20 + 4;
 }
 
@@ -377,9 +425,12 @@ static void picker_open_weather(const RECT& anchor) {
     s_picker_values[8] = 7;  s_picker_labels[8] = "Blizzard";
     s_picker_values[9] = 8;  s_picker_labels[9] = "Fallout";
 
+    const int width = (anchor.right - anchor.left) + 60;
     s_picker_rc.left   = anchor.left;
+    if (s_picker_rc.left + width > MENU_TOTAL_W - 4)
+        s_picker_rc.left = MENU_TOTAL_W - 4 - width;
     s_picker_rc.top    = anchor.bottom + 2;
-    s_picker_rc.right  = anchor.right + 60;
+    s_picker_rc.right  = s_picker_rc.left + width;
     s_picker_rc.bottom = s_picker_rc.top + 10 * 20 + 4;
 }
 
@@ -601,6 +652,7 @@ static void cancel_overlay_mouse_interaction() {
     s_slider_drag = false;
     s_slider_idx = -1;
     s_slider_start_value = 0;
+    s_slider_in_quick_column = false;
     s_picker_scroll_drag = false;
     s_picker_scroll_drag_dy = 0;
 
@@ -656,6 +708,199 @@ static void sync_overlay_to_game() {
     InterlockedExchange(&s_block_game_mouse,
                         (cursor_over || captured != 0) ? 1 : 0);
 
+}
+
+static RECT quick_menu_item_rect(int slot) {
+    const int item = s_quick_menu_items[slot];
+    const int top = quick_menu_item_y(slot);
+    const int height = g_items[item].type == ITEM_TYPE_SLIDER ? SLIDER_H : ITEM_H;
+    RECT rect = {MENU_LEFT_W + MENU_GAP + 8, top,
+                 MENU_TOTAL_W - 8, top + height};
+    return rect;
+}
+
+static RECT quick_noclip_key_rect(int slot) {
+    RECT row = quick_menu_item_rect(slot);
+    RECT rect = {row.right - 116, row.top + 8,
+                 row.right - 62, row.bottom - 8};
+    return rect;
+}
+
+static RECT quick_time_box_rect(int slot) {
+    RECT row = quick_menu_item_rect(slot);
+    RECT rect = {row.right - 78, row.top + 8,
+                 row.right - 6, row.bottom - 8};
+    return rect;
+}
+
+static RECT quick_weather_box_rect(int slot) {
+    RECT row = quick_menu_item_rect(slot);
+    RECT rect = {row.right - 108, row.top + 8,
+                 row.right - 6, row.bottom - 8};
+    return rect;
+}
+
+static RECT quick_slider_track_rect(int slot) {
+    RECT row = quick_menu_item_rect(slot);
+    RECT rect = {row.left + 4, row.top + ITEM_H + 4,
+                 row.right - 4, row.top + ITEM_H + 18};
+    return rect;
+}
+
+static void draw_quick_toggle_switch(HDC mem, const RECT& row, bool value) {
+    RECT button = {row.right - 54, row.top + 8,
+                   row.right - 6, row.top + ITEM_H - 8};
+    HBRUSH brush = CreateSolidBrush(value ? COL_ON : COL_OFF);
+    HPEN pen = CreatePen(PS_NULL, 0, 0);
+    HBRUSH old_brush = (HBRUSH)SelectObject(mem, brush);
+    HPEN old_pen = (HPEN)SelectObject(mem, pen);
+    RoundRect(mem, button.left, button.top, button.right, button.bottom, 4, 4);
+    SelectObject(mem, old_brush);
+    SelectObject(mem, old_pen);
+    DeleteObject(brush);
+    DeleteObject(pen);
+    SetTextColor(mem, COL_TEXT);
+    DrawTextA(mem, value ? "ON" : "OFF", -1, &button,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+}
+
+static void paint_quick_menu_items(HDC mem, HFONT fN, HFONT fB, HFONT fS) {
+    HBRUSH null_brush = (HBRUSH)GetStockObject(NULL_BRUSH);
+    for (int slot = 0; slot < QUICK_MENU_ITEM_COUNT; ++slot) {
+        const int item_index = s_quick_menu_items[slot];
+        const MenuItem& item = g_items[item_index];
+        RECT row = quick_menu_item_rect(slot);
+        if (s_hovered == item_index) {
+            HBRUSH hover = CreateSolidBrush(COL_HOVER);
+            FillRect(mem, &row, hover);
+            DeleteObject(hover);
+        }
+        HPEN separator = CreatePen(PS_SOLID, 1, RGB(40,40,60));
+        HPEN old_separator = (HPEN)SelectObject(mem, separator);
+        MoveToEx(mem, row.left, row.bottom - 1, NULL);
+        LineTo(mem, row.right, row.bottom - 1);
+        SelectObject(mem, old_separator);
+        DeleteObject(separator);
+
+        SelectObject(mem, fN);
+        SetTextColor(mem, COL_TEXT);
+        if (item.type == ITEM_TYPE_TOGGLE) {
+            const bool noclip = is_noclip_item(item_index);
+            RECT label = {row.left + 4, row.top,
+                          noclip ? row.right - 122 : row.right - 62,
+                          row.top + ITEM_H};
+            DrawTextA(mem, item.label, -1, &label,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            if (noclip) {
+                RECT key = quick_noclip_key_rect(slot);
+                HBRUSH key_bg = CreateSolidBrush(RGB(25,25,40));
+                FillRect(mem, &key, key_bg);
+                DeleteObject(key_bg);
+                HPEN key_pen = CreatePen(PS_SOLID, 1,
+                    s_noclip_key_capture ? RGB(230,170,60) : COL_BORDER);
+                HPEN old_pen = (HPEN)SelectObject(mem, key_pen);
+                HBRUSH old_brush = (HBRUSH)SelectObject(mem, null_brush);
+                Rectangle(mem, key.left, key.top, key.right, key.bottom);
+                SelectObject(mem, old_pen);
+                SelectObject(mem, old_brush);
+                DeleteObject(key_pen);
+                char key_name[32] = {};
+                if (s_noclip_key_capture) lstrcpyA(key_name, "...");
+                else opt_noclip_get_hold_key_name(key_name, sizeof(key_name));
+                SelectObject(mem, fS);
+                DrawTextA(mem, key_name, -1, &key,
+                          DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                SelectObject(mem, fN);
+            }
+            draw_quick_toggle_switch(mem, row, *item.value);
+        } else if (item.type == ITEM_TYPE_TIME) {
+            RECT label = {row.left + 4, row.top, row.right - 86, row.bottom};
+            DrawTextA(mem, item.label, -1, &label,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            RECT box = quick_time_box_rect(slot);
+            HBRUSH bg = CreateSolidBrush(RGB(25,25,40));
+            FillRect(mem, &box, bg); DeleteObject(bg);
+            HPEN pen = CreatePen(PS_SOLID, 1, g_time_enabled ? COL_SLIDER : COL_BORDER);
+            HPEN old_pen = (HPEN)SelectObject(mem, pen);
+            HBRUSH old_brush = (HBRUSH)SelectObject(mem, null_brush);
+            Rectangle(mem, box.left, box.top, box.right, box.bottom);
+            SelectObject(mem, old_pen); SelectObject(mem, old_brush); DeleteObject(pen);
+            char text[32] = {};
+            if (g_time_hour >= 0 && g_time_hour <= 24)
+                wsprintfA(text, "%02d:%02d", g_time_hour, g_time_minute);
+            else lstrcpyA(text, "--:--");
+            SelectObject(mem, fB);
+            SetTextColor(mem, g_time_enabled ? COL_SLIDER : COL_TEXT);
+            DrawTextA(mem, text, -1, &box, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        } else if (item.type == ITEM_TYPE_WEATHER) {
+            RECT label = {row.left + 4, row.top, row.right - 116, row.bottom};
+            DrawTextA(mem, item.label, -1, &label,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            RECT box = quick_weather_box_rect(slot);
+            HBRUSH bg = CreateSolidBrush(RGB(25,25,40));
+            FillRect(mem, &box, bg); DeleteObject(bg);
+            HPEN pen = CreatePen(PS_SOLID, 1, g_weather_enabled ? COL_SLIDER : COL_BORDER);
+            HPEN old_pen = (HPEN)SelectObject(mem, pen);
+            HBRUSH old_brush = (HBRUSH)SelectObject(mem, null_brush);
+            Rectangle(mem, box.left, box.top, box.right, box.bottom);
+            SelectObject(mem, old_pen); SelectObject(mem, old_brush); DeleteObject(pen);
+            const char* names[] = {"Aucune","Pluie","Orage","Neige","Sable",
+                                   "Soleil","Forte pluie","Blizzard","Fallout"};
+            const char* text = g_weather_type >= 0 && g_weather_type <= 8
+                ? names[g_weather_type] : "---";
+            SelectObject(mem, fB);
+            SetTextColor(mem, g_weather_enabled ? COL_SLIDER : COL_TEXT);
+            DrawTextA(mem, text, -1, &box,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        } else if (item.type == ITEM_TYPE_ACTION) {
+            RECT label = {row.left + 4, row.top, row.right - 62, row.bottom};
+            DrawTextA(mem, item.label, -1, &label,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            RECT button = {row.right - 54, row.top + 8,
+                           row.right - 6, row.bottom - 8};
+            const bool flash = s_heal_flash_until &&
+                               GetTickCount() < s_heal_flash_until;
+            HBRUSH brush = CreateSolidBrush(flash ? RGB(80,200,80) : RGB(60,120,200));
+            FillRect(mem, &button, brush); DeleteObject(brush);
+            DrawTextA(mem, "OK", -1, &button,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        } else if (item.type == ITEM_TYPE_SLIDER) {
+            RECT label = {row.left + 4, row.top, row.right - 90,
+                          row.top + ITEM_H};
+            DrawTextA(mem, item.label, -1, &label,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            char value[32] = {};
+            wsprintfA(value, "%d", *item.slider_val);
+            RECT value_rect = {row.right - 86, row.top, row.right - 4,
+                               row.top + ITEM_H};
+            SelectObject(mem, fB); SetTextColor(mem, COL_SLIDER);
+            DrawTextA(mem, value, -1, &value_rect,
+                      DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+            RECT track = quick_slider_track_rect(slot);
+            HBRUSH track_bg = CreateSolidBrush(RGB(30,30,50));
+            FillRect(mem, &track, track_bg); DeleteObject(track_bg);
+            const int range = item.slider_max - item.slider_min;
+            int fill_width = range > 0 ? (int)((long long)(*item.slider_val -
+                item.slider_min) * (track.right - track.left) / range) : 0;
+            if (fill_width < 0) fill_width = 0;
+            if (fill_width > track.right - track.left)
+                fill_width = track.right - track.left;
+            RECT fill = {track.left, track.top, track.left + fill_width, track.bottom};
+            HBRUSH fill_brush = CreateSolidBrush(COL_SLIDER);
+            FillRect(mem, &fill, fill_brush); DeleteObject(fill_brush);
+            HPEN track_pen = CreatePen(PS_SOLID, 1, COL_BORDER);
+            HPEN old_pen = (HPEN)SelectObject(mem, track_pen);
+            HBRUSH old_brush = (HBRUSH)SelectObject(mem, null_brush);
+            Rectangle(mem, track.left, track.top, track.right, track.bottom);
+            SelectObject(mem, old_pen); SelectObject(mem, old_brush); DeleteObject(track_pen);
+            RECT thumb = {track.left + fill_width - 4, track.top - 2,
+                          track.left + fill_width + 4, track.bottom + 2};
+            HBRUSH thumb_brush = CreateSolidBrush(RGB(200,200,255));
+            FillRect(mem, &thumb, thumb_brush); DeleteObject(thumb_brush);
+        }
+    }
+    SelectObject(mem, fN);
+    SetTextColor(mem, COL_TEXT);
 }
 
 static void paint_quick_toggles(HDC mem, HFONT fN, HFONT fB) {
@@ -759,6 +1004,7 @@ static void paint(HWND hw) {
 
     // Colonne gauche : menu trainer
     for (int i = 0; i < ITEM_COUNT; i++) {
+        if (is_quick_menu_item(i)) continue;
         int y  = item_y(i);
         int ih = item_h(i);
 
@@ -1002,40 +1248,7 @@ static void paint(HWND hw) {
     SelectObject(mem, ovpen);
     DeleteObject(vpen);
 
-    // Les anciens panneaux dependants de la selection dans le jeu sont
-    // remplaces par deux fenetres autonomes.
-    {
-        RECT panel = {MENU_LEFT_W + MENU_GAP + 8, TITLE_H + 10,
-                      MENU_TOTAL_W - 8, TITLE_H + 188};
-        HBRUSH panel_bg = CreateSolidBrush(RGB(25,25,40));
-        FillRect(mem, &panel, panel_bg);
-        DeleteObject(panel_bg);
-        HPEN panel_pen = CreatePen(PS_SOLID, 1, COL_BORDER);
-        HPEN old_panel_pen = (HPEN)SelectObject(mem, panel_pen);
-        HBRUSH old_panel_brush = (HBRUSH)SelectObject(mem, nb);
-        Rectangle(mem, panel.left, panel.top, panel.right, panel.bottom);
-        SelectObject(mem, old_panel_pen);
-        SelectObject(mem, old_panel_brush);
-        DeleteObject(panel_pen);
-
-        SelectObject(mem, fB);
-        SetTextColor(mem, COL_TEXT);
-        RECT heading = {panel.left + 10, panel.top + 8,
-                        panel.right - 10, panel.top + 32};
-        DrawTextA(mem, "Editeurs complets", -1, &heading,
-                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        SelectObject(mem, fN);
-        SetTextColor(mem, RGB(175,185,225));
-        RECT description = {panel.left + 10, panel.top + 38,
-                            panel.right - 10, panel.bottom - 8};
-        DrawTextA(mem,
-                  "Pokemon : equipe + boites, PV, IV, EV, nature, objet, "
-                  "attaques, PP, provenance, creation et suppression.\n\n"
-                  "Inventaire : toutes les poches, catalogue complet, ajout, "
-                  "quantites et retrait.\n\n"
-                  "Les modifications deviennent persistantes apres sauvegarde.",
-                  -1, &description, DT_LEFT | DT_TOP | DT_WORDBREAK);
-    }
+    paint_quick_menu_items(mem, fN, fB, fS);
     paint_quick_toggles(mem, fN, fB);
     paint_picker(mem, fN);
 
@@ -1065,10 +1278,32 @@ static void paint(HWND hw) {
 
 static int item_at_y(int y) {
     for (int i = 0; i < ITEM_COUNT; i++) {
+        if (is_quick_menu_item(i)) continue;
         int iy = item_y(i);
         if (y >= iy && y < iy + item_h(i)) return i;
     }
     return -1;
+}
+
+static int quick_menu_item_at(int x, int y) {
+    for (int slot = 0; slot < QUICK_MENU_ITEM_COUNT; ++slot) {
+        RECT row = quick_menu_item_rect(slot);
+        if (ptin(row, x, y)) return s_quick_menu_items[slot];
+    }
+    return -1;
+}
+
+static int quick_slider_val_from_x(int item_index, int x) {
+    const int slot = quick_menu_slot_from_item(item_index);
+    if (slot < 0) return *g_items[item_index].slider_val;
+    RECT track = quick_slider_track_rect(slot);
+    int relative = x - track.left;
+    const int width = track.right - track.left;
+    if (relative < 0) relative = 0;
+    if (relative > width) relative = width;
+    return g_items[item_index].slider_min + (int)((long long)relative *
+        (g_items[item_index].slider_max - g_items[item_index].slider_min) /
+        width);
 }
 
 static int quick_toggle_at(int x, int y) {
@@ -1415,8 +1650,45 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
     
-        // La colonne droite ne contient plus d'editeur lie a la selection du jeu.
         if (x >= MENU_LEFT_W + MENU_GAP) {
+            const int item = quick_menu_item_at(x, y);
+            if (item >= 0) {
+                const int slot = quick_menu_slot_from_item(item);
+                const bool in_noclip_key = is_noclip_item(item) &&
+                    ptin(quick_noclip_key_rect(slot), x, y);
+                if (!in_noclip_key) s_noclip_key_capture = false;
+                if (g_items[item].type == ITEM_TYPE_TOGGLE) {
+                    if (in_noclip_key) {
+                        s_noclip_key_capture = true;
+                        InterlockedExchange(&s_block_game_keyboard, 2);
+                        InvalidateRect(hw, NULL, FALSE);
+                    } else {
+                        s_noclip_key_capture = false;
+                        toggle_item(item);
+                    }
+                } else if (g_items[item].type == ITEM_TYPE_TIME &&
+                           ptin(quick_time_box_rect(slot), x, y)) {
+                    picker_open_time(quick_time_box_rect(slot));
+                    InvalidateRect(hw, NULL, FALSE);
+                } else if (g_items[item].type == ITEM_TYPE_WEATHER &&
+                           ptin(quick_weather_box_rect(slot), x, y)) {
+                    picker_open_weather(quick_weather_box_rect(slot));
+                    InvalidateRect(hw, NULL, FALSE);
+                } else if (g_items[item].type == ITEM_TYPE_ACTION) {
+                    opt_heal_trigger();
+                    s_heal_flash_until = GetTickCount() + 400;
+                    InvalidateRect(hw, NULL, FALSE);
+                } else if (g_items[item].type == ITEM_TYPE_SLIDER &&
+                           ptin(quick_slider_track_rect(slot), x, y)) {
+                    s_slider_drag = true;
+                    s_slider_idx = item;
+                    s_slider_start_value = *g_items[item].slider_val;
+                    s_slider_in_quick_column = true;
+                    SetCapture(hw);
+                    apply_slider(item, quick_slider_val_from_x(item, x), false);
+                }
+                return 0;
+            }
             const int quick = quick_toggle_at(x, y);
             if (quick >= 0) {
                 toggle_quick_item(quick);
@@ -1443,6 +1715,7 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
                 s_slider_drag = true;
                 s_slider_idx = i;
                 s_slider_start_value = *g_items[i].slider_val;
+                s_slider_in_quick_column = false;
                 SetCapture(hw);
                 apply_slider(i, slider_val_from_x(i, x), false);
             }
@@ -1537,14 +1810,17 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             SetWindowPos(hw, HWND_TOPMOST, nx, ny, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
         }
         else if (s_slider_drag && s_slider_idx >= 0) {
-            apply_slider(s_slider_idx, slider_val_from_x(s_slider_idx, x), false);
+            const int value = s_slider_in_quick_column
+                ? quick_slider_val_from_x(s_slider_idx, x)
+                : slider_val_from_x(s_slider_idx, x);
+            apply_slider(s_slider_idx, value, false);
         }
         else {
-            // Pas de hover sur le panneau Pokemon à droite
             if (x >= MENU_LEFT_W + MENU_GAP) {
-                const int quick = quick_toggle_at(x, y);
-                const int hovered =
-                    quick >= 0 ? ITEM_COUNT + quick : -1;
+                const int menu_item = quick_menu_item_at(x, y);
+                const int quick = menu_item < 0 ? quick_toggle_at(x, y) : -1;
+                const int hovered = menu_item >= 0 ? menu_item :
+                    (quick >= 0 ? ITEM_COUNT + quick : -1);
                 if (s_hovered != hovered) {
                     s_hovered = hovered;
                     InvalidateRect(hw, NULL, FALSE);
@@ -1577,6 +1853,7 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             s_slider_drag = false;
             s_slider_idx = -1;
             s_slider_start_value = 0;
+            s_slider_in_quick_column = false;
             ReleaseCapture();
         }
         return 0;
@@ -1600,6 +1877,16 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
     
+        const int quick_item = pt.x >= MENU_LEFT_W + MENU_GAP
+            ? quick_menu_item_at(pt.x, pt.y) : -1;
+        if (quick_item >= 0 && g_items[quick_item].type == ITEM_TYPE_SLIDER) {
+            int step = (g_items[quick_item].slider_max -
+                        g_items[quick_item].slider_min) / 100;
+            if (step < 1) step = 1;
+            apply_slider(quick_item,
+                         *g_items[quick_item].slider_val + delta * step);
+            return 0;
+        }
         int i = item_at_y(pt.y);
         if (i >= 0 && g_items[i].type == ITEM_TYPE_SLIDER) {
             int step = (g_items[i].slider_max - g_items[i].slider_min) / 100;
@@ -1656,23 +1943,19 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             if (s_hovered >= 0 && g_items[s_hovered].type == ITEM_TYPE_TIME) {
-                RECT tbox = {
-                    MENU_LEFT_W - 78,
-                    item_y(s_hovered) + 8,
-                    MENU_LEFT_W - PAD,
-                    item_y(s_hovered) + ITEM_H - 8
-                };
+                const int slot = quick_menu_slot_from_item(s_hovered);
+                RECT tbox = slot >= 0 ? quick_time_box_rect(slot) : RECT{
+                    MENU_LEFT_W - 78, item_y(s_hovered) + 8,
+                    MENU_LEFT_W - PAD, item_y(s_hovered) + ITEM_H - 8};
                 picker_open_time(tbox);
                 InvalidateRect(hw, NULL, FALSE);
                 return 0;
             }
             if (s_hovered >= 0 && g_items[s_hovered].type == ITEM_TYPE_WEATHER) {
-                RECT wbox = {
-                    MENU_LEFT_W - 98,
-                    item_y(s_hovered) + 8,
-                    MENU_LEFT_W - PAD,
-                    item_y(s_hovered) + ITEM_H - 8
-                };
+                const int slot = quick_menu_slot_from_item(s_hovered);
+                RECT wbox = slot >= 0 ? quick_weather_box_rect(slot) : RECT{
+                    MENU_LEFT_W - 98, item_y(s_hovered) + 8,
+                    MENU_LEFT_W - PAD, item_y(s_hovered) + ITEM_H - 8};
                 picker_open_weather(wbox);
                 InvalidateRect(hw, NULL, FALSE);
                 return 0;

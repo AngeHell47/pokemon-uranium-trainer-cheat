@@ -34,6 +34,11 @@ struct PokemonSpeciesEntry {
     char name[40];
 };
 
+struct PokemonCatalogEntry {
+    int id;
+    char name[64];
+};
+
 struct PokemonMoveDetail {
     int id;
     int pp;
@@ -85,6 +90,11 @@ struct PokemonDetail {
     char item_name[64];
     char original_trainer[32];
     char obtain_text[64];
+    int ability_index;
+    int ability_choice_count;
+    PokemonCatalogEntry ability_choices[6];
+    int form_count;
+    PokemonCatalogEntry forms[32];
 };
 
 enum PokemonEditField {
@@ -118,7 +128,11 @@ enum PokemonEditField {
 
 enum {
     POKEMON_MANAGER_MAX_LIST = 1024,
-    POKEMON_MANAGER_MAX_SPECIES = 800
+    POKEMON_MANAGER_MAX_SPECIES = 800,
+    POKEMON_MANAGER_MAX_NATURES = 32,
+    POKEMON_MANAGER_MAX_ABILITIES = 512,
+    POKEMON_MANAGER_MAX_ITEMS = 1000,
+    POKEMON_MANAGER_MAX_FORMS = 32
 };
 
 bool opt_pokemon_manager_init(const char* ini_path);
@@ -132,6 +146,12 @@ int  opt_pokemon_manager_copy_list(PokemonListEntry* out, int capacity,
                                    LONG* revision, bool* truncated);
 int  opt_pokemon_manager_copy_species(PokemonSpeciesEntry* out, int capacity,
                                       LONG* revision);
+int  opt_pokemon_manager_copy_natures(PokemonCatalogEntry* out, int capacity,
+                                      LONG* revision);
+int  opt_pokemon_manager_copy_abilities(PokemonCatalogEntry* out, int capacity,
+                                        LONG* revision);
+int  opt_pokemon_manager_copy_items(PokemonCatalogEntry* out, int capacity,
+                                    LONG* revision);
 bool opt_pokemon_manager_copy_detail(PokemonDetail* out, LONG* revision);
 void opt_pokemon_manager_copy_status(char* out, int capacity, LONG* revision);
 

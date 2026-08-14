@@ -46,9 +46,13 @@ static int s_drag_offset_y = 0;
 
 static PokemonListEntry s_pokemon_list[POKEMON_MANAGER_MAX_LIST] = {};
 static PokemonSpeciesEntry s_species[POKEMON_MANAGER_MAX_SPECIES] = {};
+static PokemonCatalogEntry s_natures[POKEMON_MANAGER_MAX_NATURES] = {};
+static PokemonCatalogEntry s_items[POKEMON_MANAGER_MAX_ITEMS] = {};
 static PokemonDetail s_pokemon_detail = {};
 static int s_pokemon_count = 0;
 static int s_species_count = 0;
+static int s_nature_count = 0;
+static int s_item_count = 0;
 static LONG s_pokemon_list_revision = -1;
 static LONG s_pokemon_detail_revision = -1;
 static LONG s_pokemon_status_revision = -1;
@@ -88,7 +92,8 @@ enum EditKind {
     EDIT_SPECIES_SEARCH,
     EDIT_CREATE_LEVEL,
     EDIT_ITEM_SEARCH,
-    EDIT_INVENTORY_QUANTITY
+    EDIT_INVENTORY_QUANTITY,
+    EDIT_CHOICE_SEARCH
 };
 
 struct EditState {
@@ -110,8 +115,37 @@ struct PokemonFieldHit {
     PokemonEditField field;
     int sub_index;
     bool text;
+    bool choice;
     char initial[64];
 };
+
+struct PokemonChoiceState {
+    bool open;
+    PokemonTarget target;
+    PokemonEditField field;
+    int sub_index;
+    int current_value;
+    int scroll;
+    RECT anchor;
+    char title[64];
+    char search[64];
+};
+
+static PokemonChoiceState s_choice = {};
+static RECT s_choice_search_rect = {};
+static RECT s_choice_list_rect = {};
+static RECT s_choice_cancel_rect = {};
+static RECT s_choice_scrollbar_rect = {};
+static RECT s_choice_scroll_up_rect = {};
+static RECT s_choice_scroll_down_rect = {};
+static RECT s_choice_scroll_thumb_rect = {};
+static bool s_choice_scroll_dragging = false;
+static int s_choice_scroll_drag_offset = 0;
+
+static void close_choice();
+static int choice_raw_count();
+static bool choice_raw_at(int index, int* value, char* label, int capacity);
+static bool choice_allows_custom_value(PokemonEditField field);
 
 static PokemonFieldHit s_pokemon_hits[96] = {};
 static int s_pokemon_hit_count = 0;
@@ -236,24 +270,14 @@ static int find_target(const PokemonTarget& target) {
     return -1;
 }
 
-static bool same_process_foreground() {
-    HWND foreground = GetForegroundWindow();
-    if (!foreground || !s_game) return false;
-    DWORD foreground_pid = 0;
-    DWORD game_pid = 0;
-    GetWindowThreadProcessId(foreground, &foreground_pid);
-    GetWindowThreadProcessId(s_game, &game_pid);
-    return game_pid != 0 && foreground_pid == game_pid;
-}
-
 static void sync_window(HWND window, bool open) {
     if (!window) return;
     if (!open || !IsWindowVisible(s_game) || IsIconic(s_game)) {
         ShowWindow(window, SW_HIDE);
         return;
     }
-    // Les editeurs restent visibles en arriere-plan. Leur WM_NCHITTEST les
-    // rend transparents tant qu'une autre application a le premier plan.
+    // Les editeurs restent visibles en arriere-plan. Un clic sur eux redonne
+    // le premier plan au jeu afin qu'ils soient directement reutilisables.
     ShowWindow(window, SW_SHOWNOACTIVATE);
     SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0,
                  SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
@@ -294,6 +318,10 @@ static void update_live_edit_value() {
         if (s_inventory_quantity < 0) s_inventory_quantity = 0;
         if (s_inventory_quantity > 999) s_inventory_quantity = 999;
         break;
+    case EDIT_CHOICE_SEARCH:
+        lstrcpynA(s_choice.search, s_edit.buffer, sizeof(s_choice.search));
+        s_choice.scroll = 0;
+        break;
     default:
         break;
     }
@@ -316,9 +344,14 @@ static void cancel_edit() {
 static void commit_edit() {
     if (s_edit.kind == EDIT_POKEMON_FIELD && target_valid(s_edit.target)) {
         if (s_edit.numeric) {
+            int value = atoi(s_edit.buffer);
+            if (choice_allows_custom_value(s_edit.pokemon_field)) {
+                if (value < 0) value = 0;
+                if (value > 9999) value = 9999;
+            }
             opt_pokemon_manager_set_value(
                 s_edit.target, s_edit.pokemon_field, s_edit.sub_index,
-                atoi(s_edit.buffer));
+                value);
         } else {
             opt_pokemon_manager_set_text(
                 s_edit.target, s_edit.pokemon_field, s_edit.buffer);
@@ -344,11 +377,51 @@ static void begin_edit(EditKind kind, HWND window, const char* initial,
     InvalidateRect(window, NULL, FALSE);
 }
 
-static void begin_pokemon_field_edit(const PokemonFieldHit& hit) {
+static void begin_pokemon_field_edit(const PokemonFieldHit& hit,
+                                     bool open_choice) {
     PokemonTarget target = selected_target();
     if (!target_valid(target)) return;
+    if (hit.choice && open_choice) {
+        memset(&s_choice, 0, sizeof(s_choice));
+        s_choice.open = true;
+        s_choice.target = target;
+        s_choice.field = hit.field;
+        s_choice.sub_index = hit.sub_index;
+        s_choice.current_value = atoi(hit.initial);
+        s_choice.anchor = hit.rect;
+        const char* title = "Choisir une valeur";
+        switch (hit.field) {
+        case POKEMON_EDIT_SPECIES:   title = "Choisir l'espece"; break;
+        case POKEMON_EDIT_LEVEL:     title = "Choisir le niveau"; break;
+        case POKEMON_EDIT_GENDER:    title = "Choisir le sexe"; break;
+        case POKEMON_EDIT_FORM:      title = "Choisir la forme"; break;
+        case POKEMON_EDIT_SHINY:     title = "Pokemon shiny"; break;
+        case POKEMON_EDIT_NATURE:    title = "Choisir la nature"; break;
+        case POKEMON_EDIT_ABILITY:   title = "Choisir la capacite"; break;
+        case POKEMON_EDIT_HELD_ITEM: title = "Choisir l'objet tenu"; break;
+        case POKEMON_EDIT_HAPPINESS: title = "Choisir le bonheur"; break;
+        case POKEMON_EDIT_IV:        title = "Choisir l'IV"; break;
+        case POKEMON_EDIT_EV:        title = "Choisir l'EV"; break;
+        case POKEMON_EDIT_MOVE_ID:   title = "Choisir l'attaque"; break;
+        case POKEMON_EDIT_MOVE_PP:   title = "Choisir les PP actuels"; break;
+        case POKEMON_EDIT_MOVE_PPUP: title = "Choisir les PP Up"; break;
+        default: break;
+        }
+        lstrcpynA(s_choice.title, title, sizeof(s_choice.title));
+        begin_edit(EDIT_CHOICE_SEARCH, s_pokemon_window, "", false, 63);
+        for (int i = 0; i < choice_raw_count(); ++i) {
+            int value = 0; char label[128] = {};
+            if (choice_raw_at(i, &value, label, sizeof(label)) &&
+                value == s_choice.current_value) {
+                s_choice.scroll = i > 5 ? i - 5 : 0;
+                break;
+            }
+        }
+        return;
+    }
     begin_edit(EDIT_POKEMON_FIELD, s_pokemon_window, hit.initial,
-               !hit.text, hit.text ? 63 : 10);
+               !hit.text, hit.text ? 63 :
+               (choice_allows_custom_value(hit.field) ? 4 : 10));
     s_edit.target = target;
     s_edit.pokemon_field = hit.field;
     s_edit.sub_index = hit.sub_index;
@@ -359,7 +432,7 @@ static void handle_editor_char(HWND window, WPARAM character) {
     const char ch = (char)character;
     const int length = lstrlenA(s_edit.buffer);
     if (ch == '\r') {
-        commit_edit();
+        if (s_edit.kind != EDIT_CHOICE_SEARCH) commit_edit();
         return;
     }
     if (ch == '\b') {
@@ -379,8 +452,12 @@ static void handle_editor_char(HWND window, WPARAM character) {
 
 static bool handle_edit_key(HWND window, WPARAM key) {
     if (s_edit.kind == EDIT_NONE || s_edit.window != window) return false;
-    if (key == VK_ESCAPE) cancel_edit();
-    else if (key == VK_RETURN) commit_edit();
+    if (key == VK_ESCAPE) {
+        if (s_edit.kind == EDIT_CHOICE_SEARCH) close_choice();
+        else cancel_edit();
+    } else if (key == VK_RETURN) {
+        if (s_edit.kind != EDIT_CHOICE_SEARCH) commit_edit();
+    }
     else if (key == VK_BACK) handle_editor_char(window, '\b');
     return true;
 }
@@ -410,6 +487,158 @@ static bool catalog_matches(int id, const char* name, const char* search) {
     char id_text[16] = {};
     wsprintfA(id_text, "%d", id);
     return contains_ascii_ci(name, search) || contains_ascii_ci(id_text, search);
+}
+
+static bool choice_allows_custom_value(PokemonEditField field) {
+    return field == POKEMON_EDIT_IV || field == POKEMON_EDIT_EV ||
+           field == POKEMON_EDIT_MOVE_PP ||
+           field == POKEMON_EDIT_MOVE_PPUP;
+}
+
+static int numeric_choice_limits(PokemonEditField field, int sub_index,
+                                 int* minimum, int* maximum) {
+    int low = 0;
+    int high = -1;
+    switch (field) {
+    case POKEMON_EDIT_LEVEL:     low = 1; high = 100; break;
+    case POKEMON_EDIT_GENDER:    high = 2; break;
+    case POKEMON_EDIT_SHINY:     high = 1; break;
+    case POKEMON_EDIT_HAPPINESS: high = 255; break;
+    case POKEMON_EDIT_IV:        high = 31; break;
+    case POKEMON_EDIT_EV:        high = 255; break;
+    case POKEMON_EDIT_MOVE_PP:
+        high = (sub_index >= 0 && sub_index < 4)
+            ? s_pokemon_detail.moves[sub_index].totalpp : 0;
+        break;
+    case POKEMON_EDIT_MOVE_PPUP: high = 3; break;
+    default: return 0;
+    }
+    if (minimum) *minimum = low;
+    if (maximum) *maximum = high;
+    return high >= low ? high - low + 1 : 0;
+}
+
+static int choice_raw_count() {
+    if (!s_choice.open) return 0;
+    int minimum = 0, maximum = 0;
+    const int numeric = numeric_choice_limits(
+        s_choice.field, s_choice.sub_index, &minimum, &maximum);
+    if (numeric > 0) return numeric;
+    switch (s_choice.field) {
+    case POKEMON_EDIT_SPECIES:   return s_species_count;
+    case POKEMON_EDIT_FORM:      return s_pokemon_detail.form_count;
+    case POKEMON_EDIT_NATURE:    return s_nature_count;
+    case POKEMON_EDIT_ABILITY:   return s_pokemon_detail.ability_choice_count;
+    case POKEMON_EDIT_HELD_ITEM: return s_item_count + 1;
+    case POKEMON_EDIT_MOVE_ID:   return movesdb_count() + 1;
+    default: return 0;
+    }
+}
+
+static bool choice_raw_at(int index, int* value, char* label, int capacity) {
+    if (index < 0 || !value || !label || capacity <= 0) return false;
+    int minimum = 0, maximum = 0;
+    if (numeric_choice_limits(s_choice.field, s_choice.sub_index,
+                              &minimum, &maximum) > 0) {
+        const int selected = minimum + index;
+        if (selected > maximum) return false;
+        *value = selected;
+        const char* named = NULL;
+        if (s_choice.field == POKEMON_EDIT_GENDER) {
+            static const char* names[] = {"Male", "Femelle", "Asexue"};
+            named = names[selected];
+        } else if (s_choice.field == POKEMON_EDIT_SHINY) {
+            named = selected ? "Oui" : "Non";
+        }
+        if (named) _snprintf(label, capacity - 1, "%d - %s", selected, named);
+        else _snprintf(label, capacity - 1, "%d", selected);
+        label[capacity - 1] = '\0';
+        return true;
+    }
+
+    const char* name = "";
+    switch (s_choice.field) {
+    case POKEMON_EDIT_SPECIES:
+        if (index >= s_species_count) return false;
+        *value = s_species[index].id; name = s_species[index].name;
+        break;
+    case POKEMON_EDIT_FORM:
+        if (index >= s_pokemon_detail.form_count) return false;
+        *value = s_pokemon_detail.forms[index].id;
+        name = s_pokemon_detail.forms[index].name;
+        break;
+    case POKEMON_EDIT_NATURE:
+        if (index >= s_nature_count) return false;
+        *value = s_natures[index].id; name = s_natures[index].name;
+        break;
+    case POKEMON_EDIT_ABILITY:
+        if (index >= s_pokemon_detail.ability_choice_count) return false;
+        *value = s_pokemon_detail.ability_choices[index].id;
+        lstrcpynA(label, s_pokemon_detail.ability_choices[index].name, capacity);
+        return true;
+    case POKEMON_EDIT_HELD_ITEM:
+        if (index == 0) {
+            *value = 0; lstrcpynA(label, "#0  Aucun objet", capacity); return true;
+        }
+        --index;
+        if (index >= s_item_count) return false;
+        *value = s_items[index].id; name = s_items[index].name;
+        break;
+    case POKEMON_EDIT_MOVE_ID:
+        if (index == 0) {
+            *value = 0; lstrcpynA(label, "#0  Aucune attaque", capacity); return true;
+        }
+        --index;
+        if (index >= movesdb_count()) return false;
+        *value = movesdb_id_at(index); name = movesdb_name_at(index);
+        break;
+    default:
+        return false;
+    }
+    _snprintf(label, capacity - 1, "#%d  %s", *value, name ? name : "");
+    label[capacity - 1] = '\0';
+    return true;
+}
+
+static int choice_filtered_count() {
+    int count = 0;
+    const int raw_count = choice_raw_count();
+    for (int i = 0; i < raw_count; ++i) {
+        int value = 0; char label[128] = {};
+        if (choice_raw_at(i, &value, label, sizeof(label)) &&
+            catalog_matches(value, label, s_choice.search)) ++count;
+    }
+    return count;
+}
+
+static int choice_filtered_at(int filtered_index) {
+    int current = 0;
+    const int raw_count = choice_raw_count();
+    for (int i = 0; i < raw_count; ++i) {
+        int value = 0; char label[128] = {};
+        if (!choice_raw_at(i, &value, label, sizeof(label)) ||
+            !catalog_matches(value, label, s_choice.search)) continue;
+        if (current++ == filtered_index) return i;
+    }
+    return -1;
+}
+
+static void close_choice() {
+    if (s_choice_scroll_dragging) {
+        s_choice_scroll_dragging = false;
+        if (GetCapture() == s_pokemon_window) ReleaseCapture();
+    }
+    s_choice.open = false;
+    if (s_edit.kind == EDIT_CHOICE_SEARCH) memset(&s_edit, 0, sizeof(s_edit));
+    InvalidateRect(s_pokemon_window, NULL, FALSE);
+}
+
+static void select_choice_raw(int raw_index) {
+    int value = 0; char label[128] = {};
+    if (!choice_raw_at(raw_index, &value, label, sizeof(label))) return;
+    opt_pokemon_manager_set_value(s_choice.target, s_choice.field,
+                                  s_choice.sub_index, value);
+    close_choice();
 }
 
 static int species_filtered_count() {
@@ -504,6 +733,10 @@ static void refresh_pokemon_cache() {
         s_pokemon_list_revision = revision;
         s_species_count = opt_pokemon_manager_copy_species(
             s_species, POKEMON_MANAGER_MAX_SPECIES, NULL);
+        s_nature_count = opt_pokemon_manager_copy_natures(
+            s_natures, POKEMON_MANAGER_MAX_NATURES, NULL);
+        s_item_count = opt_pokemon_manager_copy_items(
+            s_items, POKEMON_MANAGER_MAX_ITEMS, NULL);
         int selected = target_valid(old_target) ? find_target(old_target) : -1;
         if (selected < 0 && s_pokemon_count > 0) selected = 0;
         s_pokemon_selected = selected;
@@ -539,7 +772,8 @@ static void refresh_inventory_cache() {
 }
 
 static void add_pokemon_hit(const RECT& rect, PokemonEditField field,
-                            int sub_index, bool text, const char* initial) {
+                            int sub_index, bool text, const char* initial,
+                            bool choice = false) {
     if (s_pokemon_hit_count >= (int)(sizeof(s_pokemon_hits) /
                                      sizeof(s_pokemon_hits[0]))) return;
     PokemonFieldHit& hit = s_pokemon_hits[s_pokemon_hit_count++];
@@ -547,6 +781,7 @@ static void add_pokemon_hit(const RECT& rect, PokemonEditField field,
     hit.field = field;
     hit.sub_index = sub_index;
     hit.text = text;
+    hit.choice = choice;
     lstrcpynA(hit.initial, initial ? initial : "", sizeof(hit.initial));
 }
 
@@ -554,7 +789,7 @@ static void draw_labeled_field(HDC dc, int x, int y, int width,
                                const char* label, const char* display,
                                const char* initial,
                                PokemonEditField field, int sub_index,
-                               bool editable, bool text) {
+                               bool editable, bool text, bool choice = false) {
     RECT label_rect = {x, y, x + 88, y + 21};
     RECT value_rect = {x + 90, y, x + width, y + 21};
     draw_text(dc, label_rect, label, COLOR_DIM,
@@ -566,11 +801,18 @@ static void draw_labeled_field(HDC dc, int x, int y, int width,
     frame_rect(dc, value_rect, editable ? COLOR_ACCENT : COLOR_BORDER);
     const char* shown = active ? s_edit.buffer : display;
     RECT text_rect = {value_rect.left + 5, value_rect.top,
-                      value_rect.right - 4, value_rect.bottom};
+                      value_rect.right - (choice ? 20 : 4), value_rect.bottom};
     draw_text(dc, text_rect, shown, editable ? COLOR_TEXT : COLOR_DIM,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     if (editable && active) draw_edit_caret(dc, text_rect, shown, false);
-    if (editable) add_pokemon_hit(value_rect, field, sub_index, text, initial);
+    if (editable && choice) {
+        RECT arrow = {value_rect.right - 19, value_rect.top,
+                      value_rect.right - 2, value_rect.bottom};
+        draw_text(dc, arrow, "v", COLOR_ACCENT,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+    if (editable) add_pokemon_hit(value_rect, field, sub_index, text, initial,
+                                  choice);
 }
 
 static void format_int(char* out, int capacity, int value) {
@@ -622,11 +864,11 @@ static void draw_pokemon_detail(HDC dc) {
     format_id_name(value, sizeof(value), pokemon.species, pokemon.species_name);
     format_int(initial, sizeof(initial), pokemon.species);
     draw_labeled_field(dc, col1, y1, width1, "Espece", value, initial,
-                       POKEMON_EDIT_SPECIES, 0, true, false);
+                       POKEMON_EDIT_SPECIES, 0, true, false, true);
     y1 += 25;
     format_int(value, sizeof(value), pokemon.level);
     draw_labeled_field(dc, col1, y1, width1, "Niveau", value, value,
-                       POKEMON_EDIT_LEVEL, 0, true, false);
+                       POKEMON_EDIT_LEVEL, 0, true, false, true);
     y1 += 25;
     format_int(value, sizeof(value), pokemon.exp);
     draw_labeled_field(dc, col1, y1, width1, "Experience", value, value,
@@ -636,35 +878,35 @@ static void draw_pokemon_detail(HDC dc) {
                          pokemon.gender == 2 ? "2 - Asexue" : "0 - Male";
     format_int(initial, sizeof(initial), pokemon.gender);
     draw_labeled_field(dc, col1, y1, width1, "Sexe", gender, initial,
-                       POKEMON_EDIT_GENDER, 0, true, false);
+                       POKEMON_EDIT_GENDER, 0, true, false, true);
     y1 += 25;
     format_int(value, sizeof(value), pokemon.form);
     draw_labeled_field(dc, col1, y1, width1, "Forme", value, value,
-                       POKEMON_EDIT_FORM, 0, true, false);
+                       POKEMON_EDIT_FORM, 0, true, false, true);
     y1 += 25;
     format_int(initial, sizeof(initial), pokemon.shiny);
     draw_labeled_field(dc, col1, y1, width1, "Shiny",
                        pokemon.shiny ? "1 - Oui" : "0 - Non", initial,
-                       POKEMON_EDIT_SHINY, 0, true, false);
+                       POKEMON_EDIT_SHINY, 0, true, false, true);
     y1 += 25;
     format_id_name(value, sizeof(value), pokemon.nature, pokemon.nature_name);
     format_int(initial, sizeof(initial), pokemon.nature);
     draw_labeled_field(dc, col1, y1, width1, "Nature", value, initial,
-                       POKEMON_EDIT_NATURE, 0, true, false);
+                       POKEMON_EDIT_NATURE, 0, true, false, true);
     y1 += 25;
     format_id_name(value, sizeof(value), pokemon.ability, pokemon.ability_name);
-    format_int(initial, sizeof(initial), pokemon.ability);
+    format_int(initial, sizeof(initial), pokemon.ability_index);
     draw_labeled_field(dc, col1, y1, width1, "Capacite", value, initial,
-                       POKEMON_EDIT_ABILITY, 0, true, false);
+                       POKEMON_EDIT_ABILITY, 0, true, false, true);
     y1 += 25;
     format_id_name(value, sizeof(value), pokemon.held_item, pokemon.item_name);
     format_int(initial, sizeof(initial), pokemon.held_item);
     draw_labeled_field(dc, col1, y1, width1, "Objet tenu", value, initial,
-                       POKEMON_EDIT_HELD_ITEM, 0, true, false);
+                       POKEMON_EDIT_HELD_ITEM, 0, true, false, true);
     y1 += 25;
     format_int(value, sizeof(value), pokemon.happiness);
     draw_labeled_field(dc, col1, y1, width1, "Bonheur", value, value,
-                       POKEMON_EDIT_HAPPINESS, 0, true, false);
+                       POKEMON_EDIT_HAPPINESS, 0, true, false, true);
 
     _snprintf(value, sizeof(value) - 1, "%d / %d", pokemon.hp, pokemon.totalhp);
     format_int(initial, sizeof(initial), pokemon.hp);
@@ -740,16 +982,34 @@ static void draw_pokemon_detail(HDC dc) {
         char ev_text[16] = {};
         format_int(iv_text, sizeof(iv_text), pokemon.iv[i]);
         format_int(ev_text, sizeof(ev_text), pokemon.ev[i]);
-        fill_rect(dc, iv_rect, COLOR_PANEL_ALT);
-        fill_rect(dc, ev_rect, COLOR_PANEL_ALT);
+        const bool iv_active = s_edit.kind == EDIT_POKEMON_FIELD &&
+            s_edit.pokemon_field == POKEMON_EDIT_IV && s_edit.sub_index == i;
+        const bool ev_active = s_edit.kind == EDIT_POKEMON_FIELD &&
+            s_edit.pokemon_field == POKEMON_EDIT_EV && s_edit.sub_index == i;
+        fill_rect(dc, iv_rect, iv_active ? RGB(65, 65, 105) : COLOR_PANEL_ALT);
+        fill_rect(dc, ev_rect, ev_active ? RGB(65, 65, 105) : COLOR_PANEL_ALT);
         frame_rect(dc, iv_rect, COLOR_ACCENT);
         frame_rect(dc, ev_rect, COLOR_ACCENT);
-        draw_text(dc, iv_rect, iv_text, COLOR_TEXT,
+        RECT iv_value_rect = {iv_rect.left + 2, iv_rect.top,
+                              iv_rect.right - 17, iv_rect.bottom};
+        RECT ev_value_rect = {ev_rect.left + 2, ev_rect.top,
+                              ev_rect.right - 17, ev_rect.bottom};
+        const char* iv_shown = iv_active ? s_edit.buffer : iv_text;
+        const char* ev_shown = ev_active ? s_edit.buffer : ev_text;
+        draw_text(dc, iv_value_rect, iv_shown, COLOR_TEXT,
                   DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        draw_text(dc, ev_rect, ev_text, COLOR_TEXT,
+        draw_text(dc, ev_value_rect, ev_shown, COLOR_TEXT,
                   DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        add_pokemon_hit(iv_rect, POKEMON_EDIT_IV, i, false, iv_text);
-        add_pokemon_hit(ev_rect, POKEMON_EDIT_EV, i, false, ev_text);
+        if (iv_active) draw_edit_caret(dc, iv_value_rect, iv_shown, true);
+        if (ev_active) draw_edit_caret(dc, ev_value_rect, ev_shown, true);
+        RECT iv_arrow = {iv_rect.right - 16, iv_rect.top, iv_rect.right - 1, iv_rect.bottom};
+        RECT ev_arrow = {ev_rect.right - 16, ev_rect.top, ev_rect.right - 1, ev_rect.bottom};
+        draw_text(dc, iv_arrow, "v", COLOR_ACCENT,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        draw_text(dc, ev_arrow, "v", COLOR_ACCENT,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        add_pokemon_hit(iv_rect, POKEMON_EDIT_IV, i, false, iv_text, true);
+        add_pokemon_hit(ev_rect, POKEMON_EDIT_EV, i, false, ev_text, true);
         y3 += 24;
     }
 
@@ -780,9 +1040,13 @@ static void draw_pokemon_detail(HDC dc) {
         _snprintf(pp_text, sizeof(pp_text) - 1, "PP %d / %d", move.pp, move.totalpp);
         format_int(pp_initial, sizeof(pp_initial), move.pp);
         _snprintf(ppup_text, sizeof(ppup_text) - 1, "PP Up %d", move.ppup);
+        const bool pp_active = s_edit.kind == EDIT_POKEMON_FIELD &&
+            s_edit.pokemon_field == POKEMON_EDIT_MOVE_PP && s_edit.sub_index == i;
+        const bool ppup_active = s_edit.kind == EDIT_POKEMON_FIELD &&
+            s_edit.pokemon_field == POKEMON_EDIT_MOVE_PPUP && s_edit.sub_index == i;
         fill_rect(dc, move_rect, COLOR_PANEL_ALT);
-        fill_rect(dc, pp_rect, COLOR_PANEL_ALT);
-        fill_rect(dc, ppup_rect, COLOR_PANEL_ALT);
+        fill_rect(dc, pp_rect, pp_active ? RGB(65, 65, 105) : COLOR_PANEL_ALT);
+        fill_rect(dc, ppup_rect, ppup_active ? RGB(65, 65, 105) : COLOR_PANEL_ALT);
         frame_rect(dc, move_rect, COLOR_ACCENT);
         frame_rect(dc, pp_rect, COLOR_ACCENT);
         frame_rect(dc, ppup_rect, COLOR_ACCENT);
@@ -790,14 +1054,34 @@ static void draw_pokemon_detail(HDC dc) {
                        move_rect.right - 4, move_rect.bottom};
         draw_text(dc, padded, move_text, COLOR_TEXT,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        draw_text(dc, pp_rect, pp_text, COLOR_TEXT,
+        RECT pp_value_rect = {pp_rect.left + 2, pp_rect.top,
+                              pp_rect.right - 19, pp_rect.bottom};
+        RECT ppup_value_rect = {ppup_rect.left + 2, ppup_rect.top,
+                                ppup_rect.right - 19, ppup_rect.bottom};
+        const char* pp_shown = pp_active ? s_edit.buffer : pp_text;
+        const char* ppup_shown = ppup_active ? s_edit.buffer : ppup_text;
+        draw_text(dc, pp_value_rect, pp_shown, COLOR_TEXT,
                   DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        draw_text(dc, ppup_rect, ppup_text, COLOR_TEXT,
+        draw_text(dc, ppup_value_rect, ppup_shown, COLOR_TEXT,
                   DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        add_pokemon_hit(move_rect, POKEMON_EDIT_MOVE_ID, i, false, move_initial);
-        add_pokemon_hit(pp_rect, POKEMON_EDIT_MOVE_PP, i, false, pp_initial);
+        if (pp_active) draw_edit_caret(dc, pp_value_rect, pp_shown, true);
+        if (ppup_active) draw_edit_caret(dc, ppup_value_rect, ppup_shown, true);
+        RECT move_arrow = {move_rect.right - 18, move_rect.top,
+                           move_rect.right - 2, move_rect.bottom};
+        RECT pp_arrow = {pp_rect.right - 18, pp_rect.top,
+                         pp_rect.right - 2, pp_rect.bottom};
+        RECT ppup_arrow = {ppup_rect.right - 18, ppup_rect.top,
+                           ppup_rect.right - 2, ppup_rect.bottom};
+        draw_text(dc, move_arrow, "v", COLOR_ACCENT,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        draw_text(dc, pp_arrow, "v", COLOR_ACCENT,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        draw_text(dc, ppup_arrow, "v", COLOR_ACCENT,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        add_pokemon_hit(move_rect, POKEMON_EDIT_MOVE_ID, i, false, move_initial, true);
+        add_pokemon_hit(pp_rect, POKEMON_EDIT_MOVE_PP, i, false, pp_initial, true);
         format_int(initial, sizeof(initial), move.ppup);
-        add_pokemon_hit(ppup_rect, POKEMON_EDIT_MOVE_PPUP, i, false, initial);
+        add_pokemon_hit(ppup_rect, POKEMON_EDIT_MOVE_PPUP, i, false, initial, true);
         moves_y += 29;
     }
 
@@ -907,6 +1191,111 @@ static void draw_pokemon_add(HDC dc) {
     draw_button(dc, s_create_cancel_rect, "Annuler", RGB(80, 80, 105));
 }
 
+static void draw_pokemon_choice(HDC dc) {
+    if (!s_choice.open) return;
+    const int popup_width = choice_allows_custom_value(s_choice.field) ? 260 : 430;
+    const int visible = 8;
+    const int popup_height = 28 + 32 + visible * LIST_ROW_HEIGHT + 6;
+    int left = s_choice.anchor.left;
+    if (left + popup_width > POKEMON_WINDOW_WIDTH - 10)
+        left = POKEMON_WINDOW_WIDTH - 10 - popup_width;
+    if (left < 10) left = 10;
+    int top = s_choice.anchor.bottom + 2;
+    if (top + popup_height > POKEMON_WINDOW_HEIGHT - 44)
+        top = s_choice.anchor.top - popup_height - 2;
+    if (top < EDITOR_TITLE_HEIGHT + 2) top = EDITOR_TITLE_HEIGHT + 2;
+    RECT popup = {left, top, left + popup_width, top + popup_height};
+    RECT shadow = {popup.left + 4, popup.top + 4,
+                   popup.right + 4, popup.bottom + 4};
+    fill_rect(dc, shadow, RGB(7, 7, 12));
+    fill_rect(dc, popup, COLOR_PANEL);
+    frame_rect(dc, popup, COLOR_ACCENT);
+
+    const int filtered = choice_filtered_count();
+    char heading[96] = {};
+    _snprintf(heading, sizeof(heading) - 1, "%s  (%d)",
+              s_choice.title, filtered);
+    RECT title = {popup.left + 8, popup.top + 2,
+                  popup.right - 30, popup.top + 28};
+    draw_text(dc, title, heading, COLOR_TEXT,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    s_choice_cancel_rect = {popup.right - 27, popup.top + 3,
+                            popup.right - 4, popup.top + 26};
+    draw_button(dc, s_choice_cancel_rect, "X", COLOR_DANGER);
+
+    s_choice_search_rect = {popup.left + 6, popup.top + 31,
+                            popup.right - 6, popup.top + 57};
+    fill_rect(dc, s_choice_search_rect, RGB(65, 65, 105));
+    frame_rect(dc, s_choice_search_rect, COLOR_ACCENT);
+    RECT search_text = {s_choice_search_rect.left + 6,
+                        s_choice_search_rect.top,
+                        s_choice_search_rect.right - 5,
+                        s_choice_search_rect.bottom};
+    const char* search = s_edit.kind == EDIT_CHOICE_SEARCH
+        ? s_edit.buffer : s_choice.search;
+    draw_text(dc, search_text, search, COLOR_TEXT,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (s_edit.kind == EDIT_CHOICE_SEARCH)
+        draw_edit_caret(dc, search_text, search, false);
+
+    s_choice_scrollbar_rect = {popup.right - 22, popup.top + 61,
+                               popup.right - 5, popup.bottom - 5};
+    s_choice_list_rect = {popup.left + 6, popup.top + 61,
+                          s_choice_scrollbar_rect.left - 2, popup.bottom - 5};
+    fill_rect(dc, s_choice_list_rect, COLOR_PANEL);
+    frame_rect(dc, s_choice_list_rect, COLOR_BORDER);
+    int maximum = filtered - visible;
+    if (maximum < 0) maximum = 0;
+    if (s_choice.scroll < 0) s_choice.scroll = 0;
+    if (s_choice.scroll > maximum) s_choice.scroll = maximum;
+    for (int row = 0; row < visible; ++row) {
+        const int raw = choice_filtered_at(s_choice.scroll + row);
+        if (raw < 0) break;
+        int value = 0; char label[128] = {};
+        if (!choice_raw_at(raw, &value, label, sizeof(label))) continue;
+        RECT row_rect = {s_choice_list_rect.left + 1,
+                          s_choice_list_rect.top + row * LIST_ROW_HEIGHT + 1,
+                          s_choice_list_rect.right - 1,
+                          s_choice_list_rect.top + (row + 1) * LIST_ROW_HEIGHT};
+        if (value == s_choice.current_value) fill_rect(dc, row_rect, COLOR_HOVER);
+        RECT row_text = {row_rect.left + 7, row_rect.top,
+                         row_rect.right - 6, row_rect.bottom};
+        draw_text(dc, row_text, label, COLOR_TEXT,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
+
+    fill_rect(dc, s_choice_scrollbar_rect, RGB(24, 24, 38));
+    frame_rect(dc, s_choice_scrollbar_rect, COLOR_BORDER);
+    s_choice_scroll_up_rect = {s_choice_scrollbar_rect.left,
+                               s_choice_scrollbar_rect.top,
+                               s_choice_scrollbar_rect.right,
+                               s_choice_scrollbar_rect.top + 17};
+    s_choice_scroll_down_rect = {s_choice_scrollbar_rect.left,
+                                 s_choice_scrollbar_rect.bottom - 17,
+                                 s_choice_scrollbar_rect.right,
+                                 s_choice_scrollbar_rect.bottom};
+    draw_text(dc, s_choice_scroll_up_rect, "^", COLOR_TEXT,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, s_choice_scroll_down_rect, "v", COLOR_TEXT,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    const int track_top = s_choice_scroll_up_rect.bottom;
+    const int track_bottom = s_choice_scroll_down_rect.top;
+    const int track_height = track_bottom - track_top;
+    int thumb_height = track_height;
+    int thumb_top = track_top;
+    if (maximum > 0 && filtered > 0) {
+        thumb_height = (track_height * visible) / filtered;
+        if (thumb_height < 18) thumb_height = 18;
+        if (thumb_height > track_height) thumb_height = track_height;
+        thumb_top += ((track_height - thumb_height) * s_choice.scroll) / maximum;
+    }
+    s_choice_scroll_thumb_rect = {s_choice_scrollbar_rect.left + 2, thumb_top,
+                                  s_choice_scrollbar_rect.right - 2,
+                                  thumb_top + thumb_height};
+    fill_rect(dc, s_choice_scroll_thumb_rect,
+              maximum > 0 ? COLOR_ACCENT : COLOR_BORDER);
+}
+
 static void paint_pokemon(HWND window) {
     PAINTSTRUCT paint = {};
     HDC target = BeginPaint(window, &paint);
@@ -986,6 +1375,7 @@ static void paint_pokemon(HWND window) {
     RECT status_text = {18, 674, POKEMON_WINDOW_WIDTH - 20, 707};
     draw_text(dc, status_text, s_pokemon_status, COLOR_DIM,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    draw_pokemon_choice(dc);
 
     BitBlt(target, 0, 0, POKEMON_WINDOW_WIDTH, POKEMON_WINDOW_HEIGHT,
            dc, 0, 0, SRCCOPY);
@@ -1175,6 +1565,7 @@ static void paint_inventory(HWND window) {
 }
 
 static void close_pokemon() {
+    if (s_choice.open) close_choice();
     if (s_edit.window == s_pokemon_window) cancel_edit();
     s_pokemon_open = false;
     opt_pokemon_manager_stop();
@@ -1196,6 +1587,7 @@ static void close_inventory() {
 static void pokemon_select_row(int index) {
     if (index < 0 || index >= s_pokemon_count) return;
     s_pokemon_selected = index;
+    if (s_choice.open) close_choice();
     s_pokemon_add_mode = false;
     s_delete_deadline = 0;
     opt_pokemon_manager_select(target_from_entry(s_pokemon_list[index]));
@@ -1216,6 +1608,48 @@ static void handle_pokemon_click(int x, int y) {
         SetCapture(s_pokemon_window);
         return;
     }
+    if (s_choice.open) {
+        if (point_in(s_choice_cancel_rect, x, y)) {
+            close_choice();
+            return;
+        }
+        if (point_in(s_choice_search_rect, x, y)) {
+            if (s_edit.kind != EDIT_CHOICE_SEARCH)
+                begin_edit(EDIT_CHOICE_SEARCH, s_pokemon_window,
+                           s_choice.search, false, 63);
+            return;
+        }
+        if (point_in(s_choice_list_rect, x, y)) {
+            const int row = (y - s_choice_list_rect.top) / LIST_ROW_HEIGHT;
+            const int raw = choice_filtered_at(s_choice.scroll + row);
+            if (raw >= 0) select_choice_raw(raw);
+            return;
+        }
+        if (point_in(s_choice_scrollbar_rect, x, y)) {
+            const int visible = 8;
+            int maximum = choice_filtered_count() - visible;
+            if (maximum < 0) maximum = 0;
+            if (maximum > 0 && point_in(s_choice_scroll_thumb_rect, x, y)) {
+                s_choice_scroll_dragging = true;
+                s_choice_scroll_drag_offset = y - s_choice_scroll_thumb_rect.top;
+                SetCapture(s_pokemon_window);
+                return;
+            } else if (point_in(s_choice_scroll_up_rect, x, y))
+                --s_choice.scroll;
+            else if (point_in(s_choice_scroll_down_rect, x, y))
+                ++s_choice.scroll;
+            else if (y < s_choice_scroll_thumb_rect.top)
+                s_choice.scroll -= visible;
+            else if (y >= s_choice_scroll_thumb_rect.bottom)
+                s_choice.scroll += visible;
+            if (s_choice.scroll < 0) s_choice.scroll = 0;
+            if (s_choice.scroll > maximum) s_choice.scroll = maximum;
+            InvalidateRect(s_pokemon_window, NULL, FALSE);
+            return;
+        }
+        close_choice();
+        return;
+    }
     if (point_in(s_pokemon_list_rect, x, y)) {
         const int row = (y - s_pokemon_list_rect.top) / LIST_ROW_HEIGHT;
         pokemon_select_row(s_pokemon_scroll + row);
@@ -1226,6 +1660,7 @@ static void handle_pokemon_click(int x, int y) {
         return;
     }
     if (point_in(s_pokemon_add_button, x, y)) {
+        if (s_choice.open) close_choice();
         cancel_edit();
         s_pokemon_add_mode = true;
         if (s_species_selected <= 0 && s_species_count > 0)
@@ -1286,7 +1721,12 @@ static void handle_pokemon_click(int x, int y) {
     } else {
         for (int i = 0; i < s_pokemon_hit_count; ++i) {
             if (point_in(s_pokemon_hits[i].rect, x, y)) {
-                begin_pokemon_field_edit(s_pokemon_hits[i]);
+                const PokemonFieldHit& hit = s_pokemon_hits[i];
+                const bool custom = choice_allows_custom_value(hit.field);
+                const bool open_choice = hit.choice &&
+                    (!custom || x >= hit.rect.right - 22);
+                if (s_edit.kind == EDIT_POKEMON_FIELD) commit_edit();
+                begin_pokemon_field_edit(hit, open_choice);
                 return;
             }
         }
@@ -1379,7 +1819,15 @@ static void handle_inventory_click(int x, int y) {
 }
 
 static void scroll_pokemon(int x, int y, int direction) {
-    if (s_pokemon_add_mode && point_in(s_species_list_rect, x, y)) {
+    if (s_choice.open && point_in(s_choice_list_rect, x, y)) {
+        s_choice.scroll -= direction * 3;
+        const int visible = (s_choice_list_rect.bottom -
+                             s_choice_list_rect.top) / LIST_ROW_HEIGHT;
+        int maximum = choice_filtered_count() - visible;
+        if (maximum < 0) maximum = 0;
+        if (s_choice.scroll < 0) s_choice.scroll = 0;
+        if (s_choice.scroll > maximum) s_choice.scroll = maximum;
+    } else if (s_pokemon_add_mode && point_in(s_species_list_rect, x, y)) {
         s_species_scroll -= direction * 3;
         const int visible = (s_species_list_rect.bottom -
                              s_species_list_rect.top) / LIST_ROW_HEIGHT;
@@ -1432,15 +1880,44 @@ static void move_dragged_window(HWND window, int x, int y) {
                  SWP_NOACTIVATE | SWP_NOSIZE);
 }
 
-static bool pokemon_point_is_editable(int x, int y) {
+static void move_choice_scroll_thumb(int y) {
+    if (!s_choice_scroll_dragging || !s_choice.open) return;
+    const int maximum = choice_filtered_count() - 8;
+    if (maximum <= 0) return;
+    const int track_top = s_choice_scroll_up_rect.bottom;
+    const int track_bottom = s_choice_scroll_down_rect.top;
+    const int thumb_height = s_choice_scroll_thumb_rect.bottom -
+                             s_choice_scroll_thumb_rect.top;
+    const int travel = track_bottom - track_top - thumb_height;
+    if (travel <= 0) return;
+    int thumb_top = y - s_choice_scroll_drag_offset;
+    if (thumb_top < track_top) thumb_top = track_top;
+    if (thumb_top > track_top + travel) thumb_top = track_top + travel;
+    s_choice.scroll = ((thumb_top - track_top) * maximum + travel / 2) / travel;
+    InvalidateRect(s_pokemon_window, NULL, FALSE);
+}
+
+static int pokemon_point_edit_kind(int x, int y) {
+    if (s_choice.open) {
+        if (point_in(s_choice_search_rect, x, y)) return 1;
+        if (point_in(s_choice_list_rect, x, y) ||
+            point_in(s_choice_scrollbar_rect, x, y) ||
+            point_in(s_choice_cancel_rect, x, y)) return 2;
+        return 0;
+    }
     if (s_pokemon_add_mode) {
-        return point_in(s_species_search_rect, x, y) ||
-               point_in(s_create_level_rect, x, y);
+        return (point_in(s_species_search_rect, x, y) ||
+                point_in(s_create_level_rect, x, y)) ? 1 : 0;
     }
     for (int i = 0; i < s_pokemon_hit_count; ++i) {
-        if (point_in(s_pokemon_hits[i].rect, x, y)) return true;
+        if (point_in(s_pokemon_hits[i].rect, x, y)) {
+            const PokemonFieldHit& hit = s_pokemon_hits[i];
+            if (hit.choice && choice_allows_custom_value(hit.field) &&
+                x < hit.rect.right - 22) return 1;
+            return hit.choice ? 2 : 1;
+        }
     }
-    return false;
+    return 0;
 }
 
 static bool inventory_point_is_editable(int x, int y) {
@@ -1452,10 +1929,11 @@ static LRESULT set_editor_cursor(HWND window, bool pokemon_window) {
     POINT point = {};
     GetCursorPos(&point);
     ScreenToClient(window, &point);
-    const bool editable = pokemon_window
-        ? pokemon_point_is_editable(point.x, point.y)
-        : inventory_point_is_editable(point.x, point.y);
-    SetCursor(LoadCursor(NULL, editable ? IDC_IBEAM : IDC_ARROW));
+    const int edit_kind = pokemon_window
+        ? pokemon_point_edit_kind(point.x, point.y)
+        : (inventory_point_is_editable(point.x, point.y) ? 1 : 0);
+    SetCursor(LoadCursor(NULL, edit_kind == 1 ? IDC_IBEAM :
+                        edit_kind == 2 ? IDC_HAND : IDC_ARROW));
     return TRUE;
 }
 
@@ -1463,8 +1941,13 @@ static LRESULT CALLBACK PokemonWindowProc(HWND window, UINT message,
                                           WPARAM wparam, LPARAM lparam) {
     switch (message) {
     case WM_NCHITTEST:
-        return same_process_foreground() ? HTCLIENT : HTTRANSPARENT;
+        return HTCLIENT;
     case WM_MOUSEACTIVATE:
+        if (s_game) {
+            SetForegroundWindow(s_game);
+            SetActiveWindow(s_game);
+            SetFocus(s_game);
+        }
         return MA_NOACTIVATE;
     case WM_SETCURSOR:
         return set_editor_cursor(window, true);
@@ -1484,9 +1967,14 @@ static LRESULT CALLBACK PokemonWindowProc(HWND window, UINT message,
         handle_pokemon_click((short)LOWORD(lparam), (short)HIWORD(lparam));
         return 0;
     case WM_MOUSEMOVE:
+        move_choice_scroll_thumb((short)HIWORD(lparam));
         move_dragged_window(window, (short)LOWORD(lparam), (short)HIWORD(lparam));
         return 0;
     case WM_LBUTTONUP:
+        if (s_choice_scroll_dragging) {
+            s_choice_scroll_dragging = false;
+            ReleaseCapture();
+        }
         if (s_dragging && s_drag_window == window) {
             s_dragging = false;
             s_drag_window = NULL;
@@ -1521,8 +2009,13 @@ static LRESULT CALLBACK InventoryWindowProc(HWND window, UINT message,
                                             WPARAM wparam, LPARAM lparam) {
     switch (message) {
     case WM_NCHITTEST:
-        return same_process_foreground() ? HTCLIENT : HTTRANSPARENT;
+        return HTCLIENT;
     case WM_MOUSEACTIVATE:
+        if (s_game) {
+            SetForegroundWindow(s_game);
+            SetActiveWindow(s_game);
+            SetFocus(s_game);
+        }
         return MA_NOACTIVATE;
     case WM_SETCURSOR:
         return set_editor_cursor(window, false);
@@ -1680,6 +2173,7 @@ void trainer_editors_show_inventory() {
 
 void trainer_editors_hide_all() {
     memset(&s_edit, 0, sizeof(s_edit));
+    memset(&s_choice, 0, sizeof(s_choice));
     s_dragging = false;
     s_drag_window = NULL;
     if (GetCapture() == s_pokemon_window || GetCapture() == s_inventory_window)

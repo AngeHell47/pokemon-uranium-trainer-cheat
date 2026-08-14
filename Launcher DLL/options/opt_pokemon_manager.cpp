@@ -28,9 +28,15 @@ struct PokemonListShared {
     int count;
     int truncated;
     int species_count;
+    int nature_count;
+    int ability_count;
+    int item_count;
     int reserved;
     PokemonListEntry entries[POKEMON_MANAGER_MAX_LIST];
     PokemonSpeciesEntry species[POKEMON_MANAGER_MAX_SPECIES];
+    PokemonCatalogEntry natures[POKEMON_MANAGER_MAX_NATURES];
+    PokemonCatalogEntry abilities[POKEMON_MANAGER_MAX_ABILITIES];
+    PokemonCatalogEntry items[POKEMON_MANAGER_MAX_ITEMS];
 };
 
 struct PokemonResultShared {
@@ -51,9 +57,15 @@ static PokemonResultShared s_shared_result = {};
 
 static PokemonListEntry s_list[POKEMON_MANAGER_MAX_LIST] = {};
 static PokemonSpeciesEntry s_species[POKEMON_MANAGER_MAX_SPECIES] = {};
+static PokemonCatalogEntry s_natures[POKEMON_MANAGER_MAX_NATURES] = {};
+static PokemonCatalogEntry s_abilities[POKEMON_MANAGER_MAX_ABILITIES] = {};
+static PokemonCatalogEntry s_items[POKEMON_MANAGER_MAX_ITEMS] = {};
 static PokemonDetail s_detail = {};
 static int s_list_count = 0;
 static int s_species_count = 0;
+static int s_nature_count = 0;
+static int s_ability_count = 0;
+static int s_item_count = 0;
 static bool s_list_truncated = false;
 static char s_status[128] = "En attente des donnees du jeu...";
 static LONG s_list_revision = 0;
@@ -172,8 +184,12 @@ static void build_ruby_list() {
         "begin\n"
         "  max_records=%d\n"
         "  max_species=%d\n"
+        "  max_natures=%d\n"
+        "  max_abilities=%d\n"
+        "  max_items=%d\n"
         "  entry_size=%u\n"
         "  species_size=%u\n"
+        "  catalog_size=%u\n"
         "  records=[]\n"
         "  truncated=0\n"
         "  append_pokemon=lambda do |pkmn,loc,box,slot|\n"
@@ -210,34 +226,67 @@ static void build_ruby_list() {
         "      end\n"
         "    end\n"
         "  end\n"
-        "  species_records=[]\n"
-        "  species_limit=(PBSpecies.maxValue rescue max_species).to_i\n"
-        "  species_limit=max_species if species_limit<=0 || species_limit>max_species\n"
-        "  1.upto(species_limit) do |id|\n"
-        "    name=(PBSpecies.getName(id) rescue '').to_s\n"
-        "    if name.length>0 && name !~ /^\\?+$/\n"
-        "      species_records << [id].pack(\"l\")+name[0,39].ljust(40,\"\\0\")\n"
+        "  catalogs=$__uranium_trainer_pokemon_catalogs\n"
+        "  if !catalogs\n"
+        "    species_records=[]\n"
+        "    species_limit=(PBSpecies.maxValue rescue max_species).to_i\n"
+        "    species_limit=max_species if species_limit<=0 || species_limit>max_species\n"
+        "    1.upto(species_limit) do |id|\n"
+        "      name=(PBSpecies.getName(id) rescue '').to_s\n"
+        "      if name.length>0 && name !~ /^\\?+$/\n"
+        "        species_records << [id].pack(\"l\")+name[0,39].ljust(40,\"\\0\")\n"
+        "      end\n"
         "    end\n"
+        "    nature_records=[]\n"
+        "    nature_limit=(PBNatures.maxValue rescue 24).to_i\n"
+        "    0.upto([nature_limit,max_natures-1].min) do |id|\n"
+        "      name=(PBNatures.getName(id) rescue '').to_s\n"
+        "      nature_records << [id].pack(\"l\")+name[0,63].ljust(64,\"\\0\") if name.length>0\n"
+        "    end\n"
+        "    ability_records=[]\n"
+        "    ability_limit=(PBAbilities.maxValue rescue PBAbilities.getCount-1 rescue max_abilities).to_i\n"
+        "    1.upto([ability_limit,max_abilities].min) do |id|\n"
+        "      name=(PBAbilities.getName(id) rescue '').to_s\n"
+        "      ability_records << [id].pack(\"l\")+name[0,63].ljust(64,\"\\0\") if name.length>0 && name !~ /^\\?+$/\n"
+        "    end\n"
+        "    item_records=[]\n"
+        "    item_limit=(PBItems.maxValue rescue max_items).to_i\n"
+        "    1.upto([item_limit,max_items].min) do |id|\n"
+        "      name=(PBItems.getName(id) rescue '').to_s\n"
+        "      item_records << [id].pack(\"l\")+name[0,63].ljust(64,\"\\0\") if name.length>0 && name !~ /^\\?+$/\n"
+        "    end\n"
+        "    catalogs=[species_records[0,max_species],nature_records[0,max_natures],ability_records[0,max_abilities],item_records[0,max_items]]\n"
+        "    $__uranium_trainer_pokemon_catalogs=catalogs\n"
         "  end\n"
-        "  species_records=species_records[0,max_species]\n"
-        "  header=[records.length,truncated,species_records.length,0].pack(\"l4\")\n"
+        "  species_records,nature_records,ability_records,item_records=catalogs\n"
+        "  header=[records.length,truncated,species_records.length,nature_records.length,ability_records.length,item_records.length,0].pack(\"l7\")\n"
         "  body=records.join\n"
         "  body << \"\\0\"*((max_records-records.length)*entry_size)\n"
         "  body << species_records.join\n"
         "  body << \"\\0\"*((max_species-species_records.length)*species_size)\n"
+        "  body << nature_records.join\n"
+        "  body << \"\\0\"*((max_natures-nature_records.length)*catalog_size)\n"
+        "  body << ability_records.join\n"
+        "  body << \"\\0\"*((max_abilities-ability_records.length)*catalog_size)\n"
+        "  body << item_records.join\n"
+        "  body << \"\\0\"*((max_items-item_records.length)*catalog_size)\n"
         "  data=header+body\n"
         "  Win32API.new(\"kernel32\",\"RtlMoveMemory\",[\"l\",\"p\",\"l\"],\"v\").call(%lu,data,%u)\n"
         "rescue Exception\n"
         "  begin\n"
-        "    data=[0,0,0,0].pack(\"l4\")+\"\\0\"*(%u-16)\n"
+        "    data=[0,0,0,0,0,0,0].pack(\"l7\")+\"\\0\"*(%u-28)\n"
         "    Win32API.new(\"kernel32\",\"RtlMoveMemory\",[\"l\",\"p\",\"l\"],\"v\").call(%lu,data,%u)\n"
         "  rescue Exception\n"
         "  end\n"
         "end\n",
         POKEMON_MANAGER_MAX_LIST,
         POKEMON_MANAGER_MAX_SPECIES,
+        POKEMON_MANAGER_MAX_NATURES,
+        POKEMON_MANAGER_MAX_ABILITIES,
+        POKEMON_MANAGER_MAX_ITEMS,
         (unsigned)sizeof(PokemonListEntry),
         (unsigned)sizeof(PokemonSpeciesEntry),
+        (unsigned)sizeof(PokemonCatalogEntry),
         (unsigned long)(ULONG_PTR)&s_shared_list,
         (unsigned)sizeof(s_shared_list),
         (unsigned)sizeof(s_shared_list),
@@ -250,6 +299,7 @@ static void build_ruby_detail(const PokemonTarget& target) {
     _snprintf(s_ruby_detail, sizeof(s_ruby_detail) - 1,
         "begin\n"
         "  loc=%d; box=%d; slot=%d\n"
+        "  max_forms=%d; catalog_size=%u\n"
         "  pkmn=nil\n"
         "  if loc==0\n"
         "    pkmn=($Trainer.party[slot] rescue nil)\n"
@@ -258,6 +308,9 @@ static void build_ruby_detail(const PokemonTarget& target) {
         "  end\n"
         "  values=[0,loc,box,slot]+[0]*57\n"
         "  strings=\"\\0\"*304\n"
+        "  ability_records=[]\n"
+        "  ability_index=0\n"
+        "  form_records=[]\n"
         "  if pkmn && pkmn.class.to_s==\"PokeBattle_Pokemon\"\n"
         "    species=(pkmn.species rescue 0).to_i\n"
         "    nature=(pkmn.nature rescue pkmn.instance_variable_get(:@nature) rescue 0).to_i\n"
@@ -299,17 +352,48 @@ static void build_ruby_detail(const PokemonTarget& target) {
         "    ot=(pkmn.ot rescue pkmn.trainerName rescue '').to_s[0,31].ljust(32,\"\\0\")\n"
         "    obtain=(pkmn.obtainText rescue pkmn.instance_variable_get(:@obtainText) rescue '').to_s[0,63].ljust(64,\"\\0\")\n"
         "    strings=name+species_name+nature_name+ability_name+item_name+ot+obtain\n"
+        "    ability_index=(pkmn.abilityIndex rescue 0).to_i\n"
+        "    probe=(pkmn.clone rescue nil)\n"
+        "    seen_abilities={}\n"
+        "    if probe\n"
+        "      0.upto(5) do |slot_index|\n"
+        "        begin; probe.setAbility(slot_index); rescue Exception; next; end\n"
+        "        ability_id=(probe.ability rescue 0).to_i\n"
+        "        next if ability_id<=0 || seen_abilities[ability_id]\n"
+        "        seen_abilities[ability_id]=true\n"
+        "        ability_label=(PBAbilities.getName(ability_id) rescue '').to_s\n"
+        "        label=(\"#\"+ability_id.to_s+\"  \"+ability_label)[0,63].ljust(64,\"\\0\")\n"
+        "        ability_records << [slot_index].pack(\"l\")+label\n"
+        "      end\n"
+        "    end\n"
+        "    raw_forms=(pbGetMessage(MessageTypes::FormNames,species) rescue '').to_s\n"
+        "    raw_forms.split(',',-1).each_with_index do |form_name,id|\n"
+        "      next if form_name.to_s.length==0\n"
+        "      form_records << [id].pack(\"l\")+form_name.to_s[0,63].ljust(64,\"\\0\")\n"
+        "    end\n"
+        "    current_form=(pkmn.form rescue 0).to_i\n"
+        "    if form_records.length==0\n"
+        "      form_records << [0].pack(\"l\")+\"Forme normale\".ljust(64,\"\\0\")\n"
+        "    end\n"
+        "    known=false\n"
+        "    form_records.each { |record| known=true if record[0,4].unpack(\"l\")[0]==current_form }\n"
+        "    form_records << [current_form].pack(\"l\")+(\"Forme \"+current_form.to_s)[0,63].ljust(64,\"\\0\") if !known\n"
+        "    form_records=form_records[0,max_forms]\n"
         "  end\n"
-        "  data=values.pack(\"l61\")+strings\n"
+        "  data=values.pack(\"l61\")+strings+[ability_index,ability_records.length].pack(\"l2\")+ability_records.join\n"
+        "  data << \"\\0\"*((6-ability_records.length)*catalog_size)\n"
+        "  data << [form_records.length].pack(\"l\")+form_records.join\n"
+        "  data << \"\\0\"*((max_forms-form_records.length)*catalog_size)\n"
         "  Win32API.new(\"kernel32\",\"RtlMoveMemory\",[\"l\",\"p\",\"l\"],\"v\").call(%lu,data,%u)\n"
         "rescue Exception\n"
         "  begin\n"
-        "    data=([0,%d,%d,%d]+[0]*57).pack(\"l61\")+\"\\0\"*304\n"
+        "    data=([0,%d,%d,%d]+[0]*57).pack(\"l61\")+\"\\0\"*304+[0,0].pack(\"l2\")+\"\\0\"*(6*catalog_size)+[0].pack(\"l\")+\"\\0\"*(max_forms*catalog_size)\n"
         "    Win32API.new(\"kernel32\",\"RtlMoveMemory\",[\"l\",\"p\",\"l\"],\"v\").call(%lu,data,%u)\n"
         "  rescue Exception\n"
         "  end\n"
         "end\n",
         target.location, target.box, target.slot,
+        POKEMON_MANAGER_MAX_FORMS, (unsigned)sizeof(PokemonCatalogEntry),
         (unsigned long)(ULONG_PTR)&s_shared_detail,
         (unsigned)sizeof(s_shared_detail),
         target.location, target.box, target.slot,
@@ -492,7 +576,7 @@ static void build_set_value(const PokemonCommand& command) {
     }
     case POKEMON_EDIT_IV:
         _snprintf(action, sizeof(action) - 1,
-            "    stat=[[0,%d].max,5].min; v=[[0,%d].max,31].min\n"
+            "    stat=[[0,%d].max,5].min; v=[[0,%d].max,9999].min\n"
             "    arr=(pkmn.iv rescue pkmn.instance_variable_get(:@iv) rescue [0]*6)\n"
             "    arr[stat]=v\n"
             "    if pkmn.respond_to?(:iv=); pkmn.iv=arr\n"
@@ -501,10 +585,9 @@ static void build_set_value(const PokemonCommand& command) {
         break;
     case POKEMON_EDIT_EV:
         _snprintf(action, sizeof(action) - 1,
-            "    stat=[[0,%d].max,5].min; requested=[[0,%d].max,255].min\n"
+            "    stat=[[0,%d].max,5].min; requested=[[0,%d].max,9999].min\n"
             "    arr=(pkmn.ev rescue pkmn.instance_variable_get(:@ev) rescue [0]*6)\n"
-            "    others=0; 6.times { |i| others+=arr[i].to_i if i!=stat }\n"
-            "    arr[stat]=[requested,[510-others,0].max].min\n"
+            "    arr[stat]=requested\n"
             "    if pkmn.respond_to?(:ev=); pkmn.ev=arr\n"
             "    else pkmn.instance_variable_set(:@ev,arr); end\n"
             "    pkmn.calcStats if pkmn.respond_to?(:calcStats)", index, value);
@@ -523,19 +606,17 @@ static void build_set_value(const PokemonCommand& command) {
             "    move_slot=[[0,%d].max,3].min\n"
             "    move=(pkmn.moves[move_slot] rescue nil)\n"
             "    if move\n"
-            "      maximum=(move.totalpp rescue move.totalPP rescue 99).to_i\n"
-            "      move.pp=[[0,%d].max,maximum].min if move.respond_to?(:pp=)\n"
+            "      move.pp=[[0,%d].max,9999].min if move.respond_to?(:pp=)\n"
             "    end", index, value);
         break;
     case POKEMON_EDIT_MOVE_PPUP:
         _snprintf(action, sizeof(action) - 1,
-            "    move_slot=[[0,%d].max,3].min; v=[[0,%d].max,3].min\n"
+            "    move_slot=[[0,%d].max,3].min; v=[[0,%d].max,9999].min\n"
             "    move=(pkmn.moves[move_slot] rescue nil)\n"
             "    if move\n"
             "      if move.respond_to?(:ppup=); move.ppup=v\n"
             "      else move.instance_variable_set(:@ppup,v); end\n"
-            "      maximum=(move.totalpp rescue move.totalPP rescue move.pp rescue 0).to_i\n"
-            "      move.pp=[(move.pp rescue 0).to_i,maximum].min if move.respond_to?(:pp=)\n"
+            "      move.pp=[(move.pp rescue 0).to_i,9999].min if move.respond_to?(:pp=)\n"
             "    end", index, value);
         break;
     default:
@@ -709,15 +790,30 @@ static void execute_command(const PokemonCommand& command) {
 static void copy_list_from_shared() {
     int count = s_shared_list.count;
     int species_count = s_shared_list.species_count;
+    int nature_count = s_shared_list.nature_count;
+    int ability_count = s_shared_list.ability_count;
+    int item_count = s_shared_list.item_count;
     if (count < 0) count = 0;
     if (count > POKEMON_MANAGER_MAX_LIST) count = POKEMON_MANAGER_MAX_LIST;
     if (species_count < 0) species_count = 0;
     if (species_count > POKEMON_MANAGER_MAX_SPECIES)
         species_count = POKEMON_MANAGER_MAX_SPECIES;
+    if (nature_count < 0) nature_count = 0;
+    if (nature_count > POKEMON_MANAGER_MAX_NATURES)
+        nature_count = POKEMON_MANAGER_MAX_NATURES;
+    if (ability_count < 0) ability_count = 0;
+    if (ability_count > POKEMON_MANAGER_MAX_ABILITIES)
+        ability_count = POKEMON_MANAGER_MAX_ABILITIES;
+    if (item_count < 0) item_count = 0;
+    if (item_count > POKEMON_MANAGER_MAX_ITEMS)
+        item_count = POKEMON_MANAGER_MAX_ITEMS;
 
     EnterCriticalSection(&s_lock);
     s_list_count = count;
     s_species_count = species_count;
+    s_nature_count = nature_count;
+    s_ability_count = ability_count;
+    s_item_count = item_count;
     s_list_truncated = s_shared_list.truncated != 0;
     if (count > 0)
         memcpy(s_list, s_shared_list.entries,
@@ -725,6 +821,15 @@ static void copy_list_from_shared() {
     if (species_count > 0)
         memcpy(s_species, s_shared_list.species,
                (size_t)species_count * sizeof(PokemonSpeciesEntry));
+    if (nature_count > 0)
+        memcpy(s_natures, s_shared_list.natures,
+               (size_t)nature_count * sizeof(PokemonCatalogEntry));
+    if (ability_count > 0)
+        memcpy(s_abilities, s_shared_list.abilities,
+               (size_t)ability_count * sizeof(PokemonCatalogEntry));
+    if (item_count > 0)
+        memcpy(s_items, s_shared_list.items,
+               (size_t)item_count * sizeof(PokemonCatalogEntry));
     for (int i = 0; i < count; ++i) {
         s_list[i].name[sizeof(s_list[i].name) - 1] = '\0';
         s_list[i].species_name[sizeof(s_list[i].species_name) - 1] = '\0';
@@ -734,6 +839,15 @@ static void copy_list_from_shared() {
     for (int i = 0; i < species_count; ++i) {
         s_species[i].name[sizeof(s_species[i].name) - 1] = '\0';
         utf8_to_ansi(s_species[i].name, sizeof(s_species[i].name));
+    }
+    PokemonCatalogEntry* catalogs[] = {s_natures, s_abilities, s_items};
+    const int catalog_counts[] = {nature_count, ability_count, item_count};
+    for (int catalog = 0; catalog < 3; ++catalog) {
+        for (int i = 0; i < catalog_counts[catalog]; ++i) {
+            catalogs[catalog][i].name[sizeof(catalogs[catalog][i].name) - 1] = '\0';
+            utf8_to_ansi(catalogs[catalog][i].name,
+                         sizeof(catalogs[catalog][i].name));
+        }
     }
     const bool first_snapshot = s_list_revision == 0;
     InterlockedIncrement(&s_list_revision);
@@ -758,6 +872,22 @@ static void copy_detail_from_shared() {
     utf8_to_ansi(s_detail.item_name, sizeof(s_detail.item_name));
     utf8_to_ansi(s_detail.original_trainer, sizeof(s_detail.original_trainer));
     utf8_to_ansi(s_detail.obtain_text, sizeof(s_detail.obtain_text));
+    if (s_detail.ability_choice_count < 0) s_detail.ability_choice_count = 0;
+    if (s_detail.ability_choice_count > 6) s_detail.ability_choice_count = 6;
+    for (int i = 0; i < s_detail.ability_choice_count; ++i) {
+        s_detail.ability_choices[i].name[
+            sizeof(s_detail.ability_choices[i].name) - 1] = '\0';
+        utf8_to_ansi(s_detail.ability_choices[i].name,
+                     sizeof(s_detail.ability_choices[i].name));
+    }
+    if (s_detail.form_count < 0) s_detail.form_count = 0;
+    if (s_detail.form_count > POKEMON_MANAGER_MAX_FORMS)
+        s_detail.form_count = POKEMON_MANAGER_MAX_FORMS;
+    for (int i = 0; i < s_detail.form_count; ++i) {
+        s_detail.forms[i].name[sizeof(s_detail.forms[i].name) - 1] = '\0';
+        utf8_to_ansi(s_detail.forms[i].name,
+                     sizeof(s_detail.forms[i].name));
+    }
     InterlockedIncrement(&s_detail_revision);
     LeaveCriticalSection(&s_lock);
 }
@@ -891,6 +1021,35 @@ int opt_pokemon_manager_copy_species(PokemonSpeciesEntry* out, int capacity,
     if (revision) *revision = s_list_revision;
     LeaveCriticalSection(&s_lock);
     return count;
+}
+
+static int copy_catalog(PokemonCatalogEntry* out, int capacity,
+                        LONG* revision, const PokemonCatalogEntry* source,
+                        const int* source_count) {
+    if (!ensure_initialized() || capacity < 0) return 0;
+    EnterCriticalSection(&s_lock);
+    int count = source_count ? *source_count : 0;
+    if (count > capacity) count = capacity;
+    if (out && count > 0)
+        memcpy(out, source, (size_t)count * sizeof(PokemonCatalogEntry));
+    if (revision) *revision = s_list_revision;
+    LeaveCriticalSection(&s_lock);
+    return count;
+}
+
+int opt_pokemon_manager_copy_natures(PokemonCatalogEntry* out, int capacity,
+                                      LONG* revision) {
+    return copy_catalog(out, capacity, revision, s_natures, &s_nature_count);
+}
+
+int opt_pokemon_manager_copy_abilities(PokemonCatalogEntry* out, int capacity,
+                                        LONG* revision) {
+    return copy_catalog(out, capacity, revision, s_abilities, &s_ability_count);
+}
+
+int opt_pokemon_manager_copy_items(PokemonCatalogEntry* out, int capacity,
+                                    LONG* revision) {
+    return copy_catalog(out, capacity, revision, s_items, &s_item_count);
 }
 
 bool opt_pokemon_manager_copy_detail(PokemonDetail* out, LONG* revision) {
