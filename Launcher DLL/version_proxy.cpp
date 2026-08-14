@@ -73,11 +73,11 @@ static DWORD WINAPI main_thread(LPVOID) {
     // Les autres wrappers (notamment le dezoom) ne sont installes qu'une fois
     // la carte atteinte. Cela evite toute evaluation concurrente pendant le
     // chargement headless de la sauvegarde.
-    if (!opt_startup_wait_for_game(30000) && g_auto_load_save) {
-        rgss_safe_dispatch_shutdown();
-        release_trainer_singleton();
-        return 0;
-    }
+    // Si le chargement direct ne rejoint pas Scene_Map (sauvegarde atypique,
+    // migration ou scene intermediaire), garder le trainer disponible. Apres
+    // ce delai borne, RGSS est stabilise et l'utilisateur peut poursuivre le
+    // chargement manuellement au lieu de perdre entierement l'overlay.
+    opt_startup_wait_for_game(30000);
     if (!menu_init(hinst,game)) {
         rgss_safe_dispatch_shutdown();
         release_trainer_singleton();

@@ -156,6 +156,30 @@ bool process_has_trainer_overlay(DWORD pid) {
     return search.found;
 }
 
+void pump_launcher_messages() {
+    MSG message = {};
+    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+        if (message.message == WM_QUIT) {
+            PostQuitMessage(static_cast<int>(message.wParam));
+            return;
+        }
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+}
+
+void responsive_wait(DWORD milliseconds) {
+    const DWORD started = GetTickCount();
+    do {
+        const DWORD elapsed = GetTickCount() - started;
+        if (elapsed >= milliseconds) break;
+        const DWORD remaining = milliseconds - elapsed;
+        MsgWaitForMultipleObjects(0, nullptr, FALSE, remaining,
+                                  QS_ALLINPUT);
+        pump_launcher_messages();
+    } while (GetTickCount() - started < milliseconds);
+}
+
 bool wait_for_trainer_ready(DWORD pid, DWORD timeout_ms) {
     wchar_t ready_name[96] = {};
     swprintf_s(ready_name, L"Local\\PolkamonUraniumTrainerReady_%lu", pid);
@@ -167,7 +191,7 @@ bool wait_for_trainer_ready(DWORD pid, DWORD timeout_ms) {
             CloseHandle(ready);
             if (signaled) return process_has_trainer_overlay(pid);
         }
-        Sleep(50);
+        responsive_wait(50);
     } while (GetTickCount() - started < timeout_ms);
     return false;
 }
@@ -380,7 +404,7 @@ bool inject_payload(DWORD pid, const std::wstring& payload_path, std::wstring& e
     uintptr_t load_library = 0;
     for (int attempt = 0; attempt < 100 && !load_library; ++attempt) {
         load_library = remote_load_library_address(pid);
-        if (!load_library) Sleep(20);
+        if (!load_library) responsive_wait(20);
     }
     if (!load_library) {
         CloseHandle(process);
@@ -414,7 +438,13 @@ bool inject_payload(DWORD pid, const std::wstring& payload_path, std::wstring& e
         return false;
     }
 
-    const DWORD wait = WaitForSingleObject(thread, 15000);
+    const DWORD thread_started = GetTickCount();
+    DWORD wait = WAIT_TIMEOUT;
+    do {
+        wait = WaitForSingleObject(thread, 0);
+        if (wait != WAIT_TIMEOUT) break;
+        responsive_wait(20);
+    } while (GetTickCount() - thread_started < 15000);
     DWORD module_handle = 0;
     bool ok = wait == WAIT_OBJECT_0 && GetExitCodeThread(thread, &module_handle) && module_handle != 0;
     if (!ok) {
@@ -492,7 +522,7 @@ void launch_game_and_load(HWND window) {
             rgss_ready = true;
             break;
         }
-        Sleep(20);
+        responsive_wait(20);
     }
 
     bool connected = false;

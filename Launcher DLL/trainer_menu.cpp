@@ -2087,8 +2087,12 @@ bool menu_init(HINSTANCE hinst, HWND game_hwnd) {
     // Le filtre RGSS est accuse : on peut maintenant poser les hooks globaux
     // juste avant d'entrer dans la boucle de messages qui les dessert.
     s_watch_timer = SetTimer(s_overlay, 1, 200, NULL);
-    s_kbd_hook = SetWindowsHookExA(WH_KEYBOARD_LL, KbdHook, hinst, 0);
-    s_mouse_hook = SetWindowsHookExA(WH_MOUSE_LL, MouseHook, hinst, 0);
+    // Les hooks low-level sont rappeles sur le thread qui les installe. Le
+    // payload est deja charge dans Uranium : passer son HMODULE demanderait a
+    // Windows de retrouver puis charger la DLL temporaire dans d'autres
+    // processus du bureau, ce qui peut echouer avec ERROR_MOD_NOT_FOUND (126).
+    s_kbd_hook = SetWindowsHookExA(WH_KEYBOARD_LL, KbdHook, NULL, 0);
+    s_mouse_hook = SetWindowsHookExA(WH_MOUSE_LL, MouseHook, NULL, 0);
     if (!s_watch_timer || !s_kbd_hook || !s_mouse_hook) {
         if (s_kbd_hook) { UnhookWindowsHookEx(s_kbd_hook); s_kbd_hook = NULL; }
         if (s_mouse_hook) { UnhookWindowsHookEx(s_mouse_hook); s_mouse_hook = NULL; }

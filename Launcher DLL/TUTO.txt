@@ -1,0 +1,7 @@
+Dans la x86 Native Tools Command Prompt :
+cl /nologo /O1 /GS- /MT /LD version_proxy.cpp trainer_menu.cpp options/opt_pause.cpp options/opt_hp.cpp options/opt_money.cpp options/opt_bagitem.cpp options/opt_noclip.cpp options/opt_speed.cpp options/opt_zoom.cpp options/opt_noenc.cpp moves_db.cpp options/opt_partymon.cpp options/opt_time.cpp options/opt_weather.cpp options/opt_heal.cpp /Fe:version.dll /link /DEF:version.def /MACHINE:X86 psapi.lib kernel32.lib user32.lib gdi32.lib d3d9.lib
+
+
+
+
+cl /nologo /O1 /GS- /MT /LD version_proxy.cpp imgui/imgui.cpp imgui/imgui_draw.cpp imgui/imgui_tables.cpp imgui/imgui_widgets.cpp imgui/imgui_impl_dx9.cpp imgui/imgui_impl_win32.cpp /Fe:version.dll /link /DEF:version.def /MACHINE:X86 psapi.lib d3d9.lib kernel32.lib user32.lib
