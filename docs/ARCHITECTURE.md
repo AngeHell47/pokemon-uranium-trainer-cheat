@@ -8,9 +8,8 @@ temporaire de Windows, puis le charge dans le processus RGSS sélectionné.
 
 Le payload crée une fenêtre d'overlay indépendante au-dessus du jeu. Les
 fonctions Ruby/RGSS ne sont jamais appelées depuis le thread de l'interface :
-les demandes sont mises en attente avec des variables atomiques, réveillent le
-thread de fenêtre du jeu, puis sont exécutées depuis des hooks attachés au
-thread RGSS.
+les demandes sont mises en attente dans des structures atomiques ou des FIFO,
+puis consommées par leurs wrappers Ruby sur le thread RGSS.
 
 ```text
 UraniumTrainer.exe
@@ -18,8 +17,8 @@ UraniumTrainer.exe
   -> extraction du payload versionné dans %TEMP%
   -> LoadLibraryW dans Uranium.exe
      -> overlay TrainerOverlay
-     -> commandes atomiques
-     -> exécution RGSSEval sur le thread RGSS
+     -> commandes atomiques / FIFO
+     -> consommation dans les wrappers Ruby du jeu
 ```
 
 Un mutex nommé par PID empêche une double initialisation. Le lanceur ne déclare
@@ -51,14 +50,15 @@ ne doit rester à côté de `Uranium.exe`.
 Les hooks souris et clavier bas niveau reroutent les interactions vers
 l'overlay seulement lorsque le jeu est au premier plan. Pokémon Uranium lit
 aussi directement l'état physique via `GetAsyncKeyState` : un wrapper
-idempotent de `Input.getstate`, installé et acquitté avant le signal `Ready`,
-masque donc les boutons et touches appartenant à l'overlay. À la fermeture du
-menu ou à la perte de focus, les drapeaux natifs sont remis à zéro
+idempotent de `Input.getstate` masque donc les boutons et touches appartenant à
+l'overlay. Il est programmé avant le signal `Ready` et installé au premier
+safe point, avant que l'image RGSS correspondante ne sonde `Input`. À la
+fermeture du menu ou à la perte de focus, les drapeaux natifs sont remis à zéro
 immédiatement.
 
-Les hooks du thread RGSS sont installés avant les hooks bas niveau. Cela évite
-que Windows retire silencieusement ces derniers via `LowLevelHooksTimeout`
-pendant un éventuel retry de chargement des scripts.
+Le point de passage RGSS commun est installé avant les hooks bas niveau de
+l'overlay. Leur thread entre ensuite immédiatement dans sa boucle de messages,
+ce qui évite un retrait silencieux par `LowLevelHooksTimeout`.
 
 ## Dézoom
 
@@ -72,6 +72,27 @@ Les spritesets de carte sont recréés lors d'une validation du slider, pas à
 chaque pixel parcouru par la souris. Les écrans synchrones (menu et combat) sont
 temporairement rendus à 100 %, puis le dézoom est réappliqué au retour sur la
 carte.
+
+Le bootstrap Ruby du zoom n'est pas exécuté depuis la pompe de messages. Un
+répartiteur commun pose un détour persistant sur la méthode native
+`Graphics.update`, après validation stricte du PE, de son prologue et de son
+enregistrement Ruby. Toutes les options compilées évaluent désormais Ruby à
+cette frontière C sûre, jamais depuis `WH_CALLWNDPROC` ou `WH_GETMESSAGE`.
+Les changements de zoom suivants sont publiés atomiquement puis consommés par
+`Scene_Map#update`.
+
+`CustomTilemap` construit les décors prioritaires avec un sprite par tuile. À
+une échelle fractionnaire, leurs arrondis indépendants ouvraient des coutures
+d'un pixel. Le trainer force désormais les positions et étend ces sprites d'un
+pixel physique ; ce chevauchement est désactivé à 100 %. Le cache du sol garde
+une marge symétrique et les sprites prioritaires sont translatés sans être
+recréés à chaque pas. Enfin, seule la logique des événements très lointains est
+mise en veille : les sprites visibles restent tous actualisés, ce qui empêche
+les PNJ de rester accrochés au bord de l'écran.
+
+La plage va de 100 à 500 %. Les zones noires qui peuvent rester près d'un bord
+sont le vide réel hors des limites finies de la carte, et non un
+redimensionnement de fenêtre.
 
 ## Compilation
 

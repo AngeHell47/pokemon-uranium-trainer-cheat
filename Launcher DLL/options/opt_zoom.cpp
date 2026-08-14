@@ -7,7 +7,7 @@
 // inverse.  Aucun hook ni aucune capture GDI ne sont necessaires.
 
 #include "../options/opt_zoom.h"
-#include "../trainer_runtime.h"
+#include "../rgss_safe_dispatch.h"
 
 #include <stdio.h>
 #include <string>
@@ -15,26 +15,19 @@
 int g_zoom_value = 100;
 
 volatile OptZoomTelemetry g_zoom_telemetry = {0};
+static_assert(sizeof(OptZoomTelemetry) == 36,
+              "Le contrat de telemetrie Ruby doit rester compose de 9 LONG.");
 
 static char          s_ini[MAX_PATH] = {0};
 static HWND          s_game_hwnd = NULL;
-static DWORD         s_game_tid = 0;
 static int           s_base_client_w = 0;
 static int           s_base_client_h = 0;
-static volatile LONG s_pending = 1;
-static volatile LONG s_in_tick = 0;
 static DWORD         s_last_tick = 0;
 static DWORD         s_last_install_attempt = 0;
-static DWORD         s_force_client_until = 0;
 static DWORD         s_client_candidate_since = 0;
 static int           s_client_candidate_w = 0;
 static int           s_client_candidate_h = 0;
-
-static HHOOK s_hook_cwp = NULL;
-static HHOOK s_hook_getmsg = NULL;
-
-typedef int (__cdecl *RGSSEval_t)(const char*);
-static RGSSEval_t s_eval = NULL;
+static volatile LONG s_requested_percent = 100;
 
 enum ZoomError {
     ZOOM_OK                    = 0,
@@ -50,17 +43,19 @@ enum ZoomError {
 
 // Ruby 1.8 compatible.  The patch is deliberately self-contained and
 // idempotent because it can be evaluated while the title screen is still up.
-// All mutations happen on the RGSS thread through the window hooks below.
+// Its one-shot evaluation happens at the native Graphics.update Ruby boundary.
 static const char s_patch_body[] =
 "begin\n"
 "  $__uranium_camera_copy = Win32API.new(\"kernel32\",\"RtlMoveMemory\",[\"l\",\"p\",\"l\"],\"v\")\n"
+"  $__uranium_camera_read = Win32API.new(\"kernel32\",\"RtlMoveMemory\",[\"p\",\"l\",\"l\"],\"v\")\n"
 "  ::Graphics.module_eval(\"def self.dll_camera_set_size(w,h)\\n\"+\n"
 "     \"  @@width=w.to_i\\n  @@height=h.to_i\\nend\\n\")\n"
-"  if !(defined?($__uranium_camera_patch_v3) && $__uranium_camera_patch_v3)\n"
+  "  if !(defined?($__uranium_camera_patch_v8_fixed500) && $__uranium_camera_patch_v8_fixed500)\n"
 "    module ::UraniumCamera\n"
 "      class << self\n"
-"        def install(native_address,client_w,client_h)\n"
+"        def install(native_address,requested_address,client_w,client_h)\n"
 "          @native_address=native_address.to_i\n"
+"          @requested_address=requested_address.to_i\n"
 "          @client_w=client_w.to_i\n"
 "          @client_h=client_h.to_i\n"
 "          @base_w=Graphics.width.to_i\n"
@@ -73,6 +68,7 @@ static const char s_patch_body[] =
 "          @applied_pct=100\n"
 "          @logical_w=@base_w\n"
 "          @logical_h=@base_h\n"
+"          @tile_bleed=false\n"
 "          @suspend_depth=0\n"
 "          @error=0\n"
 "          @changing=false\n"
@@ -99,10 +95,17 @@ static const char s_patch_body[] =
 "          return @base_w.to_i>0 && @base_h.to_i>0\n"
 "        end\n"
 "\n"
-"        def update_endpoint(native_address,client_w,client_h)\n"
+"        def active?\n"
+"          return @applied_pct.to_i>100\n"
+"        end\n"
+"\n"
+"        def update_endpoint(native_address,requested_address,client_w,client_h)\n"
 "          @native_address=native_address.to_i\n"
+"          @requested_address=requested_address.to_i\n"
 "          @client_w=client_w.to_i if client_w.to_i>0\n"
 "          @client_h=client_h.to_i if client_h.to_i>0\n"
+"          @tile_bleed=(@logical_w.to_i!=@base_w.to_i ||\n"
+"             @logical_h.to_i!=@base_h.to_i)\n"
 "          telemetry\n"
 "        end\n"
 "\n"
@@ -130,6 +133,27 @@ static const char s_patch_body[] =
 "             (@client_h || 0),(@error || 0)]\n"
 "          $__uranium_camera_copy.call(@native_address,values.pack(\"l*\"),36) if @native_address && @native_address!=0\n"
 "        rescue Exception\n"
+"        end\n"
+"\n"
+"        def clamp_percent(percent)\n"
+"          percent=percent.to_i\n"
+"          percent=100 if percent<100\n"
+"          percent=500 if percent>500\n"
+"          return percent\n"
+"        end\n"
+"\n"
+"        # The overlay may run on another native thread. It only publishes an\n"
+"        # integer here; the RGSS thread consumes it from Scene_Map#update.\n"
+"        # This avoids calling RGSSEval recursively from a Windows hook each\n"
+"        # time the slider is committed.\n"
+"        def requested_percent\n"
+"          return clamp_percent(@target_pct || 100) if !@requested_address ||\n"
+"             @requested_address==0\n"
+"          buffer=(@request_buffer ||= [0].pack(\"l\"))\n"
+"          $__uranium_camera_read.call(buffer,@requested_address,4)\n"
+"          return clamp_percent(buffer.unpack(\"l\")[0])\n"
+"        rescue Exception\n"
+"          return clamp_percent(@target_pct || 100)\n"
 "        end\n"
 "\n"
 "        def stable_map?(scene,need_spritesets=true)\n"
@@ -177,6 +201,69 @@ static const char s_patch_body[] =
 "          end\n"
 "        end\n"
 "\n"
+"        # CustomTilemap dessine les tuiles de priorite avec un Sprite par\n"
+"        # case. A une echelle fractionnaire, Sprite_Resizer tronque chaque\n"
+"        # position et RGSS arrondit chaque largeur independamment. Les deux\n"
+"        # arrondis divergent periodiquement et laissent un pixel transparent.\n"
+"        # On calcule donc la largeur physique depuis les memes bornes que les\n"
+"        # positions. Deux tuiles voisines partagent alors exactement la meme\n"
+"        # frontiere, meme pour les coordonnees negatives pendant un scroll.\n"
+"        def fit_tile_sprite(sprite,x,y,width,height)\n"
+"          return if !sprite || sprite.disposed?\n"
+"          return if !@tile_bleed\n"
+"          factor=($ResizeFactorMul || 100).to_f/100.0\n"
+"          width=width.to_i\n"
+"          height=height.to_i\n"
+"          return if factor<=0.0 || width<=0 || height<=0\n"
+"          return if !sprite.respond_to?(:_xeq_SpriteResizer) ||\n"
+"                    !sprite.respond_to?(:_yeq_SpriteResizer) ||\n"
+"                    !sprite.respond_to?(:_zoomxeq_SpriteResizer) ||\n"
+"                    !sprite.respond_to?(:_zoomyeq_SpriteResizer)\n"
+"          left=(x.to_f*factor).to_i\n"
+"          top=(y.to_f*factor).to_i\n"
+"          # RGSS laisse parfois le dernier texel transparent malgre une\n"
+"          # largeur mathematiquement suffisante. Un pixel physique de bleed\n"
+"          # recouvre cette couture sans modifier la geometrie logique.\n"
+"          # Elle reste donc valide quand le fast path translate le sprite,\n"
+"          # sans recalculer des milliers de zooms a chaque frame de marche.\n"
+"          pixel_w=[(width.to_f*factor).ceil+1,1].max\n"
+"          pixel_h=[(height.to_f*factor).ceil+1,1].max\n"
+"          sprite._xeq_SpriteResizer(left)\n"
+"          sprite._yeq_SpriteResizer(top)\n"
+"          sprite._zoomxeq_SpriteResizer(pixel_w.to_f/width.to_f)\n"
+"          sprite._zoomyeq_SpriteResizer(pixel_h.to_f/height.to_f)\n"
+"        rescue Exception\n"
+"        end\n"
+"\n"
+"        # Le moteur utilise Graphics.width/height pour decider quels PNJ\n"
+"        # doivent etre simules et redessines. A 500 %, cela activait toute la\n"
+"        # carte et ralentissait aussi la logique de jeu. On garde une zone\n"
+"        # active equivalente a l'ecran vanilla et sa bordure de 6 tuiles ;\n"
+"        # lointain reste visible, mais ses PNJ attendent d'etre approches.\n"
+"        def event_in_update_range?(map,object)\n"
+"          return true if @applied_pct.to_i<=100 || !map || !object\n"
+"          return true if defined?($PokemonSystem) && $PokemonSystem &&\n"
+"             $PokemonSystem.tilemap==2\n"
+"          sub_x=Game_Map::XSUBPIXEL\n"
+"          sub_y=Game_Map::YSUBPIXEL\n"
+"          if $game_player && $game_map\n"
+"            center_x=map.display_x+($game_player.real_x-$game_map.display_x)\n"
+"            center_y=map.display_y+($game_player.real_y-$game_map.display_y)\n"
+"          else\n"
+"            center_x=map.display_x+(Graphics.width*sub_x/2)\n"
+"            center_y=map.display_y+(Graphics.height*sub_y/2)\n"
+"          end\n"
+"          radius_x=((@base_w || 512)/2+192)*sub_x\n"
+"          radius_y=((@base_h || 384)/2+192)*sub_y\n"
+"          return false if object.real_x<=center_x-radius_x ||\n"
+"             object.real_x>=center_x+radius_x\n"
+"          return false if object.real_y<=center_y-radius_y ||\n"
+"             object.real_y>=center_y+radius_y\n"
+"          return true\n"
+"        rescue Exception\n"
+"          return true\n"
+"        end\n"
+"\n"
 "        def recenter\n"
 "          $game_player.center($game_player.x,$game_player.y) if $game_player\n"
 "        rescue Exception\n"
@@ -209,6 +296,8 @@ static const char s_patch_body[] =
 "        end\n"
 "\n"
 "        def set_scale(logical_w,logical_h,factor,mul,offset_x,offset_y)\n"
+"          @tile_bleed=(logical_w.to_i!=@base_w.to_i ||\n"
+"             logical_h.to_i!=@base_h.to_i)\n"
 "          Graphics.dll_camera_set_size(logical_w,logical_h)\n"
 "          $ResizeOffsetX=offset_x\n"
 "          $ResizeOffsetY=offset_y\n"
@@ -233,9 +322,8 @@ static const char s_patch_body[] =
 "            telemetry\n"
 "            return ok\n"
 "          rescue Exception\n"
-"            @applied_pct=100\n"
-"            @logical_w=@base_w\n"
-"            @logical_h=@base_h\n"
+"            # Conserver l'etat precedent : pump retentera la restauration au\n"
+"            # prochain frame au lieu de publier a tort un retour a 100 %.\n"
 "            telemetry(5)\n"
 "            return false\n"
 "          ensure\n"
@@ -244,9 +332,7 @@ static const char s_patch_body[] =
 "        end\n"
 "\n"
 "        def apply(scene,percent,recreate_sprites=true)\n"
-"          percent=percent.to_i\n"
-"          percent=100 if percent<100\n"
-"          percent=300 if percent>300\n"
+"          percent=clamp_percent(percent)\n"
 "          return restore(scene,recreate_sprites) if percent==100\n"
 "          if !@aspect_valid\n"
 "            telemetry(8)\n"
@@ -291,23 +377,15 @@ static const char s_patch_body[] =
 "        end\n"
 "\n"
 "        def request(percent)\n"
-"          percent=percent.to_i\n"
-"          percent=100 if percent<100\n"
-"          percent=300 if percent>300\n"
-"          @target_pct=percent\n"
-"          scene=$scene\n"
-"          if percent==100\n"
-"            restore(scene,stable_map?(scene,true))\n"
-"          elsif @suspend_depth.to_i==0 && stable_map?(scene,true)\n"
-"            apply(scene,percent,true)\n"
-"          else\n"
-"            telemetry(3)\n"
-"          end\n"
+"          # Legacy entry point kept harmless for an already loaded v3 DLL.\n"
+"          # Only the native atomic value is authoritative now.\n"
+"          @target_pct=requested_percent\n"
 "        end\n"
 "\n"
 "        def pump(scene)\n"
 "          return if @changing || @suspend_depth.to_i>0\n"
 "          return if !stable_map?(scene,true)\n"
+"          @target_pct=requested_percent\n"
 "          if @target_pct.to_i>100\n"
 "            if @applied_pct.to_i!=@target_pct.to_i\n"
 "              apply(scene,@target_pct,true)\n"
@@ -318,6 +396,8 @@ static const char s_patch_body[] =
 "        end\n"
 "\n"
 "        def map_enter(scene)\n"
+"          telemetry\n"
+"          @target_pct=requested_percent\n"
 "          return if @suspend_depth.to_i>0 || @target_pct.to_i<=100\n"
 "          apply(scene,@target_pct,false) if stable_map?(scene,false)\n"
 "        end\n"
@@ -335,11 +415,235 @@ static const char s_patch_body[] =
 "            return yield\n"
 "          ensure\n"
 "            @suspend_depth=[@suspend_depth.to_i-1,0].max\n"
+"            telemetry if outer && @suspend_depth==0\n"
+"            @target_pct=requested_percent if outer && @suspend_depth==0\n"
 "            if outer && @suspend_depth==0 && @target_pct.to_i>100\n"
 "              current=$scene\n"
 "              apply(current,@target_pct,true) if stable_map?(current,true)\n"
 "            end\n"
 "          end\n"
+"        end\n"
+"      end\n"
+"    end\n"
+"\n"
+"    if defined?(::Game_Map)\n"
+"      class ::Game_Map\n"
+"        if method_defined?(:in_range?) &&\n"
+"           !method_defined?(:__uranium_camera_in_range_v8)\n"
+"          alias __uranium_camera_in_range_v8 in_range?\n"
+"          def in_range?(object)\n"
+"            if ::UraniumCamera.active?\n"
+"              return ::UraniumCamera.event_in_update_range?(self,object)\n"
+"            end\n"
+"            return __uranium_camera_in_range_v8(object)\n"
+"          end\n"
+"        end\n"
+"      end\n"
+"    end\n"
+"\n"
+"    if defined?(::CustomTilemap)\n"
+"      class ::CustomTilemap\n"
+"        if method_defined?(:addTile) &&\n"
+"           !method_defined?(:__uranium_camera_add_tile_v3)\n"
+"          alias __uranium_camera_add_tile_v3 addTile\n"
+"          def addTile(tiles,count,xpos,ypos,id)\n"
+"            # Le fallback des autotiles animes calcule ses coordonnees dans\n"
+"            # le bitmap de cache (@oxLayer0). Un Sprite vit toutefois dans\n"
+"            # le viewport : reconvertir dans le repere camera avant rendu.\n"
+"            if tiles.equal?(@autosprites)\n"
+"              xpos-=(@ox-@oxLayer0)\n"
+"              ypos-=(@oy-@oyLayer0)\n"
+"            end\n"
+"            result=__uranium_camera_add_tile_v3(tiles,count,xpos,ypos,id)\n"
+"            begin\n"
+"              ::UraniumCamera.fit_tile_sprite(tiles[count],xpos,ypos,\n"
+"                 @tileWidth,@tileHeight)\n"
+"            rescue Exception\n"
+"            end\n"
+"            return result\n"
+"          end\n"
+"        end\n"
+"\n"
+"        # CustomTilemap utilise normalement bitmap.width/4 comme marge.\n"
+"        # A 500 %, cette origine + la largeur du viewport depasse le bitmap,\n"
+"        # desactive le cache et force un clear/redessin complet a chaque\n"
+"        # frame de scroll. Une marge symetrique garde le src_rect dedans et\n"
+"        # laisse 160 px de cache sur chaque bord sans allocation supplementaire.\n"
+"        if method_defined?(:refreshLayer0) &&\n"
+"           !method_defined?(:__uranium_camera_refresh_layer0_v8)\n"
+"          alias __uranium_camera_refresh_layer0_v8 refreshLayer0\n"
+"          def refreshLayer0(autotiles=false)\n"
+"            return __uranium_camera_refresh_layer0_v8(true) if autotiles\n"
+"            return false if @usedsprites\n"
+"            bitmap=@layer0.bitmap\n"
+"            width=bitmap.width\n"
+"            height=bitmap.height\n"
+"            view_w=@viewport.rect.width\n"
+"            view_h=@viewport.rect.height\n"
+"            pad_x=[(width-view_w)/2,0].max\n"
+"            pad_y=[(height-view_h)/2,0].max\n"
+"            pt_x=@ox-@oxLayer0\n"
+"            pt_y=@oy-@oyLayer0\n"
+"            if !@firsttime && pt_x>=0 && pt_x+view_w<=width &&\n"
+"               pt_y>=0 && pt_y+view_h<=height\n"
+"              if @layer0clip && @viewport.ox==0 && @viewport.oy==0\n"
+"                @layer0.ox=0\n"
+"                @layer0.oy=0\n"
+"                @layer0.src_rect.set(pt_x.round,pt_y.round,view_w,view_h)\n"
+"              else\n"
+"                @layer0.ox=pt_x.round\n"
+"                @layer0.oy=pt_y.round\n"
+"                @layer0.src_rect.set(0,0,width,height)\n"
+"              end\n"
+"              return true\n"
+"            end\n"
+"            @firsttime=false\n"
+"            @oxLayer0=(@ox-pad_x).floor\n"
+"            @oyLayer0=(@oy-pad_y).floor\n"
+"            if @layer0clip\n"
+"              @layer0.ox=0\n"
+"              @layer0.oy=0\n"
+"              @layer0.src_rect.set(pad_x,pad_y,view_w,view_h)\n"
+"            else\n"
+"              @layer0.ox=pad_x\n"
+"              @layer0.oy=pad_y\n"
+"            end\n"
+"            bitmap.clear\n"
+"            map_data=@map_data\n"
+"            priorities=@priorities\n"
+"            framecount=@framecount\n"
+"            tileset=@tileset\n"
+"            xsize=map_data.xsize\n"
+"            ysize=map_data.ysize\n"
+"            zsize=map_data.zsize\n"
+"            twidth=@tileWidth\n"
+"            theight=@tileHeight\n"
+"            x_start=[@oxLayer0/twidth,0].max\n"
+"            y_start=[@oyLayer0/theight,0].max\n"
+"            x_end=[x_start+(width/twidth)+1,xsize].min\n"
+"            y_end=[y_start+(height/theight)+1,ysize].min\n"
+"            if x_start<x_end && y_start<y_end\n"
+"              tmprect=Rect.new(0,0,0,0)\n"
+"              for z in 0...zsize\n"
+"                for y in y_start...y_end\n"
+"                  ypos=(y*theight)-@oyLayer0\n"
+"                  for x in x_start...x_end\n"
+"                    xpos=(x*twidth)-@oxLayer0\n"
+"                    id=map_data[x,y,z]\n"
+"                    next if id==0\n"
+"                    priority=priorities[id]\n"
+"                    next if !priority || priority!=0\n"
+"                    if id>=384\n"
+"                      tmprect.set(((id-384)&7)*@tileSrcWidth,\n"
+"                         ((id-384)>>3)*@tileSrcHeight,@tileSrcWidth,@tileSrcHeight)\n"
+"                      if @diffsizes\n"
+"                        bitmap.stretch_blt(Rect.new(xpos,ypos,twidth,theight),\n"
+"                           tileset,tmprect)\n"
+"                      else\n"
+"                        bitmap.blt(xpos,ypos,tileset,tmprect)\n"
+"                      end\n"
+"                    else\n"
+"                      frames=framecount[id/48-1]\n"
+"                      frame=(frames<=1) ? 0 :\n"
+"                         (Graphics.frame_count/Animated_Autotiles_Frames)%frames\n"
+"                      bltAutotile(bitmap,xpos,ypos,id,frame)\n"
+"                    end\n"
+"                  end\n"
+"                end\n"
+"              end\n"
+"              Graphics.frame_reset\n"
+"            end\n"
+"            return true\n"
+"          rescue Exception\n"
+"            return __uranium_camera_refresh_layer0_v8(false)\n"
+"          end\n"
+"        end\n"
+"\n"
+"        # Un scroll vanilla rappelle refresh pour chaque variation de ox/oy\n"
+"        # et reconfigure alors tous les sprites de priorite visibles. A grand\n"
+"        # dezoom, cet ensemble couvre presque toute la carte. Si le rectangle\n"
+"        # de tuiles reste identique, decaler les sprites existants est exact et\n"
+"        # evite des milliers de addTile/setters par frame.\n"
+"        if method_defined?(:refresh) &&\n"
+"           !method_defined?(:__uranium_camera_refresh_v8)\n"
+"          alias __uranium_camera_refresh_v8 refresh\n"
+"          def refresh(autotiles=false)\n"
+"            return __uranium_camera_refresh_v8(true) if autotiles\n"
+"            view_ox=@viewport.ox\n"
+"            view_oy=@viewport.oy\n"
+"            view_w=@viewport.rect.width\n"
+"            view_h=@viewport.rect.height\n"
+"            can_shift=!@firsttime && !@usedsprites && !@tilesetChanged &&\n"
+"               !@autotiles.changed && !@nowshown &&\n"
+"               @layer0 && @layer0.visible==@visible &&\n"
+"               @__uranium_fast_vpox==view_ox &&\n"
+"               @__uranium_fast_vpoy==view_oy &&\n"
+"               @__uranium_fast_vpw==view_w &&\n"
+"               @__uranium_fast_vph==view_h\n"
+"            dx=@oldOx-@ox\n"
+"            dy=@oldOy-@oy\n"
+"            can_shift=false if dx==0 && dy==0\n"
+"            xsize=@map_data.xsize\n"
+"            ysize=@map_data.ysize\n"
+"            min_x=(@ox/@tileWidth)-1\n"
+"            max_x=((@ox+view_w)/@tileWidth)+1\n"
+"            min_y=(@oy/@tileHeight)-1\n"
+"            max_y=((@oy+view_h)/@tileHeight)+1\n"
+"            min_x=0 if min_x<0\n"
+"            min_x=xsize-1 if min_x>=xsize\n"
+"            max_x=0 if max_x<0\n"
+"            max_x=xsize-1 if max_x>=xsize\n"
+"            min_y=0 if min_y<0\n"
+"            min_y=ysize-1 if min_y>=ysize\n"
+"            max_y=0 if max_y<0\n"
+"            max_y=ysize-1 if max_y>=ysize\n"
+"            can_shift=false if !@priotilesrect ||\n"
+"               @priotilesrect[0]!=min_x || @priotilesrect[1]!=min_y ||\n"
+"               @priotilesrect[2]!=max_x || @priotilesrect[3]!=max_y\n"
+"            if can_shift && refreshLayer0(false)\n"
+"              refreshFlashSprite\n"
+"              i=0\n"
+"              while i<@tiles.length\n"
+"                sprite=@tiles[i]\n"
+"                if sprite.is_a?(Sprite) && !sprite.disposed? && sprite.visible\n"
+"                  sprite.x=sprite.x+dx\n"
+"                  sprite.y=sprite.y+dy\n"
+"                  sprite.z=sprite.z+dy\n"
+"                end\n"
+"                i+=2\n"
+"              end\n"
+"              i=0\n"
+"              while i<@autosprites.length\n"
+"                sprite=@autosprites[i]\n"
+"                if sprite.is_a?(Sprite) && !sprite.disposed? && sprite.visible\n"
+"                  sprite.x=sprite.x+dx\n"
+"                  sprite.y=sprite.y+dy\n"
+"                end\n"
+"                i+=2\n"
+"              end\n"
+"              @oldOx=@ox\n"
+"              @oldOy=@oy\n"
+"              return\n"
+"            end\n"
+"            result=__uranium_camera_refresh_v8(false)\n"
+"            @__uranium_fast_vpox=view_ox\n"
+"            @__uranium_fast_vpoy=view_oy\n"
+"            @__uranium_fast_vpw=view_w\n"
+"            @__uranium_fast_vph=view_h\n"
+"            return result\n"
+"          rescue Exception\n"
+"            return __uranium_camera_refresh_v8(false)\n"
+"          end\n"
+"        end\n"
+"      end\n"
+"    end\n"
+"\n"
+"    # Upgrade a chaud depuis l'essai v7 : retablit le suivi normal.\n"
+"    if defined?(::Spriteset_Map)\n"
+"      class ::Spriteset_Map\n"
+"        if method_defined?(:__uranium_camera_update_v7)\n"
+"          alias update __uranium_camera_update_v7\n"
+"          begin; remove_method :__uranium_camera_update_v7; rescue Exception; end\n"
 "        end\n"
 "      end\n"
 "    end\n"
@@ -395,16 +699,25 @@ static const char s_patch_body[] =
 "      end\n"
 "    end\n"
 "\n"
-"    $__uranium_camera_patch_v3=true\n"
-"    ::UraniumCamera.install($__uranium_camera_native_address,\n"
-"       $__uranium_camera_client_w,$__uranium_camera_client_h)\n"
+"    $__uranium_camera_patch_v8_fixed500=true\n"
+"    if ::UraniumCamera.initialized?\n"
+"      ::UraniumCamera.update_endpoint($__uranium_camera_native_address,\n"
+"         $__uranium_camera_requested_address,$__uranium_camera_client_w,\n"
+"         $__uranium_camera_client_h)\n"
+"    else\n"
+"      ::UraniumCamera.install($__uranium_camera_native_address,\n"
+"         $__uranium_camera_requested_address,$__uranium_camera_client_w,\n"
+"         $__uranium_camera_client_h)\n"
+"    end\n"
 "  else\n"
 "    if ::UraniumCamera.initialized?\n"
 "      ::UraniumCamera.update_endpoint($__uranium_camera_native_address,\n"
-"         $__uranium_camera_client_w,$__uranium_camera_client_h)\n"
+"         $__uranium_camera_requested_address,$__uranium_camera_client_w,\n"
+"         $__uranium_camera_client_h)\n"
 "    else\n"
 "      ::UraniumCamera.install($__uranium_camera_native_address,\n"
-"         $__uranium_camera_client_w,$__uranium_camera_client_h)\n"
+"         $__uranium_camera_requested_address,$__uranium_camera_client_w,\n"
+"         $__uranium_camera_client_h)\n"
 "    end\n"
 "  end\n"
 "rescue Exception\n"
@@ -416,14 +729,6 @@ static const char s_patch_body[] =
 "  rescue Exception\n"
 "  end\n"
 "end\n";
-
-static bool resolve_eval() {
-    if (s_eval) return true;
-    HMODULE rgss = GetModuleHandleA("RGSS102E.dll");
-    if (!rgss) return false;
-    s_eval = (RGSSEval_t)GetProcAddress(rgss, "RGSSEval");
-    return s_eval != NULL;
-}
 
 static void refresh_client_telemetry() {
     if (!s_game_hwnd) return;
@@ -462,163 +767,68 @@ static void capture_base_client_if_needed() {
     InterlockedExchange(&g_zoom_telemetry.client_height, height);
 }
 
-// SetWindowPos is corrected using the measured client delta rather than a
-// guessed border size.  This also behaves correctly with DPI-aware borders.
-static bool force_base_client_size() {
-    if (!s_game_hwnd || s_base_client_w <= 0 || s_base_client_h <= 0) return false;
-
-    for (int pass = 0; pass < 2; ++pass) {
-        RECT client = {0, 0, 0, 0};
-        RECT window = {0, 0, 0, 0};
-        if (!GetClientRect(s_game_hwnd, &client) ||
-            !GetWindowRect(s_game_hwnd, &window)) return false;
-
-        const int current_w = client.right - client.left;
-        const int current_h = client.bottom - client.top;
-        if (current_w == s_base_client_w && current_h == s_base_client_h) {
-            refresh_client_telemetry();
-            return true;
-        }
-
-        const int outer_w = window.right - window.left;
-        const int outer_h = window.bottom - window.top;
-        if (!SetWindowPos(s_game_hwnd, NULL, 0, 0,
-                outer_w + (s_base_client_w - current_w),
-                outer_h + (s_base_client_h - current_h),
-                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE)) return false;
-    }
-
-    refresh_client_telemetry();
-    return g_zoom_telemetry.client_width == s_base_client_w &&
-           g_zoom_telemetry.client_height == s_base_client_h;
-}
-
 static bool install_ruby_patch() {
-    if (!s_eval || s_base_client_w <= 0 || s_base_client_h <= 0) return false;
+    if (s_base_client_w <= 0 || s_base_client_h <= 0) return false;
 
     char prefix[384];
     sprintf_s(prefix, sizeof(prefix),
         "$__uranium_camera_native_address=%lu\n"
+        "$__uranium_camera_requested_address=%lu\n"
         "$__uranium_camera_client_w=%d\n"
         "$__uranium_camera_client_h=%d\n",
         (unsigned long)(ULONG_PTR)&g_zoom_telemetry,
+        (unsigned long)(ULONG_PTR)&s_requested_percent,
         s_base_client_w, s_base_client_h);
 
     std::string script(prefix);
     script += s_patch_body;
-    s_eval(script.c_str());
+    const int result = rgss_safe_eval(script.c_str());
+    if (result != 0) {
+        InterlockedExchange(&g_zoom_telemetry.error,
+                            ZOOM_ERR_NATIVE_EVAL);
+        return false;
+    }
     refresh_client_telemetry();
     return InterlockedCompareExchange(&g_zoom_telemetry.installed, 0, 0) == 1;
 }
-
-static void send_zoom_request(int percent) {
-    if (!s_eval) return;
-    char ruby[256];
-    sprintf_s(ruby, sizeof(ruby),
-        "begin; ::UraniumCamera.request(%d) if defined?(::UraniumCamera); "
-        "rescue Exception; end", percent);
-    s_eval(ruby);
-    refresh_client_telemetry();
-}
-
-static void update_ruby_client_size() {
-    if (!s_eval || s_base_client_w <= 0 || s_base_client_h <= 0) return;
-    char ruby[256];
-    sprintf_s(ruby, sizeof(ruby),
-        "begin; ::UraniumCamera.update_client(%d,%d) "
-        "if defined?(::UraniumCamera); rescue Exception; end",
-        s_base_client_w, s_base_client_h);
-    s_eval(ruby);
-}
-
-static void post_to_game() {
-    if (s_game_hwnd) PostMessageA(s_game_hwnd, WM_NULL, 0, 0);
-    if (s_game_tid) PostThreadMessageA(s_game_tid, WM_NULL, 0, 0);
-}
-
-static void on_game_thread_tick() {
-    if (InterlockedCompareExchange(&s_in_tick, 1, 0) != 0) return;
-
+static void __cdecl on_game_thread_tick(void*) {
     const DWORD now = GetTickCount();
-    const bool urgent = InterlockedCompareExchange(&s_pending, 0, 0) != 0;
-    if (!urgent && now - s_last_tick < 100) {
-        InterlockedExchange(&s_in_tick, 0);
+    if (now - s_last_tick < 100) {
         return;
     }
     s_last_tick = now;
 
-    if (!resolve_eval()) {
-        InterlockedExchange(&s_in_tick, 0);
-        return;
-    }
-
     capture_base_client_if_needed();
     refresh_client_telemetry();
-    const bool installed =
-        InterlockedCompareExchange(&g_zoom_telemetry.installed, 0, 0) == 1;
-    if (!installed && (s_last_install_attempt == 0 ||
-                       now - s_last_install_attempt >= 750)) {
-        s_last_install_attempt = now;
-        if (!install_ruby_patch()) {
-            InterlockedExchange(&g_zoom_telemetry.error, ZOOM_ERR_NATIVE_EVAL);
-        }
-    }
-
-    if (InterlockedCompareExchange(&g_zoom_telemetry.installed, 0, 0) == 1) {
-        if (InterlockedExchange(&s_pending, 0) != 0) {
-            update_ruby_client_size();
-            int percent = g_zoom_value;
-            if (percent < 100) percent = 100;
-            if (percent > 300) percent = 300;
-            send_zoom_request(percent);
-            s_force_client_until = now + 1500;
-        }
-
-        const LONG applied =
-            InterlockedCompareExchange(&g_zoom_telemetry.applied_percent, 0, 0);
-        if (applied > 100 || (LONG)(s_force_client_until - now) > 0) {
-            if (!force_base_client_size()) {
-                InterlockedExchange(&g_zoom_telemetry.error, ZOOM_ERR_CLIENT_SIZE);
-            }
-        }
-    }
-
-    InterlockedExchange(&s_in_tick, 0);
-}
-
-static LRESULT CALLBACK cwp_hook(int code, WPARAM wp, LPARAM lp) {
-    if (code == HC_ACTION) on_game_thread_tick();
-    return CallNextHookEx(s_hook_cwp, code, wp, lp);
-}
-
-static LRESULT CALLBACK getmsg_hook(int code, WPARAM wp, LPARAM lp) {
-    if (code == HC_ACTION) on_game_thread_tick();
-    return CallNextHookEx(s_hook_getmsg, code, wp, lp);
-}
-
-static void install_hooks() {
-    if (!s_game_tid || !g_trainer_module) return;
-    if (!s_hook_cwp) {
-        s_hook_cwp = SetWindowsHookExA(
-            WH_CALLWNDPROC, cwp_hook, g_trainer_module, s_game_tid);
-    }
-    if (!s_hook_getmsg) {
-        s_hook_getmsg = SetWindowsHookExA(
-            WH_GETMESSAGE, getmsg_hook, g_trainer_module, s_game_tid);
-    }
+    if (InterlockedCompareExchange(&g_zoom_telemetry.installed, 0, 0) == 1)
+        return;
+    if (s_base_client_w <= 0 || s_base_client_h <= 0) return;
+    if (s_last_install_attempt != 0 &&
+        now - s_last_install_attempt < 750) return;
+    s_last_install_attempt = now;
+    install_ruby_patch();
 }
 
 void opt_zoom_init(const char* ini_path) {
     lstrcpynA(s_ini, ini_path ? ini_path : "", MAX_PATH);
-    g_zoom_value = GetPrivateProfileIntA("Settings", "CameraZoom", 100, s_ini);
-    if (g_zoom_value < 100) g_zoom_value = 100;
-    if (g_zoom_value > 300) g_zoom_value = 300;
-    resolve_eval();
+    const int saved_zoom = GetPrivateProfileIntA(
+        "Settings", "CameraZoom", 100, s_ini);
+    g_zoom_value = saved_zoom;
+    if (g_zoom_value < OPT_ZOOM_MIN_PERCENT)
+        g_zoom_value = OPT_ZOOM_MIN_PERCENT;
+    if (g_zoom_value > OPT_ZOOM_MAX_PERCENT)
+        g_zoom_value = OPT_ZOOM_MAX_PERCENT;
+    if (g_zoom_value != saved_zoom) {
+        char normalized[16];
+        sprintf_s(normalized, sizeof(normalized), "%d", g_zoom_value);
+        WritePrivateProfileStringA(
+            "Settings", "CameraZoom", normalized, s_ini);
+    }
+    InterlockedExchange(&s_requested_percent, g_zoom_value);
 }
 
 void opt_zoom_set_hwnd_and_start(HWND hwnd) {
     s_game_hwnd = hwnd;
-    s_game_tid = hwnd ? GetWindowThreadProcessId(hwnd, NULL) : 0;
     s_base_client_w = 0;
     s_base_client_h = 0;
     s_client_candidate_since = 0;
@@ -626,22 +836,22 @@ void opt_zoom_set_hwnd_and_start(HWND hwnd) {
     s_client_candidate_h = 0;
     InterlockedExchange(&g_zoom_telemetry.client_width, 0);
     InterlockedExchange(&g_zoom_telemetry.client_height, 0);
-    InterlockedExchange(&s_pending, 1);
-    install_hooks();
-    post_to_game();
+    rgss_safe_dispatch_register(on_game_thread_tick, NULL);
+    rgss_safe_dispatch_notify();
 }
 
 void opt_zoom_apply(int percent) {
-    if (percent < 100) percent = 100;
-    if (percent > 300) percent = 300;
+    if (percent < OPT_ZOOM_MIN_PERCENT)
+        percent = OPT_ZOOM_MIN_PERCENT;
+    if (percent > OPT_ZOOM_MAX_PERCENT)
+        percent = OPT_ZOOM_MAX_PERCENT;
     g_zoom_value = percent;
+    InterlockedExchange(&s_requested_percent, percent);
 
     char value[16];
     sprintf_s(value, sizeof(value), "%d", percent);
     WritePrivateProfileStringA("Settings", "CameraZoom", value, s_ini);
 
-    InterlockedExchange(&s_pending, 1);
-    post_to_game();
 }
 
 void opt_zoom_get_telemetry(OptZoomTelemetry* out) {

@@ -17,8 +17,8 @@ seule le comportement d'un combat complet.
 | Sac | `pbStoreItem`/`pbDeleteItem`, limite native 99, ID+quantité figés dans une FIFO | L'élément sélectionné peut changer après suppression à 0 | 0, 1, 99, poche pleine, objet clé |
 | Noclip | Surclasse temporairement `@through` pendant `passable?`, puis restaure l'état original | Les limites externes de carte restent actives | Murs, événements, portes, bords de carte, état scripted-through |
 | Sans rencontres | Wrapper de `PokemonEncounters#pbCanEncounter?`, sans toucher à la sauvegarde | N'empêche pas les combats déclenchés par script | Herbes/grottes/surf, ON puis OFF |
-| Vitesse joueur | Appliquée au joueur dans le dernier wrapper `Game_Character#update`, avec retry temporisé jusqu'à acquittement | Les routes forcées gardent leur vitesse de script | Marche/course/surf/vélo/glace, toutes valeurs 1–8 |
-| Dézoom | Dimensions logiques 4:3 + facteur inverse ; client surveillé ; retour 100 % autour des scènes synchrones | Coût carte environ ×4 à 200 % et ×9 à 300 % | Carte réelle, déplacements/transferts, menu, combat, 100/200/300 % |
+| Vitesse joueur | Appliquée au dernier point avant le calcul de distance, `Game_Character#update_move`, avec retry temporisé jusqu'à acquittement | Les routes forcées gardent leur vitesse de script | Marche/course/surf/vélo/glace, toutes valeurs 1–8 |
+| Dézoom | Dimensions logiques 4:3 + facteur inverse ; cache du sol et translation rapide des tuiles ; événements lointains en veille mais tous les sprites visibles actualisés | Le vide hors des limites d'une carte devient visible près d'un bord ; les cartes à très nombreux autotiles animés restent à qualifier | Carte réelle, déplacements/transferts, menu, combat, 100/133/187/200/300/400/500 % |
 | Soigner équipe | Appelle `heal` sur chaque Pokémon du groupe | Action volontairement sauvegardable | Statuts, KO, œuf et groupe incomplet |
 | Éditeur Pokémon | Transfert mémoire direct, FIFO immuable, nom 11 caractères, IV 0–31, EV 0–255 et total 510 | Version actuelle limitée au premier Pokémon ; toute édition est sauvegardable | Chaque champ, recalcul des stats, changement d'attaque |
 
@@ -35,16 +35,21 @@ seule le comportement d'un combat complet.
 - Dézoom synthétique sans chargement de sauvegarde : client `1024×768` avant,
   pendant et après ; logique `512×384` à 100 %, `1024×768` à 200 %, puis retour
   exact à `512×384`.
+- Dézoom sur une vraie carte à 500 %, réglages utilisateur marche/course 7/6 :
+  environ 55,5 FPS au repos et 50,8 FPS pendant 12 secondes de déplacement
+  continu dans quatre directions. Le client est resté inchangé, sans couture
+  horizontale ni PNJ figé au bord sur la capture finale ; mémoire privée
+  observée à 173 Mo.
 - Heure : midi, conversion 24 h vers 23 h 59 et retour à l'heure réelle sur OFF
   vérifiés dynamiquement.
 - Les fichiers `Uranium.rxdata`, `Uranium_autosave.rxdata` et
   `GlobalSettings.rxdata` ont été restaurés puis comparés à leurs empreintes de
   référence après les essais.
 
-Les combats réels et une vraie `Scene_Map` n'ont volontairement pas été chargés
-pendant les tests automatisés. HP, PP, météo et dézoom doivent donc encore être
-validés visuellement sur une copie de sauvegarde, avec la matrice indiquée dans
-le tableau.
+Les combats réels n'ont pas été automatisés. HP, PP et météo doivent donc
+encore être validés avec la matrice indiquée dans le tableau. Le dézoom a été
+testé sur une vraie `Scene_Map`, mais les transitions combat/menu et les cartes
+très chargées en autotiles animés restent à qualifier plus longuement.
 
 ## Corrections issues de l'audit
 
@@ -62,3 +67,31 @@ le tableau.
   cette version de RGSS.
 - Suppression du fichier temporaire `partymon.txt` au profit d'un buffer mémoire.
 - Application des opérations lourdes du dézoom seulement au relâchement du slider.
+- Correction des coutures des tuiles de priorité à échelle fractionnaire par
+  alignement des bornes physiques et chevauchement d'un pixel, inactif à 100 %.
+- Suppression du `RGSSEval` de zoom exécuté depuis la pompe de messages : le
+  bootstrap est désormais armé par un détour vérifié de `Graphics.update`, puis
+  les changements sont consommés par `Scene_Map#update`.
+- Plage du dézoom étendue à 100–500 % à la demande ; les valeurs extrêmes sont
+  conservées même si elles révèlent le vide autour des cartes finies.
+- Cache `CustomTilemap` recentré pour éviter un redessin complet à chaque pas,
+  translation rapide des tuiles prioritaires et portée logique des événements
+  ramenée à la fenêtre vanilla. Le rendu des PNJ visibles n'est jamais filtré.
+- Migration de toutes les options du build vers un répartiteur
+  `Graphics.update` unique ; `opt_ohk.cpp`, encore historique, reste exclu du
+  payload.
+
+## Incident C0000005 du 14 août 2026
+
+Le dump `Uranium.exe.40192.dmp` situe l'accès invalide dans
+`RGSS102E.dll+0x717E6`, avec `RGSSEval` appelé depuis l'ancien chemin de zoom au
+milieu de la pompe de messages de `Graphics.update`. Le problème était une
+réentrée dans la VM Ruby, pas une corruption de sauvegarde.
+
+Le payload n'évalue plus Ruby depuis `WH_CALLWNDPROC` ou `WH_GETMESSAGE`. Un
+détour persistant, dont la signature, l'arité et l'enregistrement
+`Graphics.update` sont validés pour le `RGSS102E.dll` de cette version, appelle
+un registre borné de callbacks à la frontière native volontaire de Ruby. Une
+garde de profondeur empêche toute réentrée si un script appelle indirectement
+`Graphics.update`. Toutes les options effectivement compilées utilisent ce
+répartiteur ; le prototype OHK historique n'est pas inclus dans le build.

@@ -1,5 +1,5 @@
 #include "../options/opt_partymon.h"
-#include "../trainer_runtime.h"
+#include "../rgss_safe_dispatch.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,8 +7,6 @@
 volatile PartyMonInfo g_partymon = {0};
 
 static char          s_ini[MAX_PATH];
-static HWND          s_game_hwnd  = NULL;
-static DWORD         s_game_tid   = 0;
 static HANDLE        s_timer      = NULL;
 static HANDLE        s_stop       = NULL;
 
@@ -42,12 +40,6 @@ static EditCommand*     s_edit_tail = NULL;
 static volatile LONG    s_refresh_pending = 0;
 static volatile LONG    s_processing = 0;
 
-static HHOOK s_hook_cwp    = NULL;
-static HHOOK s_hook_getmsg = NULL;
-
-typedef int (__cdecl *RGSSEval_t)(const char*);
-static RGSSEval_t s_eval = NULL;
-
 // 32 ints = 128 bytes
 // [0] valid
 // [1] party_index
@@ -71,17 +63,8 @@ static void native_debug(const char* text) {
     (void)text;
 }
 
-static bool resolve() {
-    if (s_eval) return true;
-    HMODULE h = GetModuleHandleA("RGSS102E.dll");
-    if (!h) return false;
-    s_eval = (RGSSEval_t)GetProcAddress(h, "RGSSEval");
-    return s_eval != NULL;
-}
-
 static void post_to_game() {
-    if (s_game_hwnd) PostMessageA(s_game_hwnd, WM_NULL, 0, 0);
-    if (s_game_tid)  PostThreadMessageA(s_game_tid, WM_NULL, 0, 0);
+    rgss_safe_dispatch_notify();
 }
 
 static BOOL CALLBACK init_edit_queue(PINIT_ONCE, PVOID, PVOID*) {
@@ -431,11 +414,10 @@ static void execute_edit(const EditCommand& command) {
             return;
     }
 
-    s_eval(s_ruby_write);
+    rgss_safe_eval(s_ruby_write);
 }
 
-static void on_game_thread_tick() {
-    if (!resolve()) return;
+static void __cdecl on_game_thread_tick(void*) {
     if (InterlockedCompareExchange(&s_processing, 1, 0) != 0) return;
 
     bool edited = false;
@@ -447,7 +429,7 @@ static void on_game_thread_tick() {
 
     LONG refresh = InterlockedExchange(&s_refresh_pending, 0);
     if (edited || refresh != 0) {
-        int rc = s_eval(s_ruby_read);
+        int rc = rgss_safe_eval(s_ruby_read);
         char buf[128];
         wsprintfA(buf, "read_rc=%d", rc);
         native_debug(buf);
@@ -455,25 +437,6 @@ static void on_game_thread_tick() {
     }
 
     InterlockedExchange(&s_processing, 0);
-}
-
-static LRESULT CALLBACK cwp_hook(int code, WPARAM wp, LPARAM lp) {
-    if (code == HC_ACTION) on_game_thread_tick();
-    return CallNextHookEx(s_hook_cwp, code, wp, lp);
-}
-
-static LRESULT CALLBACK getmsg_hook(int code, WPARAM wp, LPARAM lp) {
-    if (code == HC_ACTION) on_game_thread_tick();
-    return CallNextHookEx(s_hook_getmsg, code, wp, lp);
-}
-
-static void install_hooks() {
-    if (!s_game_tid) return;
-    HMODULE hSelf = g_trainer_module;
-    if (!s_hook_cwp)
-        s_hook_cwp = SetWindowsHookExA(WH_CALLWNDPROC, cwp_hook, hSelf, s_game_tid);
-    if (!s_hook_getmsg)
-        s_hook_getmsg = SetWindowsHookExA(WH_GETMESSAGE, getmsg_hook, hSelf, s_game_tid);
 }
 
 static DWORD WINAPI timer_thread(LPVOID) {
@@ -508,7 +471,6 @@ void opt_partymon_init(const char* ini_path) {
     ((PartyMonInfo&)g_partymon).party_index = -1;
 
     s_stop = CreateEventA(NULL, TRUE, FALSE, NULL);
-    resolve();
 
     build_ruby();
 	char buf[128];
@@ -517,9 +479,8 @@ void opt_partymon_init(const char* ini_path) {
 }
 
 void opt_partymon_set_hwnd_and_start(HWND hwnd) {
-    s_game_hwnd = hwnd;
-    if (hwnd) s_game_tid = GetWindowThreadProcessId(hwnd, NULL);
-    install_hooks();
+    (void)hwnd;
+    rgss_safe_dispatch_register(on_game_thread_tick, NULL);
     InterlockedExchange(&s_refresh_pending, 1);
     post_to_game();
     start_timer();

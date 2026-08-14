@@ -1,5 +1,5 @@
 #include "../options/opt_weather.h"
-#include "../trainer_runtime.h"
+#include "../rgss_safe_dispatch.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -8,8 +8,6 @@ bool g_weather_enabled = false;
 int  g_weather_type    = -1;
 
 static char          s_ini[MAX_PATH];
-static HWND          s_game_hwnd = NULL;
-static DWORD         s_game_tid  = 0;
 
 // Etat demande par l'UI. Ruby n'est appele que depuis le thread RGSS ; les
 // commandes venant de l'overlay sont transmises via des LONG atomiques.
@@ -18,27 +16,12 @@ static volatile LONG s_pending      = 0;
 static volatile LONG s_installed    = 0;
 static volatile LONG s_last_refresh = 0;
 
-static HHOOK s_hook_cwp    = NULL;
-static HHOOK s_hook_getmsg = NULL;
-
-typedef int (__cdecl *RGSSEval_t)(const char*);
-static RGSSEval_t s_eval = NULL;
-
 // [0] type visible via Game_Screen#weather_type, [1] wrapper installe.
 static volatile LONG s_shared[2] = {-1, 0};
 static char s_ruby[6144];
 
-static bool resolve_eval() {
-    if (s_eval) return true;
-    HMODULE rgss = GetModuleHandleA("RGSS102E.dll");
-    if (!rgss) return false;
-    s_eval = (RGSSEval_t)GetProcAddress(rgss, "RGSSEval");
-    return s_eval != NULL;
-}
-
 static void post_to_game() {
-    if (s_game_hwnd) PostMessageA(s_game_hwnd, WM_NULL, 0, 0);
-    if (s_game_tid)  PostThreadMessageA(s_game_tid, WM_NULL, 0, 0);
+    rgss_safe_dispatch_notify();
 }
 
 static void queue_tick() {
@@ -113,20 +96,15 @@ static void build_ruby_read() {
     s_ruby[sizeof(s_ruby) - 1] = '\0';
 }
 
-static void on_game_thread_tick() {
+static void __cdecl on_game_thread_tick(void*) {
     if (InterlockedExchange(&s_pending, 0) == 0) return;
-
-    if (!resolve_eval()) {
-        InterlockedExchange(&s_pending, 1);
-        return;
-    }
 
     if (InterlockedExchangeAdd(&s_installed, 0) != 0)
         build_ruby_read();
     else
         build_ruby_apply((int)InterlockedExchangeAdd(&s_desired_type, 0));
 
-    s_eval(s_ruby);
+    rgss_safe_eval(s_ruby);
 
     const LONG installed = InterlockedExchangeAdd(&s_shared[1], 0);
     const LONG desired = InterlockedExchangeAdd(&s_desired_type, 0);
@@ -135,26 +113,6 @@ static void on_game_thread_tick() {
     // Au menu titre, $game_screen n'existe pas encore : conserver le choix
     // force dans l'UI jusqu'a la creation du premier Game_Screen.
     g_weather_type = (int)(desired >= 0 ? desired : current);
-}
-
-static LRESULT CALLBACK cwp_hook(int code, WPARAM wp, LPARAM lp) {
-    if (code == HC_ACTION) on_game_thread_tick();
-    return CallNextHookEx(s_hook_cwp, code, wp, lp);
-}
-
-static LRESULT CALLBACK getmsg_hook(int code, WPARAM wp, LPARAM lp) {
-    if (code == HC_ACTION) on_game_thread_tick();
-    return CallNextHookEx(s_hook_getmsg, code, wp, lp);
-}
-
-static void install_hooks() {
-    if (!s_game_tid || !g_trainer_module) return;
-    if (!s_hook_cwp)
-        s_hook_cwp = SetWindowsHookExA(
-            WH_CALLWNDPROC, cwp_hook, g_trainer_module, s_game_tid);
-    if (!s_hook_getmsg)
-        s_hook_getmsg = SetWindowsHookExA(
-            WH_GETMESSAGE, getmsg_hook, g_trainer_module, s_game_tid);
 }
 
 void opt_weather_init(const char* ini_path) {
@@ -173,13 +131,11 @@ void opt_weather_init(const char* ini_path) {
 
     g_weather_enabled = saved >= 0;
     g_weather_type = saved;
-    resolve_eval();
 }
 
 void opt_weather_set_hwnd_and_start(HWND hwnd) {
-    s_game_hwnd = hwnd;
-    s_game_tid = hwnd ? GetWindowThreadProcessId(hwnd, NULL) : 0;
-    install_hooks();
+    (void)hwnd;
+    rgss_safe_dispatch_register(on_game_thread_tick, NULL);
     queue_tick();
 }
 

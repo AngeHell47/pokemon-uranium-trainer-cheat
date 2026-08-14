@@ -1,5 +1,5 @@
 #include "../options/opt_speed.h"
-#include "../trainer_runtime.h"
+#include "../rgss_safe_dispatch.h"
 
 #include <windows.h>
 #include <stdio.h>
@@ -10,18 +10,10 @@ int g_speed_surf_value = 5; // 4.6
 int g_speed_bike_value = 6; // 5.6
 
 static char          s_ini[MAX_PATH];
-static HWND          s_game_hwnd = NULL;
-static DWORD         s_game_tid  = 0;
-static HHOOK         s_hook_cwp  = NULL;
-static HHOOK         s_hook_getmsg = NULL;
-
 static volatile LONG s_need_install = 0;
 static volatile LONG s_pending_cfg  = 0;
 static volatile LONG s_installed = 0;
 static volatile LONG s_retry_started = 0;
-
-typedef int (__cdecl *RGSSEval_t)(const char*);
-static RGSSEval_t s_eval = NULL;
 
 // Échelle commune 1..8
 static const char* SPEED_VALUES[] = {
@@ -38,17 +30,8 @@ static const char* SPEED_VALUES[] = {
 
 static char s_ruby[8192];
 
-static bool resolve() {
-    if (s_eval) return true;
-    HMODULE h = GetModuleHandleA("RGSS102E.dll");
-    if (!h) return false;
-    s_eval = (RGSSEval_t)GetProcAddress(h, "RGSSEval");
-    return s_eval != NULL;
-}
-
 static void post_to_game() {
-    if (s_game_hwnd) PostMessageA(s_game_hwnd, WM_NULL, 0, 0);
-    if (s_game_tid)  PostThreadMessageA(s_game_tid, WM_NULL, 0, 0);
+    rgss_safe_dispatch_notify();
 }
 
 static const char* speed_str_from_idx(int idx) {
@@ -58,51 +41,58 @@ static const char* speed_str_from_idx(int idx) {
 }
 
 static void build_install_ruby() {
-    _snprintf(
-        s_ruby, sizeof(s_ruby) - 1,
+    _snprintf_s(
+        s_ruby, sizeof(s_ruby), _TRUNCATE,
         "installed=0\n"
         "begin\n"
-        "  $dll_speed_patch_installed_v2 = false if !defined?($dll_speed_patch_installed_v2)\n"
+        "  $dll_speed_patch_installed_v3 = false if !defined?($dll_speed_patch_installed_v3)\n"
         "  $dll_walk_speed = 3.6 if !defined?($dll_walk_speed)\n"
         "  $dll_run_speed  = 4.6 if !defined?($dll_run_speed)\n"
         "  $dll_surf_speed = 4.6 if !defined?($dll_surf_speed)\n"
         "  $dll_bike_speed = 5.6 if !defined?($dll_bike_speed)\n"
         "  $dll_ice_speed  = 4.2 if !defined?($dll_ice_speed)\n"
         "\n"
-        // Attendre la fin du chargement des scripts. Sinon Game_Player_Visuals
-        // peut redefinir Game_Character#update juste apres notre installation.
-        "  if defined?($game_player) && $game_player && defined?($PokemonGlobal) && $PokemonGlobal && !$dll_speed_patch_installed_v2\n"
+        // Attendre la fin du chargement des scripts. Game_Player_Visuals
+        // redefinit Game_Player#update et remet @move_speed a sa valeur vanilla.
+        // Le dernier point commun avant le calcul de distance est
+        // Game_Character#update_move, que Game_Player appelle via super.
+        "  if defined?($game_player) && $game_player && defined?($PokemonGlobal) && $PokemonGlobal\n"
         "    klass = ::Object.const_get(:Game_Character)\n"
-        "    klass.class_eval do\n"
-        "      unless method_defined?(:dll_speed_update_orig_v2)\n"
-        "        alias dll_speed_update_orig_v2 update\n"
-        "      end\n"
-        "\n"
-        "      def update\n"
-        "        begin\n"
-        "          if defined?($game_player) && self.equal?($game_player) && !@move_route_forcing\n"
-        "            if PBTerrain.isIce?(pbGetTerrainTag)\n"
-        "              @move_speed = ($dll_ice_speed || 4.2)\n"
-        "            elsif $PokemonGlobal\n"
-        "              if $PokemonGlobal.bicycle\n"
-        "                @move_speed = ($dll_bike_speed || 5.6)\n"
-        "              elsif $PokemonGlobal.surfing || $PokemonGlobal.diving\n"
-        "                @move_speed = ($dll_surf_speed || 4.6)\n"
-        "              elsif pbCanRun?\n"
-        "                @move_speed = ($dll_run_speed || 4.6)\n"
-        "              else\n"
-        "                @move_speed = ($dll_walk_speed || 3.6)\n"
-        "              end\n"
-        "            end\n"
-        "          end\n"
-        "        rescue Exception\n"
+        "    if klass.method_defined?(:update_move)\n"
+        "      klass.class_eval do\n"
+        "        unless method_defined?(:dll_speed_update_move_orig_v3)\n"
+        "          alias dll_speed_update_move_orig_v3 update_move\n"
         "        end\n"
-        "        dll_speed_update_orig_v2\n"
+        "\n"
+        "        unless method_defined?(:dll_speed_update_move_v3)\n"
+        "          def dll_speed_update_move_v3\n"
+        "            begin\n"
+        "              if defined?($game_player) && self.equal?($game_player) && !@move_route_forcing\n"
+        "                if PBTerrain.isIce?(pbGetTerrainTag)\n"
+        "                  @move_speed = ($dll_ice_speed || 4.2)\n"
+        "                elsif $PokemonGlobal\n"
+        "                  if $PokemonGlobal.bicycle\n"
+        "                    @move_speed = ($dll_bike_speed || 5.6)\n"
+        "                  elsif $PokemonGlobal.surfing || $PokemonGlobal.diving\n"
+        "                    @move_speed = ($dll_surf_speed || 4.6)\n"
+        "                  elsif pbCanRun?\n"
+        "                    @move_speed = ($dll_run_speed || 4.6)\n"
+        "                  else\n"
+        "                    @move_speed = ($dll_walk_speed || 3.6)\n"
+        "                  end\n"
+        "                end\n"
+        "              end\n"
+        "            rescue Exception\n"
+        "            end\n"
+        "            dll_speed_update_move_orig_v3\n"
+        "          end\n"
+        "        end\n"
+        "        alias update_move dll_speed_update_move_v3\n"
         "      end\n"
+        "      $dll_speed_patch_installed_v3 = true\n"
+        "      installed=1\n"
         "    end\n"
-        "    $dll_speed_patch_installed_v2 = true\n"
         "  end\n"
-        "  installed=1 if $dll_speed_patch_installed_v2\n"
         "rescue Exception\n"
         "end\n"
         "begin\n"
@@ -131,41 +121,17 @@ static void build_apply_ruby_all() {
     );
 }
 
-static void on_game_thread_tick() {
-    if (!resolve()) return;
-
+static void __cdecl on_game_thread_tick(void*) {
     if (InterlockedExchange(&s_need_install, 0) != 0) {
         build_install_ruby();
-        s_eval(s_ruby);
+        if (rgss_safe_eval(s_ruby) != 0)
+            InterlockedExchange(&s_need_install, 1);
     }
 
     if (InterlockedExchange(&s_pending_cfg, 0) != 0) {
         build_apply_ruby_all();
-        s_eval(s_ruby);
-    }
-}
-
-static LRESULT CALLBACK cwp_hook(int code, WPARAM wp, LPARAM lp) {
-    if (code == HC_ACTION) on_game_thread_tick();
-    return CallNextHookEx(s_hook_cwp, code, wp, lp);
-}
-
-static LRESULT CALLBACK getmsg_hook(int code, WPARAM wp, LPARAM lp) {
-    if (code == HC_ACTION) on_game_thread_tick();
-    return CallNextHookEx(s_hook_getmsg, code, wp, lp);
-}
-
-static void install_hooks() {
-    if (!s_game_tid) return;
-
-    HMODULE hSelf = g_trainer_module;
-    if (!hSelf) return;
-
-    if (!s_hook_cwp) {
-        s_hook_cwp = SetWindowsHookExA(WH_CALLWNDPROC, cwp_hook, hSelf, s_game_tid);
-    }
-    if (!s_hook_getmsg) {
-        s_hook_getmsg = SetWindowsHookExA(WH_GETMESSAGE, getmsg_hook, hSelf, s_game_tid);
+        if (rgss_safe_eval(s_ruby) != 0)
+            InterlockedExchange(&s_pending_cfg, 1);
     }
 }
 
@@ -211,7 +177,6 @@ void opt_speed_init(const char* ini_path) {
     g_speed_bike_value = GetPrivateProfileIntA("Settings", "SpeedBike", 6, s_ini);
 
     clamp_all();
-    resolve();
 
     InterlockedExchange(&s_need_install, 1);
     InterlockedExchange(&s_pending_cfg, 1);
@@ -219,14 +184,8 @@ void opt_speed_init(const char* ini_path) {
 }
 
 void opt_speed_set_hwnd_and_start(HWND hwnd) {
-    s_game_hwnd = hwnd;
-    s_game_tid = 0;
-
-    if (hwnd) {
-        s_game_tid = GetWindowThreadProcessId(hwnd, NULL);
-    }
-
-    install_hooks();
+    (void)hwnd;
+    rgss_safe_dispatch_register(on_game_thread_tick, NULL);
 
     InterlockedExchange(&s_need_install, 1);
     InterlockedExchange(&s_pending_cfg, 1);

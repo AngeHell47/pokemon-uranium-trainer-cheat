@@ -2,7 +2,12 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-extern int g_zoom_value;  // 100..300 (100=normal, 200=voit 2x plus)
+enum {
+    OPT_ZOOM_MIN_PERCENT = 100,
+    OPT_ZOOM_MAX_PERCENT = 500
+};
+
+extern int g_zoom_value;  // 100..500
 
 // Buffer natif rempli directement par le patch Ruby. Il permet aux tests et a
 // l'interface de verifier l'etat sans executer Ruby depuis un thread etranger.

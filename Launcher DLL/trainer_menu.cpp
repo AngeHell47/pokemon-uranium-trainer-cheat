@@ -15,6 +15,7 @@
 //#include "options/opt_speedhack.h"
 #include "options/opt_zoom.h"
 #include "moves_db.h"
+#include "rgss_safe_dispatch.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -89,7 +90,8 @@ MenuItem g_items[] = {
       NULL,NULL, NULL,0,0,NULL },
 
     { "Dezoom camera (%)", ITEM_TYPE_SLIDER,
-      NULL,NULL, &g_zoom_value,100,300,opt_zoom_apply },
+      NULL,NULL, &g_zoom_value,OPT_ZOOM_MIN_PERCENT,
+      OPT_ZOOM_MAX_PERCENT,opt_zoom_apply },
 
 
     { "Vitesse de marche", ITEM_TYPE_SLIDER,
@@ -153,8 +155,6 @@ static bool  s_open          = false;
 static int   s_hovered       = -1;
 static HHOOK s_kbd_hook      = NULL;
 static HHOOK s_mouse_hook    = NULL;
-static HHOOK s_input_cwp_hook = NULL;
-static HHOOK s_input_getmsg_hook = NULL;
 static LONG  s_mouse_buttons = 0;
 static volatile LONG s_block_game_mouse = 0;
 // 0=aucune capture, 1=navigation du menu, 2=edition de texte/quantite.
@@ -179,28 +179,12 @@ static bool menu_keyboard_should_capture();
 static void cancel_overlay_mouse_interaction();
 static bool overlay_contains_screen_point(const POINT& pt);
 
-typedef int (__cdecl *MenuRGSSEval_t)(const char*);
-static MenuRGSSEval_t s_menu_eval = NULL;
-
-static bool resolve_menu_eval() {
-    if (s_menu_eval) return true;
-    HMODULE rgss = GetModuleHandleA("RGSS102E.dll");
-    if (!rgss) return false;
-    s_menu_eval = (MenuRGSSEval_t)GetProcAddress(rgss, "RGSSEval");
-    return s_menu_eval != NULL;
-}
-
-// Uranium lit les boutons directement avec GetAsyncKeyState. Le hook souris
-// bloque les messages Windows, et ce wrapper masque aussi l'etat physique au
+// Uranium lit les boutons directement avec GetAsyncKeyState. L'overlay recoit
+// les messages Windows normalement, et ce wrapper masque l'etat physique au
 // script Ruby tant que le pointeur appartient a l'overlay.
-static void input_guard_tick() {
+static void __cdecl input_guard_tick(void*) {
     if (InterlockedExchange(&s_input_guard_pending, 0) == 0) return;
     if (InterlockedCompareExchange(&s_input_guard_in_tick, 1, 0) != 0) return;
-    if (!resolve_menu_eval()) {
-        InterlockedExchange(&s_input_guard_pending, 1);
-        InterlockedExchange(&s_input_guard_in_tick, 0);
-        return;
-    }
 
     char ruby[4096];
     _snprintf(ruby, sizeof(ruby) - 1,
@@ -250,24 +234,14 @@ static void input_guard_tick() {
         (unsigned long)(ULONG_PTR)&s_block_game_keyboard,
         (unsigned long)(ULONG_PTR)&s_input_guard_installed);
     ruby[sizeof(ruby) - 1] = '\0';
-    s_menu_eval(ruby);
+    if (rgss_safe_eval(ruby) < 0)
+        InterlockedExchange(&s_input_guard_pending, 1);
     InterlockedExchange(&s_input_guard_in_tick, 0);
-}
-
-static LRESULT CALLBACK input_cwp_hook(int code, WPARAM wp, LPARAM lp) {
-    if (code == HC_ACTION) input_guard_tick();
-    return CallNextHookEx(s_input_cwp_hook, code, wp, lp);
-}
-
-static LRESULT CALLBACK input_getmsg_hook(int code, WPARAM wp, LPARAM lp) {
-    if (code == HC_ACTION) input_guard_tick();
-    return CallNextHookEx(s_input_getmsg_hook, code, wp, lp);
 }
 
 static void post_input_guard_tick() {
     InterlockedExchange(&s_input_guard_pending, 1);
-    if (s_game) PostMessageA(s_game, WM_NULL, 0, 0);
-    if (s_game_tid) PostThreadMessageA(s_game_tid, WM_NULL, 0, 0);
+    rgss_safe_dispatch_notify();
 }
 
 // ------------------------------------------------------------
@@ -1249,6 +1223,8 @@ static void paint(HWND hw) {
             DeleteObject(trbg);
 
             int fw = (mx > mn) ? (int)((long long)(val - mn) * (bx2 - bx1) / (mx - mn)) : 0;
+            if (fw < 0) fw = 0;
+            if (fw > bx2 - bx1) fw = bx2 - bx1;
             if (fw > 0) {
                 RECT fill = {bx1, by, bx1 + fw, by + bh};
                 HBRUSH fbr = CreateSolidBrush(COL_SLIDER);
@@ -2004,15 +1980,20 @@ static bool menu_keyboard_should_capture() {
     HWND fg = GetForegroundWindow();
     if (!fg) return false;
 
-    // Le plus important : seulement quand le jeu est la fenêtre active
+    // Le plus important : seulement quand le jeu est la fenetre active.
     if (fg == s_game) return true;
 
-    // Sécurité : si un jour l'overlay devient activable
+    // Securite : si un jour l'overlay devient activable.
     if (fg == s_overlay) return true;
 
-    // Cas où une boîte de dialogue/enfant du jeu prend le focus
-    if (IsChild(s_game, fg)) return true;
-    if (IsChild(fg, s_game)) return true;
+    // RGSS peut mettre au premier plan une fenetre top-level auxiliaire de son
+    // propre processus. Ce n'est pas une perte de focus vers une autre appli.
+    // IsChild ne couvre pas ces fenetres possedees/top-level.
+    DWORD fg_pid = 0;
+    DWORD game_pid = 0;
+    GetWindowThreadProcessId(fg, &fg_pid);
+    if (s_game) GetWindowThreadProcessId(s_game, &game_pid);
+    if (game_pid != 0 && fg_pid == game_pid) return true;
 
     return false;
 }
@@ -2133,12 +2114,6 @@ static bool overlay_contains_screen_point(const POINT& pt) {
     return GetWindowRect(s_overlay, &rc) && PtInRect(&rc, pt) != FALSE;
 }
 
-static LPARAM overlay_client_lparam(const POINT& screen_pt) {
-    POINT client_pt = screen_pt;
-    ScreenToClient(s_overlay, &client_pt);
-    return MAKELPARAM((short)client_pt.x, (short)client_pt.y);
-}
-
 static WPARAM captured_mouse_key_state() {
     WPARAM state = 0;
     LONG buttons = InterlockedExchangeAdd(&s_mouse_buttons, 0);
@@ -2150,11 +2125,6 @@ static WPARAM captured_mouse_key_state() {
     if (GetAsyncKeyState(VK_SHIFT) & 0x8000)  state |= MK_SHIFT;
     if (GetAsyncKeyState(VK_CONTROL) & 0x8000) state |= MK_CONTROL;
     return state;
-}
-
-static void post_overlay_mouse(UINT message, const MSLLHOOKSTRUCT* mouse, WPARAM state) {
-    if (!s_overlay || !IsWindow(s_overlay)) return;
-    PostMessageA(s_overlay, message, state, overlay_client_lparam(mouse->pt));
 }
 
 static LRESULT CALLBACK MouseHook(int code, WPARAM wp, LPARAM lp) {
@@ -2177,15 +2147,11 @@ static LRESULT CALLBACK MouseHook(int code, WPARAM wp, LPARAM lp) {
         InterlockedExchange(&s_block_game_mouse,
                             (over_overlay || captured_before != 0) ? 1 : 0);
         LONG bit = 0;
-        UINT overlay_down = 0;
-        UINT overlay_up = 0;
 
         switch ((UINT)wp) {
         case WM_LBUTTONDOWN:
         case WM_LBUTTONUP:
             bit = CMB_LEFT;
-            overlay_down = WM_LBUTTONDOWN;
-            overlay_up = WM_LBUTTONUP;
             break;
         case WM_RBUTTONDOWN:
         case WM_RBUTTONUP:
@@ -2208,30 +2174,26 @@ static LRESULT CALLBACK MouseHook(int code, WPARAM wp, LPARAM lp) {
         const bool is_up = (wp == WM_LBUTTONUP || wp == WM_RBUTTONUP ||
                             wp == WM_MBUTTONUP || wp == WM_XBUTTONUP);
 
-        // Une fois un bouton capture par l'overlay, les boutons additionnels
-        // appartiennent a la meme interaction, meme si un glisser a deja
-        // amene le pointeur hors du rectangle.
+        // Ne pas avaler puis reinjecter DOWN/MOVE/UP. L'overlay topmost recoit
+        // naturellement le DOWN et SetCapture route ensuite MOVE/UP, y compris
+        // hors de son rectangle. Le hook ne fait que tenir le filtre RGSS a
+        // jour. Cela preserve l'ordre natif et evite les courses PostMessage.
         if (bit && is_down && (over_overlay || captured_before != 0)) {
             InterlockedOr(&s_mouse_buttons, bit);
             InterlockedExchange(&s_block_game_mouse, 1);
-            if (overlay_down)
-                post_overlay_mouse(overlay_down, mouse, captured_mouse_key_state());
-            return 1;
+            return CallNextHookEx(s_mouse_hook, code, wp, lp);
         }
 
         if (bit && is_up && (captured_before & bit)) {
-            if (overlay_up)
-                post_overlay_mouse(overlay_up, mouse, captured_mouse_key_state() & ~MK_LBUTTON);
             InterlockedAnd(&s_mouse_buttons, ~bit);
             const LONG captured_after = captured_before & ~bit;
             InterlockedExchange(&s_block_game_mouse,
                                 (over_overlay || captured_after != 0) ? 1 : 0);
-            return 1;
+            return CallNextHookEx(s_mouse_hook, code, wp, lp);
         }
 
         if (wp == WM_MOUSEMOVE && InterlockedExchangeAdd(&s_mouse_buttons, 0) != 0) {
-            post_overlay_mouse(WM_MOUSEMOVE, mouse, captured_mouse_key_state());
-            return 1;
+            return CallNextHookEx(s_mouse_hook, code, wp, lp);
         }
 
         if (wp == WM_MOUSEWHEEL && over_overlay) {
@@ -2327,48 +2289,19 @@ bool menu_init(HINSTANCE hinst, HWND game_hwnd) {
 
     if (!s_overlay) return false;
 
-    // Installer d'abord uniquement les hooks du thread RGSS. Les hooks LL
-    // sont rappeles sur le thread qui les installe : les poser avant la
-    // boucle de retry ci-dessous risquerait un retrait par LowLevelHooksTimeout.
-    if (s_game_tid) {
-        s_input_cwp_hook = SetWindowsHookExA(
-            WH_CALLWNDPROC, input_cwp_hook, hinst, s_game_tid);
-        s_input_getmsg_hook = SetWindowsHookExA(
-            WH_GETMESSAGE, input_getmsg_hook, hinst, s_game_tid);
-    }
-    if (!s_input_cwp_hook || !s_input_getmsg_hook) {
-        if (s_input_cwp_hook) {
-            UnhookWindowsHookEx(s_input_cwp_hook);
-            s_input_cwp_hook = NULL;
-        }
-        if (s_input_getmsg_hook) {
-            UnhookWindowsHookEx(s_input_getmsg_hook);
-            s_input_getmsg_hook = NULL;
-        }
+    // Le wrapper Input est installe au safe point Graphics.update commun a
+    // toutes les options. Aucun eval Ruby n'a lieu depuis un hook Windows.
+    if (!rgss_safe_dispatch_register(input_guard_tick, NULL)) {
         DestroyWindow(s_overlay);
         s_overlay = NULL;
         movesdb_free();
         return false;
     }
 
-    // Ne jamais annoncer le trainer pret avant que le filtre RGSS contre les
-    // clics traversants soit effectivement installe sur le thread du jeu.
-    for (int attempt = 0;
-         attempt < 120 && InterlockedExchangeAdd(&s_input_guard_installed, 0) == 0;
-         ++attempt) {
-        post_input_guard_tick();
-        Sleep(100);
-    }
-    if (InterlockedExchangeAdd(&s_input_guard_installed, 0) == 0) {
-        UnhookWindowsHookEx(s_input_cwp_hook);
-        UnhookWindowsHookEx(s_input_getmsg_hook);
-        s_input_cwp_hook = NULL;
-        s_input_getmsg_hook = NULL;
-        DestroyWindow(s_overlay);
-        s_overlay = NULL;
-        movesdb_free();
-        return false;
-    }
+    // Ne pas attendre Graphics.update ici : si le trainer est au premier plan,
+    // RGSS peut etre inactif et l'attente bloquerait l'initialisation. Le
+    // callback pose le filtre au premier safe point, avant le polling Input.
+    post_input_guard_tick();
 
     // Le filtre RGSS est accuse : on peut maintenant poser les hooks globaux
     // juste avant d'entrer dans la boucle de messages qui les dessert.
@@ -2379,10 +2312,7 @@ bool menu_init(HINSTANCE hinst, HWND game_hwnd) {
         if (s_kbd_hook) { UnhookWindowsHookEx(s_kbd_hook); s_kbd_hook = NULL; }
         if (s_mouse_hook) { UnhookWindowsHookEx(s_mouse_hook); s_mouse_hook = NULL; }
         if (s_watch_timer) { KillTimer(s_overlay, 1); s_watch_timer = 0; }
-        UnhookWindowsHookEx(s_input_cwp_hook);
-        UnhookWindowsHookEx(s_input_getmsg_hook);
-        s_input_cwp_hook = NULL;
-        s_input_getmsg_hook = NULL;
+        rgss_safe_dispatch_unregister(input_guard_tick, NULL);
         DestroyWindow(s_overlay);
         s_overlay = NULL;
         movesdb_free();
@@ -2408,14 +2338,7 @@ void menu_start_loop() {
         UnhookWindowsHookEx(s_mouse_hook);
         s_mouse_hook = NULL;
     }
-    if (s_input_cwp_hook) {
-        UnhookWindowsHookEx(s_input_cwp_hook);
-        s_input_cwp_hook = NULL;
-    }
-    if (s_input_getmsg_hook) {
-        UnhookWindowsHookEx(s_input_getmsg_hook);
-        s_input_getmsg_hook = NULL;
-    }
+    rgss_safe_dispatch_unregister(input_guard_tick, NULL);
     if (s_watch_timer) {
         KillTimer(s_overlay, 1);
         s_watch_timer = 0;

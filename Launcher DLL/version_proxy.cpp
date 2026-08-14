@@ -3,6 +3,7 @@
 #include <psapi.h>
 #include "trainer_menu.h"
 #include "trainer_runtime.h"
+#include "rgss_safe_dispatch.h"
 #include "options/opt_pause.h"
 #include "options/opt_hp.h"
 #include "options/opt_pp.h"
@@ -61,7 +62,15 @@ static DWORD WINAPI main_thread(LPVOID) {
     if(!game) { release_trainer_singleton(); return 0; }
 
     HINSTANCE hinst=(HINSTANCE)g_trainer_module;
-    if (!menu_init(hinst,game)) { release_trainer_singleton(); return 0; }
+    if (!rgss_safe_dispatch_start(g_trainer_module, game, 15000)) {
+        release_trainer_singleton();
+        return 0;
+    }
+    if (!menu_init(hinst,game)) {
+        rgss_safe_dispatch_shutdown();
+        release_trainer_singleton();
+        return 0;
+    }
 
     opt_pause_init(g_ini_path);
     opt_hp_init(g_ini_path);

@@ -2,7 +2,6 @@
 
 ## Fondations à consolider
 
-- Centraliser les multiples hooks de messages dans un seul répartiteur RGSS.
 - Ajouter une page d'état affichant version du jeu, statut de chaque wrapper et
   codes d'erreur du dézoom.
 - Ajouter sauvegarde de sécurité, aperçu des changements et bouton d'annulation
@@ -37,7 +36,8 @@
 
 ## Ordre conseillé
 
-1. Tests automatisés, sauvegardes de sécurité et répartiteur RGSS central.
+1. Étendre les tests automatisés et les sauvegardes de sécurité autour du
+   répartiteur RGSS central désormais en place.
 2. Inventaire et groupe complets en lecture seule.
 3. Édition transactionnelle avec validation et annulation.
 4. Téléportation/vol et options d'exploration.
@@ -46,4 +46,3 @@
 Les fonctions de combat et de sauvegarde sont volontairement placées après les
 fondations : une erreur y est plus susceptible de corrompre une partie ou de
 casser une mécanique scénarisée.
-
