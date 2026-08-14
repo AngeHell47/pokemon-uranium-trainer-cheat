@@ -50,6 +50,7 @@ aucun fichier `moves.txt` ni DLL auxiliaire n'est requis à l'utilisation.
   soin de l'équipe et vitesses de déplacement.
 - Argent, quantité de l'objet sélectionné et édition du premier Pokémon.
 - Dézoom logique de la carte en conservant la taille physique de la fenêtre.
+- Zoom avant/arrière directement en jeu avec la molette de la souris.
 
 Les clics reçus par l'overlay sont bloqués avant d'atteindre le jeu. Les limites
 de validation et les essais restant à effectuer en situation réelle sont

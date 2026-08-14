@@ -47,6 +47,7 @@ static const int MENU_LEFT_W  = 300;
 static const int MENU_RIGHT_W = 340;
 static const int MENU_GAP     = 8;
 static const int MENU_TOTAL_W = MENU_LEFT_W + MENU_GAP + MENU_RIGHT_W;
+static const UINT WM_APP_GAME_ZOOM_WHEEL = WM_APP + 1;
 
 
 
@@ -1458,6 +1459,23 @@ static void apply_slider(int i, int val, bool commit = true) {
     InvalidateRect(s_overlay, NULL, FALSE);
 }
 
+static void apply_game_zoom_wheel(int direction) {
+    for (int i = 0; i < ITEM_COUNT; i++) {
+        if (g_items[i].type != ITEM_TYPE_SLIDER ||
+            g_items[i].on_slide != opt_zoom_apply ||
+            !g_items[i].slider_val) {
+            continue;
+        }
+
+        const int step = 30;
+
+        // La valeur represente le pourcentage de dezoom : la molette vers le
+        // haut diminue donc cette valeur (zoom avant), et inversement.
+        apply_slider(i, *g_items[i].slider_val - direction * step);
+        return;
+    }
+}
+
 static void commit_qty_edit() {
     if (!s_qty_editing) return;
     s_qty_editing = false;
@@ -1631,6 +1649,10 @@ static bool partymon_on_keydown(WPARAM vk) {
 
 static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
+    case WM_APP_GAME_ZOOM_WHEEL:
+        apply_game_zoom_wheel(wp != 0 ? 1 : -1);
+        return 0;
+
     case WM_NCHITTEST:
         // Hors contexte RGSS, l'overlay topmost reste visible mais ne doit
         // intercepter aucun clic destine a une autre application.
@@ -2181,6 +2203,18 @@ static bool overlay_contains_screen_point(const POINT& pt) {
     return GetWindowRect(s_overlay, &rc) && PtInRect(&rc, pt) != FALSE;
 }
 
+static bool game_client_contains_screen_point(const POINT& pt) {
+    if (!s_game || !IsWindowVisible(s_game) || IsIconic(s_game)) return false;
+
+    POINT client_pt = pt;
+    RECT client_rc = {};
+    if (!ScreenToClient(s_game, &client_pt) ||
+        !GetClientRect(s_game, &client_rc)) {
+        return false;
+    }
+    return PtInRect(&client_rc, client_pt) != FALSE;
+}
+
 static WPARAM captured_mouse_key_state() {
     WPARAM state = 0;
     LONG buttons = InterlockedExchangeAdd(&s_mouse_buttons, 0);
@@ -2269,6 +2303,15 @@ static LRESULT CALLBACK MouseHook(int code, WPARAM wp, LPARAM lp) {
             PostMessageA(s_overlay, WM_MOUSEWHEEL, wheel,
                          MAKELPARAM((short)mouse->pt.x, (short)mouse->pt.y));
             return 1;
+        }
+
+        if (wp == WM_MOUSEWHEEL && game_client_contains_screen_point(mouse->pt)) {
+            const short wheel_delta = (short)HIWORD(mouse->mouseData);
+            if (wheel_delta != 0) {
+                PostMessageA(s_overlay, WM_APP_GAME_ZOOM_WHEEL,
+                             wheel_delta > 0 ? 1 : 0, 0);
+                return 1;
+            }
         }
 
         if (wp == WM_MOUSEHWHEEL && over_overlay) {
