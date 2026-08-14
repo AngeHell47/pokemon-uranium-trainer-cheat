@@ -2075,6 +2075,9 @@ static LRESULT CALLBACK KbdHook(int code, WPARAM wp, LPARAM lp) {
             (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN)) {
             if (kb->vkCode == VK_ESCAPE || kb->vkCode == VK_INSERT) {
                 s_noclip_key_capture = false;
+            } else if (kb->vkCode == VK_BACK || kb->vkCode == VK_DELETE) {
+                opt_noclip_set_hold_key(0);
+                s_noclip_key_capture = false;
             } else {
                 opt_noclip_set_hold_key((int)kb->vkCode);
                 s_noclip_key_capture = false;

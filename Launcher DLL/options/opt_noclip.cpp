@@ -32,7 +32,8 @@ static void build_ruby() {
         "      unless method_defined?(:__uranium_trainer_original_passable)\n"
         "        alias_method :__uranium_trainer_original_passable, :passable?\n"
         "        def passable?(x,y,d)\n"
-        "          held=(($__uranium_trainer_key_down.call($__uranium_trainer_noclip_key).to_i & 0x8000)!=0 rescue false)\n"
+        "          held=($__uranium_trainer_noclip_key==0 || "
+        "(($__uranium_trainer_key_down.call($__uranium_trainer_noclip_key).to_i & 0x8000)!=0 rescue false))\n"
         "          if $__uranium_trainer_noclip && held\n"
         "            previous=@through\n"
         "            begin\n"
@@ -89,7 +90,7 @@ void opt_noclip_init(const char* ini_path) {
     g_noclip = GetPrivateProfileIntA("Settings", "NoClip", 0, s_ini) != 0;
     int hold_key = GetPrivateProfileIntA(
         "Settings", "NoClipHoldKey", VK_CONTROL, s_ini);
-    if (hold_key < 1 || hold_key > 254) hold_key = VK_CONTROL;
+    if (hold_key < 0 || hold_key > 254) hold_key = VK_CONTROL;
     InterlockedExchange(&s_hold_key, hold_key);
     InterlockedExchange(&s_enabled, g_noclip ? 1 : 0);
     InterlockedExchange(&s_pending, 1);
@@ -123,7 +124,7 @@ void opt_noclip_set_hold_key(int virtual_key) {
     case VK_LSHIFT:   case VK_RSHIFT:   virtual_key = VK_SHIFT;   break;
     case VK_LMENU:    case VK_RMENU:    virtual_key = VK_MENU;    break;
     }
-    if (virtual_key < 1 || virtual_key > 254) return;
+    if (virtual_key < 0 || virtual_key > 254) return;
 
     InterlockedExchange(&s_hold_key, virtual_key);
     char value[16];
@@ -142,6 +143,7 @@ void opt_noclip_get_hold_key_name(char* buffer, int capacity) {
     const char* fixed = NULL;
     const int hold_key = opt_noclip_get_hold_key();
     switch (hold_key) {
+    case 0:          fixed = "none"; break;
     case VK_CONTROL: fixed = "CTRL"; break;
     case VK_SHIFT:   fixed = "SHIFT"; break;
     case VK_MENU:    fixed = "ALT"; break;
