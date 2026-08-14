@@ -4,6 +4,7 @@
 #include "options/opt_pp.h"
 #include "options/opt_capture.h"
 #include "options/opt_egghatch.h"
+#include "options/opt_hmforget.h"
 //#include "options/opt_ohk.h"
 #include "options/opt_money.h"
 #include "options/opt_bagitem.h"
@@ -127,6 +128,7 @@ struct QuickToggle {
 static QuickToggle s_quick_toggles[] = {
     { "Capture garantie", &g_capture_guaranteed, opt_capture_toggle },
     { "Eclosion instantanee", &g_egg_hatch_instant, opt_egghatch_toggle },
+    { "CS effacables", &g_hm_forget_enabled, opt_hmforget_toggle },
 };
 
 static const int QUICK_TOGGLE_COUNT =
