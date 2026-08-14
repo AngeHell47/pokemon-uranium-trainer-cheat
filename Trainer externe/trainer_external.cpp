@@ -516,6 +516,10 @@ void launch_game_and_load(HWND window) {
     set_status(window,
         L"Jeu lance : intro supprimee et sauvegarde par defaut chargee directement.",
         RGB(21, 128, 61));
+
+    // inject_payload ne reussit qu'une fois l'overlay initialise et detecte.
+    // Le launcher n'est alors plus necessaire : le trainer vit dans le jeu.
+    PostMessageW(window, WM_CLOSE, 0, 0);
 }
 
 void attach_selected_process(HWND window) {
@@ -541,6 +545,9 @@ void attach_selected_process(HWND window) {
         L"Connecte. Le menu s'ouvre automatiquement; Inser permet de le masquer ou l'afficher.",
         RGB(21, 128, 61));
     SetWindowTextW(g_attach_button, L"Connecte");
+
+    // Fermer seulement apres confirmation que le trainer est entierement pret.
+    PostMessageW(window, WM_CLOSE, 0, 0);
 }
 
 void set_control_font(HWND control) {

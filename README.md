@@ -15,6 +15,9 @@ thread. Aucun `version.dll` ne doit être copié à côté du jeu.
    `[Jeu]` puis cliquer sur **Connecter au jeu sélectionné**.
 4. Utiliser `Inser` pour masquer ou réafficher l'overlay.
 
+Une fois l'injection confirmée et l'overlay initialisé, le launcher se ferme
+automatiquement. En cas d'échec, il reste ouvert et affiche le message d'erreur.
+
 Le lancement direct est éphémère : il n'écrit aucun réglage persistant et ne
 change pas le comportement d'un démarrage normal de `Uranium.exe`.
 
