@@ -374,7 +374,14 @@ bool inject_payload(DWORD pid, const std::wstring& payload_path, std::wstring& e
         return false;
     }
 
-    const uintptr_t load_library = remote_load_library_address(pid);
+    // Juste apres CreateProcess, RGSS peut etre visible pendant que le snapshot
+    // des modules systeme du processus est encore transitoire. Attendre
+    // brievement evite un faux echec de LoadLibraryW au lancement direct.
+    uintptr_t load_library = 0;
+    for (int attempt = 0; attempt < 100 && !load_library; ++attempt) {
+        load_library = remote_load_library_address(pid);
+        if (!load_library) Sleep(20);
+    }
     if (!load_library) {
         CloseHandle(process);
         error = L"Impossible de localiser LoadLibraryW dans le processus cible.";

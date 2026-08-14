@@ -10,6 +10,10 @@ Utilisation :
 4. Le menu s'ouvre automatiquement au-dessus du jeu.
 5. La touche Inser masque ou reaffiche le menu.
 
+No-clip : active l'option, puis maintiens la touche affichee dans le petit
+bouton (CTRL par defaut). Clique sur ce bouton et presse une autre touche pour
+changer le raccourci ; le choix est memorise dans trainer.ini.
+
 Le chargement direct ne modifie aucun reglage persistant : lancer Uranium.exe
 normalement conserve l'intro habituelle.
 

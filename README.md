@@ -42,8 +42,8 @@ aucun fichier `moves.txt` ni DLL auxiliaire n'est requis à l'utilisation.
 - Démarrage direct sur la sauvegarde, sans intro ni simulation de saisie.
 - God mode à HP réels et PP infinis pour les Pokémon du joueur.
 - Météo et heure forcées, réversibles sans modifier leur état sauvegardé.
-- Noclip en maintenant `Ctrl`, blocage des rencontres, soin de l'équipe et
-  vitesses de déplacement.
+- Noclip uniquement pendant le maintien d'une touche configurable (`Ctrl` par
+  défaut), blocage des rencontres, soin de l'équipe et vitesses de déplacement.
 - Argent, quantité de l'objet sélectionné et édition du premier Pokémon.
 - Dézoom logique de la carte en conservant la taille physique de la fenêtre.
 

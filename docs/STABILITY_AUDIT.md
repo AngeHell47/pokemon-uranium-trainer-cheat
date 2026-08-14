@@ -16,7 +16,7 @@ seule le comportement d'un combat complet.
 | Heure | Wrapper unique de `pbGetTimeNow`, délégation native sur OFF ; caches jour/nuit invalidés uniquement au changement | Les événements dépendants de l'heure doivent être testés individuellement | 00 h, midi, 23 h 59, OFF, changement de carte |
 | Argent | Setter natif, limite `999999`, lecture séparée des écritures | Modification volontairement sauvegardable | Valeurs 0/max, achats et sauvegarde |
 | Sac | `pbStoreItem`/`pbDeleteItem`, limite native 99, ID+quantité figés dans une FIFO | L'élément sélectionné peut changer après suppression à 0 | 0, 1, 99, poche pleine, objet clé |
-| Noclip | Surclasse temporairement `@through` pendant `passable?` seulement si `Ctrl` est maintenu, puis restaure l'état original | Les limites externes de carte restent actives | Murs, événements, portes, bords de carte, état scripted-through |
+| Noclip | Lit directement l'état physique Windows de la touche configurable (`Ctrl` par défaut), surclasse temporairement `@through` pendant `passable?`, puis restaure l'état original | Les limites externes de carte restent actives ; `Inser` et `Échap` sont réservées par le menu lors de la saisie du raccourci | Murs, événements, portes, bords de carte, état scripted-through |
 | Sans rencontres | Wrapper de `PokemonEncounters#pbCanEncounter?`, sans toucher à la sauvegarde | N'empêche pas les combats déclenchés par script | Herbes/grottes/surf, ON puis OFF |
 | Vitesse joueur | Appliquée au dernier point avant le calcul de distance, `Game_Character#update_move`, avec retry temporisé jusqu'à acquittement | Les routes forcées gardent leur vitesse de script | Marche/course/surf/vélo/glace, toutes valeurs 1–8 |
 | Dézoom | Dimensions logiques 4:3 + facteur inverse ; cache du sol et translation rapide des tuiles ; événements lointains en veille mais tous les sprites visibles actualisés | Le vide hors des limites d'une carte devient visible près d'un bord ; les cartes à très nombreux autotiles animés restent à qualifier | Carte réelle, déplacements/transferts, menu, combat, 100/133/187/200/300/400/500 % |
@@ -29,6 +29,9 @@ seule le comportement d'un combat complet.
   d'intro ou de sélection affichée, arrivée directe sur `Scene_Map`, overlay
   différé jusqu'à la carte et aucune boîte d'erreur après stabilisation. Un
   lancement normal sans marqueur affiche toujours l'intro complète.
+- No-clip validé sur une vraie carte : franchissement uniquement pendant le
+  maintien de la touche, changement par le bouton compact et prise en compte
+  immédiate du nouveau raccourci.
 - Les empreintes SHA-256 de `Uranium.rxdata` et
   `Uranium_autosave.rxdata` sont restées strictement identiques avant/après le
   smoke test de chargement direct.
@@ -88,6 +91,9 @@ très chargées en autotiles animés restent à qualifier plus longuement.
 - Migration de toutes les options du build vers un répartiteur
   `Graphics.update` unique ; `opt_ohk.cpp`, encore historique, reste exclu du
   payload.
+- Remplacement de la lecture no-clip via `Input.getstate` par
+  `GetAsyncKeyState`, avec bouton de raccourci configurable et persistance dans
+  `trainer.ini`.
 
 ## Incident C0000005 du 14 août 2026
 

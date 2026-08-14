@@ -69,7 +69,7 @@ MenuItem g_items[] = {
     //{ "One Hit Kill", ITEM_TYPE_TOGGLE,
     //  &g_ohk_lock, opt_ohk_toggle, NULL,0,0,NULL },
 	  
-    { "No-clip (maintenir CTRL)", ITEM_TYPE_TOGGLE,
+    { "No-clip", ITEM_TYPE_TOGGLE,
       &g_noclip, opt_noclip_toggle, NULL,0,0,NULL },
 	  
     { "Sans rencontres sauvages", ITEM_TYPE_TOGGLE,
@@ -157,7 +157,7 @@ static HHOOK s_kbd_hook      = NULL;
 static HHOOK s_mouse_hook    = NULL;
 static LONG  s_mouse_buttons = 0;
 static volatile LONG s_block_game_mouse = 0;
-// 0=aucune capture, 1=navigation du menu, 2=edition de texte/quantite.
+// 0=aucune capture, 1=navigation du menu, 2=edition/saisie de raccourci.
 static volatile LONG s_block_game_keyboard = 0;
 static volatile LONG s_input_guard_pending = 0;
 static volatile LONG s_input_guard_installed = 0;
@@ -169,6 +169,7 @@ static bool  s_slider_drag   = false;
 static int   s_slider_idx    = -1;
 static int   s_slider_start_value = 0;
 static bool  s_qty_editing   = false;
+static bool  s_noclip_key_capture = false;
 static char  s_qty_buf[8]    = "0";
 static int   s_qty_len       = 1;
 static int   s_qty_edit_item_id = 0;
@@ -178,6 +179,21 @@ static DWORD s_heal_flash_until = 0;  // GetTickCount() until which to show flas
 static bool menu_keyboard_should_capture();
 static void cancel_overlay_mouse_interaction();
 static bool overlay_contains_screen_point(const POINT& pt);
+
+static bool is_noclip_item(int index) {
+    return index >= 0 && index < ITEM_COUNT &&
+           g_items[index].type == ITEM_TYPE_TOGGLE &&
+           g_items[index].on_toggle == opt_noclip_toggle;
+}
+
+static RECT noclip_key_rect(int index) {
+    const int y = item_y(index);
+    RECT result = {MENU_LEFT_W - 122, y + 6,
+                   MENU_LEFT_W - 64, y + ITEM_H - 6};
+    return result;
+}
+
+static bool menu_has_keyboard_editor();
 
 // Uranium lit les boutons directement avec GetAsyncKeyState. L'overlay recoit
 // les messages Windows normalement, et ce wrapper masque l'etat physique au
@@ -263,6 +279,9 @@ enum EditField {
 
 static EditField s_pm_field = EF_NONE;
 static bool s_pm_name_edit  = false;
+static bool menu_has_keyboard_editor() {
+    return s_pm_name_edit || s_qty_editing || s_noclip_key_capture;
+}
 // Pokemon Uranium limite nativement les surnoms a 11 caracteres.
 static char s_pm_name_buf[12] = {0};
 
@@ -752,6 +771,7 @@ static void cancel_overlay_mouse_interaction() {
     InterlockedExchange(&s_mouse_buttons, 0);
     InterlockedExchange(&s_block_game_mouse, 0);
     InterlockedExchange(&s_block_game_keyboard, 0);
+    s_noclip_key_capture = false;
     s_dragging_menu = false;
     s_drag_ox = 0;
     s_drag_oy = 0;
@@ -784,7 +804,7 @@ static void sync_overlay_to_game() {
 
     ShowWindow(s_overlay, SW_SHOWNOACTIVATE);
     InterlockedExchange(&s_block_game_keyboard,
-                        (s_pm_name_edit || s_qty_editing) ? 2 : 1);
+                        menu_has_keyboard_editor() ? 2 : 1);
 
     RECT gr;
     GetWindowRect(s_game, &gr);
@@ -1096,8 +1116,40 @@ static void paint(HWND hw) {
         SetTextColor(mem, COL_TEXT);
 
         if (g_items[i].type == ITEM_TYPE_TOGGLE) {
-            RECT lrc = {PAD, y, MENU_LEFT_W - 70, y + ITEM_H};
+            const bool noclip_item = is_noclip_item(i);
+            RECT lrc = {PAD, y,
+                        noclip_item ? MENU_LEFT_W - 128 : MENU_LEFT_W - 70,
+                        y + ITEM_H};
             DrawTextA(mem, g_items[i].label, -1, &lrc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+            if (noclip_item) {
+                RECT krc = noclip_key_rect(i);
+                const COLORREF key_color = s_noclip_key_capture
+                    ? RGB(230,170,60) : COL_BORDER;
+                HBRUSH kbg = CreateSolidBrush(RGB(25,25,40));
+                FillRect(mem, &krc, kbg);
+                DeleteObject(kbg);
+                HPEN kpen = CreatePen(PS_SOLID, 1, key_color);
+                HPEN old_kpen = (HPEN)SelectObject(mem, kpen);
+                HBRUSH old_kbrush = (HBRUSH)SelectObject(mem, nb);
+                Rectangle(mem, krc.left, krc.top, krc.right, krc.bottom);
+                SelectObject(mem, old_kpen);
+                SelectObject(mem, old_kbrush);
+                DeleteObject(kpen);
+
+                char key_name[32];
+                if (s_noclip_key_capture)
+                    lstrcpyA(key_name, "...");
+                else
+                    opt_noclip_get_hold_key_name(key_name, sizeof(key_name));
+                SetTextColor(mem, s_noclip_key_capture ? key_color : COL_TEXT);
+                SelectObject(mem, fS);
+                RECT key_text = {krc.left + 2, krc.top,
+                                 krc.right - 2, krc.bottom};
+                DrawTextA(mem, key_name, -1, &key_text,
+                          DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                SelectObject(mem, fN);
+            }
 
             bool val = *g_items[i].value;
             RECT brc = {MENU_LEFT_W - 58, y + 8, MENU_LEFT_W - PAD, y + ITEM_H - 8};
@@ -1385,6 +1437,13 @@ static bool is_in_weather_box(int i, int x, int y) {
     return x >= qx1 && x <= qx2 && y >= qy1 && y <= qy2;
 }
 
+static bool is_in_noclip_key_box(int i, int x, int y) {
+    if (!is_noclip_item(i)) return false;
+    RECT box = noclip_key_rect(i);
+    return x >= box.left && x <= box.right &&
+           y >= box.top && y <= box.bottom;
+}
+
 
 // ------------------------------------------------------------
 // ACTIONS
@@ -1666,9 +1725,18 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
         }
     
         int i = item_at_y(y);
+        if (!(i >= 0 && is_in_noclip_key_box(i, x, y)))
+            s_noclip_key_capture = false;
         if (i >= 0) {
             if (g_items[i].type == ITEM_TYPE_TOGGLE) {
-                toggle_item(i);
+                if (is_in_noclip_key_box(i, x, y)) {
+                    s_noclip_key_capture = true;
+                    InterlockedExchange(&s_block_game_keyboard, 2);
+                    InvalidateRect(hw, NULL, FALSE);
+                } else {
+                    s_noclip_key_capture = false;
+                    toggle_item(i);
+                }
             }
             else if (g_items[i].type == ITEM_TYPE_SLIDER && is_in_slider_track(i, x, y)) {
                 s_slider_drag = true;
@@ -2002,6 +2070,20 @@ static LRESULT CALLBACK KbdHook(int code, WPARAM wp, LPARAM lp) {
     if (code == HC_ACTION) {
         KBDLLHOOKSTRUCT* kb = (KBDLLHOOKSTRUCT*)lp;
 
+        if (s_open && s_noclip_key_capture &&
+            menu_keyboard_should_capture() &&
+            (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN)) {
+            if (kb->vkCode == VK_ESCAPE || kb->vkCode == VK_INSERT) {
+                s_noclip_key_capture = false;
+            } else {
+                opt_noclip_set_hold_key((int)kb->vkCode);
+                s_noclip_key_capture = false;
+            }
+            InterlockedExchange(&s_block_game_keyboard, 1);
+            if (s_overlay) InvalidateRect(s_overlay, NULL, FALSE);
+            return 1;
+        }
+
         // Insert ne pilote le trainer que lorsque le jeu (ou son overlay) est
         // actif. Il ne doit pas voler cette touche dans une autre application.
         if (kb->vkCode == VK_INSERT && wp == WM_KEYDOWN) {
@@ -2019,7 +2101,7 @@ static LRESULT CALLBACK KbdHook(int code, WPARAM wp, LPARAM lp) {
         }
 
         InterlockedExchange(&s_block_game_keyboard,
-                            (s_pm_name_edit || s_qty_editing) ? 2 : 1);
+                            menu_has_keyboard_editor() ? 2 : 1);
 
         if (!s_qty_editing && (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN)) {
             // Si on édite le nom du Pokémon, on capture TOUT
@@ -2242,7 +2324,7 @@ void menu_open() {
     s_open = true;
     s_hovered = 0;
     InterlockedExchange(&s_block_game_keyboard,
-                        (s_pm_name_edit || s_qty_editing) ? 2 : 1);
+                        menu_has_keyboard_editor() ? 2 : 1);
 
     POINT cursor = {};
     if (GetCursorPos(&cursor) && overlay_contains_screen_point(cursor))
@@ -2267,6 +2349,7 @@ bool menu_init(HINSTANCE hinst, HWND game_hwnd) {
     InterlockedExchange(&s_block_game_keyboard, 0);
     InterlockedExchange(&s_input_guard_pending, 0);
     InterlockedExchange(&s_input_guard_installed, 0);
+    s_noclip_key_capture = false;
 
     movesdb_load("moves.txt");
 
