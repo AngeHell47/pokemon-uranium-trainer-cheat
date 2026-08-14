@@ -51,6 +51,11 @@ aucun fichier `moves.txt` ni DLL auxiliaire n'est requis à l'utilisation.
 - Noclip pendant le maintien d'une touche configurable (`Ctrl` par défaut), ou
   actif en permanence si aucune touche n'est assignée, blocage des rencontres,
   soin de l'équipe et vitesses de déplacement.
+- Vitesse globale x1 à x5, active pendant le maintien d'une touche configurable
+  ou en permanence sans touche (comportement par défaut). Les ticks RGSS sont accélérés tandis que le
+  rendu adapte sa cadence jusqu'à 120 FPS au maximum, sans falsifier l'horloge
+  Windows. Ce plafond affiche davantage de positions intermédiaires pendant les
+  déplacements sans multiplier inutilement le rendu.
 - Argent et deux fenêtres autonomes : inventaire complet par poche/catalogue,
   plus équipe et boîtes avec création, suppression et édition détaillée des
   Pokémon (PV, IV/EV, nature, objet tenu, attaques, PP et provenance).

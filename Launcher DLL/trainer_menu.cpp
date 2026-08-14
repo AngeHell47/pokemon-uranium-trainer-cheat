@@ -8,6 +8,7 @@
 //#include "options/opt_ohk.h"
 #include "options/opt_money.h"
 #include "options/opt_noclip.h"
+#include "options/opt_gamespeed.h"
 #include "options/opt_speed.h"
 #include "options/opt_noenc.h"
 #include "options/opt_time.h"
@@ -82,6 +83,12 @@ MenuItem g_items[] = {
 	  
     { "No-clip", ITEM_TYPE_TOGGLE,
       &g_noclip, opt_noclip_toggle, NULL,0,0,NULL },
+
+    { "Vitesse globale", ITEM_TYPE_TOGGLE,
+      &g_game_speed_enabled, opt_gamespeed_toggle, NULL,0,0,NULL },
+
+    { "Multiplicateur du jeu (x)", ITEM_TYPE_SLIDER,
+      NULL,NULL, &g_game_speed_factor,1,5,opt_gamespeed_apply },
 	  
     { "Sans rencontres sauvages", ITEM_TYPE_TOGGLE,
       &g_noenc, opt_noenc_toggle, NULL,0,0,NULL },
@@ -117,14 +124,6 @@ MenuItem g_items[] = {
     { "Vitesse de velo", ITEM_TYPE_SLIDER,
       NULL,NULL, &g_speed_bike_value,1,8,opt_speed_apply_bike },
 	  
-    //{ "Speedhack", ITEM_TYPE_TOGGLE,
-    //  &g_speedhack_enabled, opt_speedhack_toggle, NULL,0,0,NULL },
-	//
-    //{ "Vitesse du jeu", ITEM_TYPE_SLIDER,
-    //  NULL,NULL, &g_speedhack_value10,0,100,opt_speedhack_apply },
-
-
-
 };
 
 const int ITEM_COUNT = sizeof(g_items) / sizeof(g_items[0]);
@@ -148,7 +147,7 @@ static const int QUICK_TOGGLE_TOP = TITLE_H + 10;
 // Options du menu principal affichees dans la colonne "Options rapides".
 // Les indices correspondent a God mode, PP, noclip, rencontres, heure,
 // meteo, soin et argent dans g_items.
-static const int s_quick_menu_items[] = {1, 2, 3, 4, 5, 6, 7, 8};
+static const int s_quick_menu_items[] = {1, 2, 3, 6, 7, 8, 9, 10};
 static const int QUICK_MENU_ITEM_COUNT =
     sizeof(s_quick_menu_items) / sizeof(s_quick_menu_items[0]);
 
@@ -254,7 +253,7 @@ static bool  s_slider_drag   = false;
 static int   s_slider_idx    = -1;
 static int   s_slider_start_value = 0;
 static bool  s_slider_in_quick_column = false;
-static bool  s_noclip_key_capture = false;
+static int   s_hold_key_capture_item = -1;
 static UINT_PTR s_watch_timer = 0;
 static DWORD s_heal_flash_until = 0;  // GetTickCount() until which to show flash
 
@@ -269,7 +268,31 @@ static bool is_noclip_item(int index) {
            g_items[index].on_toggle == opt_noclip_toggle;
 }
 
-static RECT noclip_key_rect(int index) {
+static bool is_gamespeed_item(int index) {
+    return index >= 0 && index < ITEM_COUNT &&
+           g_items[index].type == ITEM_TYPE_TOGGLE &&
+           g_items[index].on_toggle == opt_gamespeed_toggle;
+}
+
+static bool is_hold_key_item(int index) {
+    return is_noclip_item(index) || is_gamespeed_item(index);
+}
+
+static void get_hold_key_name(int index, char* buffer, int capacity) {
+    if (is_gamespeed_item(index))
+        opt_gamespeed_get_hold_key_name(buffer, capacity);
+    else
+        opt_noclip_get_hold_key_name(buffer, capacity);
+}
+
+static void set_hold_key(int index, int virtual_key) {
+    if (is_gamespeed_item(index))
+        opt_gamespeed_set_hold_key(virtual_key);
+    else if (is_noclip_item(index))
+        opt_noclip_set_hold_key(virtual_key);
+}
+
+static RECT hold_key_rect(int index) {
     const int y = item_y(index);
     RECT result = {MENU_LEFT_W - 122, y + 6,
                    MENU_LEFT_W - 64, y + ITEM_H - 6};
@@ -344,7 +367,7 @@ static void post_input_guard_tick() {
 }
 
 static bool menu_has_keyboard_editor() {
-    return s_noclip_key_capture || trainer_editors_any_open();
+    return s_hold_key_capture_item >= 0 || trainer_editors_any_open();
 }
 
 static bool ptin(const RECT& r, int x, int y) {
@@ -646,7 +669,7 @@ static void cancel_overlay_mouse_interaction() {
     InterlockedExchange(&s_mouse_buttons, 0);
     InterlockedExchange(&s_block_game_mouse, 0);
     InterlockedExchange(&s_block_game_keyboard, 0);
-    s_noclip_key_capture = false;
+    s_hold_key_capture_item = -1;
     s_dragging_menu = false;
     s_drag_ox = 0;
     s_drag_oy = 0;
@@ -801,7 +824,7 @@ static void paint_quick_menu_items(HDC mem, HFONT fN, HFONT fB, HFONT fS) {
                 FillRect(mem, &key, key_bg);
                 DeleteObject(key_bg);
                 HPEN key_pen = CreatePen(PS_SOLID, 1,
-                    s_noclip_key_capture ? RGB(230,170,60) : COL_BORDER);
+                    s_hold_key_capture_item == item_index ? RGB(230,170,60) : COL_BORDER);
                 HPEN old_pen = (HPEN)SelectObject(mem, key_pen);
                 HBRUSH old_brush = (HBRUSH)SelectObject(mem, null_brush);
                 Rectangle(mem, key.left, key.top, key.right, key.bottom);
@@ -809,7 +832,7 @@ static void paint_quick_menu_items(HDC mem, HFONT fN, HFONT fB, HFONT fS) {
                 SelectObject(mem, old_brush);
                 DeleteObject(key_pen);
                 char key_name[32] = {};
-                if (s_noclip_key_capture) lstrcpyA(key_name, "...");
+                if (s_hold_key_capture_item == item_index) lstrcpyA(key_name, "...");
                 else opt_noclip_get_hold_key_name(key_name, sizeof(key_name));
                 SelectObject(mem, fS);
                 DrawTextA(mem, key_name, -1, &key,
@@ -1029,15 +1052,15 @@ static void paint(HWND hw) {
         SetTextColor(mem, COL_TEXT);
 
         if (g_items[i].type == ITEM_TYPE_TOGGLE) {
-            const bool noclip_item = is_noclip_item(i);
+            const bool noclip_item = is_hold_key_item(i);
             RECT lrc = {PAD, y,
                         noclip_item ? MENU_LEFT_W - 128 : MENU_LEFT_W - 70,
                         y + ITEM_H};
             DrawTextA(mem, g_items[i].label, -1, &lrc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
             if (noclip_item) {
-                RECT krc = noclip_key_rect(i);
-                const COLORREF key_color = s_noclip_key_capture
+                RECT krc = hold_key_rect(i);
+                const COLORREF key_color = s_hold_key_capture_item == i
                     ? RGB(230,170,60) : COL_BORDER;
                 HBRUSH kbg = CreateSolidBrush(RGB(25,25,40));
                 FillRect(mem, &krc, kbg);
@@ -1051,11 +1074,11 @@ static void paint(HWND hw) {
                 DeleteObject(kpen);
 
                 char key_name[32];
-                if (s_noclip_key_capture)
+                if (s_hold_key_capture_item == i)
                     lstrcpyA(key_name, "...");
                 else
-                    opt_noclip_get_hold_key_name(key_name, sizeof(key_name));
-                SetTextColor(mem, s_noclip_key_capture ? key_color : COL_TEXT);
+                    get_hold_key_name(i, key_name, sizeof(key_name));
+                SetTextColor(mem, s_hold_key_capture_item == i ? key_color : COL_TEXT);
                 SelectObject(mem, fS);
                 RECT key_text = {krc.left + 2, krc.top,
                                  krc.right - 2, krc.bottom};
@@ -1195,7 +1218,10 @@ static void paint(HWND hw) {
             int bh  = 14;
 
             char vbuf[32];
-            wsprintfA(vbuf, "%d", val);
+            if (g_items[i].on_slide == opt_gamespeed_apply)
+                wsprintfA(vbuf, "x%d", val);
+            else
+                wsprintfA(vbuf, "%d", val);
 
             RECT vrc = {MENU_LEFT_W - 90, y, MENU_LEFT_W - PAD, y + ITEM_H};
             SetTextColor(mem, COL_SLIDER);
@@ -1347,9 +1373,9 @@ static bool is_in_weather_box(int i, int x, int y) {
     return x >= qx1 && x <= qx2 && y >= qy1 && y <= qy2;
 }
 
-static bool is_in_noclip_key_box(int i, int x, int y) {
-    if (!is_noclip_item(i)) return false;
-    RECT box = noclip_key_rect(i);
+static bool is_in_hold_key_box(int i, int x, int y) {
+    if (!is_hold_key_item(i)) return false;
+    RECT box = hold_key_rect(i);
     return x >= box.left && x <= box.right &&
            y >= box.top && y <= box.bottom;
 }
@@ -1660,14 +1686,14 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
                 const int slot = quick_menu_slot_from_item(item);
                 const bool in_noclip_key = is_noclip_item(item) &&
                     ptin(quick_noclip_key_rect(slot), x, y);
-                if (!in_noclip_key) s_noclip_key_capture = false;
+                if (!in_noclip_key) s_hold_key_capture_item = -1;
                 if (g_items[item].type == ITEM_TYPE_TOGGLE) {
                     if (in_noclip_key) {
-                        s_noclip_key_capture = true;
+                        s_hold_key_capture_item = item;
                         InterlockedExchange(&s_block_game_keyboard, 2);
                         InvalidateRect(hw, NULL, FALSE);
                     } else {
-                        s_noclip_key_capture = false;
+                        s_hold_key_capture_item = -1;
                         toggle_item(item);
                     }
                 } else if (g_items[item].type == ITEM_TYPE_TIME &&
@@ -1702,16 +1728,16 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
         }
     
         int i = item_at_y(y);
-        if (!(i >= 0 && is_in_noclip_key_box(i, x, y)))
-            s_noclip_key_capture = false;
+        if (!(i >= 0 && is_in_hold_key_box(i, x, y)))
+            s_hold_key_capture_item = -1;
         if (i >= 0) {
             if (g_items[i].type == ITEM_TYPE_TOGGLE) {
-                if (is_in_noclip_key_box(i, x, y)) {
-                    s_noclip_key_capture = true;
+                if (is_in_hold_key_box(i, x, y)) {
+                    s_hold_key_capture_item = i;
                     InterlockedExchange(&s_block_game_keyboard, 2);
                     InvalidateRect(hw, NULL, FALSE);
                 } else {
-                    s_noclip_key_capture = false;
+                    s_hold_key_capture_item = -1;
                     toggle_item(i);
                 }
             }
@@ -2023,18 +2049,18 @@ static LRESULT CALLBACK KbdHook(int code, WPARAM wp, LPARAM lp) {
     if (code == HC_ACTION) {
         KBDLLHOOKSTRUCT* kb = (KBDLLHOOKSTRUCT*)lp;
 
-        if (s_open && s_noclip_key_capture &&
+        if (s_open && s_hold_key_capture_item >= 0 &&
             menu_keyboard_should_capture() &&
             (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN)) {
             if (kb->vkCode == VK_INSERT) {
-                s_noclip_key_capture = false;
+                s_hold_key_capture_item = -1;
             } else if (kb->vkCode == VK_ESCAPE ||
                        kb->vkCode == VK_BACK || kb->vkCode == VK_DELETE) {
-                opt_noclip_set_hold_key(0);
-                s_noclip_key_capture = false;
+                set_hold_key(s_hold_key_capture_item, 0);
+                s_hold_key_capture_item = -1;
             } else {
-                opt_noclip_set_hold_key((int)kb->vkCode);
-                s_noclip_key_capture = false;
+                set_hold_key(s_hold_key_capture_item, (int)kb->vkCode);
+                s_hold_key_capture_item = -1;
             }
             InterlockedExchange(&s_block_game_keyboard, 1);
             if (s_overlay) InvalidateRect(s_overlay, NULL, FALSE);
@@ -2352,7 +2378,7 @@ bool menu_init(HINSTANCE hinst, HWND game_hwnd) {
     InterlockedExchange(&s_block_game_keyboard, 0);
     InterlockedExchange(&s_input_guard_pending, 0);
     InterlockedExchange(&s_input_guard_installed, 0);
-    s_noclip_key_capture = false;
+    s_hold_key_capture_item = -1;
 
     movesdb_load("moves.txt");
 

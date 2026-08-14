@@ -120,9 +120,16 @@ n'a pas encore la matrice de validation simple/double combat, et le second pose
 un détour de cinq octets dans `timeGetTime` sans décodage d'instructions ni
 protocole de retrait équivalent au répartiteur RGSS.
 
+La vitesse globale active est implémentée séparément dans `opt_gamespeed.cpp`.
+Elle conserve plusieurs ticks logiques par image lorsque nécessaire, virtualise
+`Graphics.frame_count` et `Graphics.frame_rate`, puis augmente progressivement
+la cadence de rendu avec un plafond absolu de 120 FPS. Cela expose davantage de
+positions intermédiaires pendant les déplacements sans rendre cinq fois plus
+d'images. Elle ne modifie ni `timeGetTime` ni la cadence du processus entier.
+Les méthodes Ruby entourant le rendu, notamment les transitions spéciales,
+continuent d'être mises à jour à chaque tick logique.
+
 Pour KO en un coup ou un multiplicateur de dégâts, le prochain audit doit
 identifier le dernier point de réduction de HP et prouver le camp avec
 `pbOwnedByPlayer?`, y compris confusion, poison, recul, drain, dégâts de zone et
-combat double. Pour une accélération maintenue, une option limitée au mouvement
-du joueur peut réutiliser le wrapper `Game_Character#update_move`; une vraie
-vitesse globale exige un mécanisme d'horloge validé séparément.
+combat double.

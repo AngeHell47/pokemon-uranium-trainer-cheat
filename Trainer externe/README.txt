@@ -21,6 +21,11 @@ changer le raccourci. Presse Echap, Retour arriere ou Suppr pour n'assigner
 aucune touche : le no-clip reste alors actif en permanence tant que l'option
 est active. Le choix est memorise dans trainer.ini.
 
+Vitesse globale : choisis un multiplicateur x1 a x5 puis active l'option.
+Sans touche assignee (reglage par defaut), l'acceleration reste permanente.
+Clique sur le petit bouton de touche pour choisir un raccourci a maintenir ;
+Echap, Retour arriere ou Suppr restaure le mode sans touche.
+
 Le chargement direct ne modifie aucun reglage persistant : lancer Uranium.exe
 normalement conserve l'intro habituelle.
 

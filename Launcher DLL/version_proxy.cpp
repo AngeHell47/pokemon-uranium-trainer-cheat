@@ -14,6 +14,7 @@
 //#include "options/opt_ohk.h"
 #include "options/opt_money.h"
 #include "options/opt_noclip.h"
+#include "options/opt_gamespeed.h"
 #include "options/opt_speed.h"
 #include "options/opt_noenc.h"
 #include "options/opt_time.h"
@@ -93,6 +94,7 @@ static DWORD WINAPI main_thread(LPVOID) {
     //opt_ohk_init(g_ini_path);
     opt_money_init(g_ini_path);
     opt_noclip_init(g_ini_path);
+    opt_gamespeed_init(g_ini_path);
     opt_speed_init(g_ini_path);
     opt_noenc_init(g_ini_path);
 	opt_time_init(g_ini_path);
@@ -108,6 +110,7 @@ static DWORD WINAPI main_thread(LPVOID) {
     //opt_ohk_set_hwnd_and_start(game);
     opt_money_set_hwnd_and_start(game);
     opt_noclip_set_hwnd_and_start(game);
+    opt_gamespeed_set_hwnd_and_start(game);
     opt_speed_set_hwnd_and_start(game);
     opt_noenc_set_hwnd_and_start(game);
 	opt_time_set_hwnd_and_start(game);
