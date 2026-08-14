@@ -63,7 +63,8 @@ détaillés dans [l'audit de stabilité](docs/STABILITY_AUDIT.md).
 
 - `Trainer externe/` : sélecteur de processus, injection et empaquetage.
 - `Launcher DLL/` : payload, overlay et implémentation des options.
-- `docs/` : notes d'architecture, audit de stabilité et pistes futures.
+- `docs/` : architecture, audit de stabilité, feuille de route et
+  [points d'accroche Ruby](docs/GAME_SCRIPT_HOOKS.md) pour les futures options.
 
 Ce dépôt ne contient ni le jeu, ni ses données propriétaires, ni les artefacts
 de compilation.
