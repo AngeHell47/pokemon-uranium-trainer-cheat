@@ -27,7 +27,12 @@ static void build_ruby() {
         "        alias_method :__uranium_trainer_repair_original_pbReduceHP, :pbReduceHP\n"
         "      end\n"
         "      def __uranium_trainer_player_battler?\n"
-        "        @battle && @battle.pbOwnedByPlayer?(@index)\n"
+        // Ne pas se baser uniquement sur l'index de combat : certains
+        // combats scripts remappent les indices. La reference du Pokemon de
+        // la team du joueur reste en revanche la meme pendant le combat.
+        "        return false if !@pokemon || !$Trainer || !$Trainer.party\n"
+        "        $Trainer.party.each { |pkmn| return true if pkmn && pkmn.equal?(@pokemon) }\n"
+        "        false\n"
         "      rescue Exception\n"
         "        false\n"
         "      end\n"
@@ -44,7 +49,7 @@ static void build_ruby() {
         "      end\n"
         "      def pbReduceHPDamage(damage,attacker,opponent)\n"
         "        begin\n"
-        "          if $__uranium_trainer_hp_lock && opponent && @battle && @battle.pbOwnedByPlayer?(opponent.index)\n"
+        "          if $__uranium_trainer_hp_lock && opponent && opponent.__uranium_trainer_player_battler?\n"
         "            opponent.damagestate.calcdamage=0\n"
         "            opponent.damagestate.hplost=0\n"
         "            opponent.damagestate.substitute=false\n"

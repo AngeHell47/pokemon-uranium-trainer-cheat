@@ -28,22 +28,15 @@ static const char kUnlockFlyRuby[] =
 
 static const char kOpenPcRuby[] =
     "begin\n"
-    "  if defined?(Scene_Map) && defined?(StorageSystemPC)\n"
-    "    class Scene_Map\n"
-    "      unless instance_methods.collect { |m| m.to_s }.include?(\"__uranium_trainer_pc_original_update\")\n"
-    "        alias_method :__uranium_trainer_pc_original_update, :update\n"
-    "      end\n"
-    "      def update\n"
-    "        __uranium_trainer_pc_original_update\n"
-    "        if $__uranium_trainer_pc_pending\n"
-    "          $__uranium_trainer_pc_pending=false\n"
-    "          transferring=(defined?($game_temp) && $game_temp && ($game_temp.player_transferring rescue false))\n"
-    "          running=(defined?($game_system) && $game_system && ($game_system.map_interpreter.running? rescue false))\n"
-    "          StorageSystemPC.new.access if !transferring && !running\n"
-    "        end\n"
-    "      end\n"
-    "    end\n"
-    "    $__uranium_trainer_pc_pending=($scene && $scene.is_a?(Scene_Map))\n"
+    // Le PC etait auparavant execute depuis le callback graphique du trainer.
+    // Il pouvait alors quitter son dialogue sans liberer le joueur. On le place
+    // dans l'interpreteur principal, comme un evenement de carte normal :
+    // l'interpreteur reste occupe pendant le PC puis se termine proprement.
+    "  interpreter=(pbMapInterpreter rescue nil)\n"
+    "  interpreter=($game_system.map_interpreter rescue nil) if !interpreter\n"
+    "  if defined?(Scene_Map) && $scene && $scene.is_a?(Scene_Map) && interpreter && !interpreter.running? && defined?(RPG::EventCommand)\n"
+    "    commands=[RPG::EventCommand.new(355,0,['pbPokeCenterPC(true)']),RPG::EventCommand.new]\n"
+    "    interpreter.setup(commands,0)\n"
     "  end\n"
     "rescue Exception\n"
     "end\n";
