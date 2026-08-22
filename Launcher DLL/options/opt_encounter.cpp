@@ -25,6 +25,7 @@ static volatile LONG s_shiny_rate = kNativeShinyDenominator;
 static volatile LONG s_pending = 0;
 static volatile LONG s_installed = 0;
 static volatile LONG s_retry_started = 0;
+static LONG s_refresh_frames = 0;
 static char s_ruby[8192] = {};
 
 static void post_to_game() { rgss_safe_dispatch_notify(); }
@@ -121,7 +122,13 @@ static void build_ruby() {
 }
 
 static void __cdecl on_game_thread_tick(void*) {
-    if (InterlockedExchange(&s_pending, 0) == 0) return;
+    if (InterlockedExchange(&s_pending, 0) == 0) {
+        // Les scripts de rencontres sont recharges apres l'arrivee sur la
+        // carte dans certaines sauvegardes. Reposer les deux petits wrappers
+        // les rend disponibles quelle que soit la phase de chargement.
+        if (++s_refresh_frames < 30) return;
+    }
+    s_refresh_frames = 0;
     build_ruby();
     if (rgss_safe_eval(s_ruby) != 0) InterlockedExchange(&s_pending, 1);
 }
@@ -166,6 +173,7 @@ void opt_encounter_init(const char* ini_path) {
     InterlockedExchange(&s_shiny_rate, g_wild_shiny_rate);
     InterlockedExchange(&s_pending, 1);
     InterlockedExchange(&s_installed, 0);
+    s_refresh_frames = 0;
 }
 
 void opt_encounter_set_hwnd_and_start(HWND hwnd) {

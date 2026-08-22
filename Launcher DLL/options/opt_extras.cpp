@@ -28,10 +28,23 @@ static const char kUnlockFlyRuby[] =
 
 static const char kOpenPcRuby[] =
     "begin\n"
-    "  valid=defined?(Scene_Map) && $scene && $scene.is_a?(Scene_Map)\n"
-    "  transferring=(defined?($game_temp) && $game_temp && ($game_temp.player_transferring rescue false))\n"
-    "  running=(defined?($game_system) && $game_system && ($game_system.map_interpreter.running? rescue false))\n"
-    "  StorageSystemPC.new.access if valid && !transferring && !running && defined?(StorageSystemPC)\n"
+    "  if defined?(Scene_Map) && defined?(StorageSystemPC)\n"
+    "    class Scene_Map\n"
+    "      unless instance_methods.collect { |m| m.to_s }.include?(\"__uranium_trainer_pc_original_update\")\n"
+    "        alias_method :__uranium_trainer_pc_original_update, :update\n"
+    "      end\n"
+    "      def update\n"
+    "        __uranium_trainer_pc_original_update\n"
+    "        if $__uranium_trainer_pc_pending\n"
+    "          $__uranium_trainer_pc_pending=false\n"
+    "          transferring=(defined?($game_temp) && $game_temp && ($game_temp.player_transferring rescue false))\n"
+    "          running=(defined?($game_system) && $game_system && ($game_system.map_interpreter.running? rescue false))\n"
+    "          StorageSystemPC.new.access if !transferring && !running\n"
+    "        end\n"
+    "      end\n"
+    "    end\n"
+    "    $__uranium_trainer_pc_pending=($scene && $scene.is_a?(Scene_Map))\n"
+    "  end\n"
     "rescue Exception\n"
     "end\n";
 

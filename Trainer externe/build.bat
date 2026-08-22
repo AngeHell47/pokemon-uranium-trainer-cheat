@@ -28,6 +28,7 @@ cl /nologo /O1 /GS- /MT /LD /W4 /utf-8 /DTRAINER_EXTERNAL_PAYLOAD ^
   "%DLLSRC%\options\opt_startup.cpp" ^
   "%DLLSRC%\options\opt_pause.cpp" ^
   "%DLLSRC%\options\opt_hp.cpp" ^
+  "%DLLSRC%\options\opt_godmode_repair.cpp" ^
   "%DLLSRC%\options\opt_pp.cpp" ^
   "%DLLSRC%\options\opt_capture.cpp" ^
   "%DLLSRC%\options\opt_egghatch.cpp" ^

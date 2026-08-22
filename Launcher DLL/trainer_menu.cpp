@@ -1546,7 +1546,14 @@ static void trigger_action(int item) {
     s_action_confirmation_item = -1;
     s_action_confirmation_until = 0;
     g_items[item].on_action();
-    if (g_items[item].on_action == opt_extras_open_pc_trigger) menu_close();
+    if (g_items[item].on_action == opt_extras_open_pc_trigger) {
+        menu_close();
+        if (s_game) {
+            SetForegroundWindow(s_game);
+            SetActiveWindow(s_game);
+            SetFocus(s_game);
+        }
+    }
     s_heal_flash_until = now + 400;
     InvalidateRect(s_overlay, NULL, FALSE);
 }

@@ -7,6 +7,7 @@
 #include "options/opt_pause.h"
 #include "options/opt_startup.h"
 #include "options/opt_hp.h"
+#include "options/opt_godmode_repair.h"
 #include "options/opt_pp.h"
 #include "options/opt_capture.h"
 #include "options/opt_egghatch.h"
@@ -111,6 +112,11 @@ static DWORD WINAPI main_thread(LPVOID) {
 	//opt_speedhack_init(g_ini_path);
     opt_zoom_init(g_ini_path);
     opt_hp_set_hwnd_and_start(game);
+    if (!opt_godmode_repair_init()) {
+        rgss_safe_dispatch_shutdown();
+        release_trainer_singleton();
+        return 0;
+    }
     opt_pp_set_hwnd_and_start(game);
     opt_capture_set_hwnd_and_start(game);
     opt_egghatch_set_hwnd_and_start(game);
@@ -131,6 +137,7 @@ static DWORD WINAPI main_thread(LPVOID) {
     menu_open();
     if (g_trainer_ready) SetEvent(g_trainer_ready);
     menu_start_loop();
+    opt_godmode_repair_shutdown();
     opt_extras_shutdown();
     return 0;
 }
