@@ -35,8 +35,9 @@ static const char kOpenPcRuby[] =
     "rescue Exception\n"
     "end\n";
 
-// setSeen/setOwned maintiennent les tableaux internes du Pokedex (formes,
-// dernier sexe vu et shiny) a la place d'ecrire seulement une partie des ivars.
+// Cette version d'Uranium expose setSeen/setOwned par ID d'espece. Les tableaux
+// de formes et shiny sont completes explicitement, dans le meme format que
+// BW_PokedexNestForm, plutot que de se fier a une instance Pokemon temporaire.
 static const char kCompleteDexRuby[] =
     "begin\n"
     "  trainer=(defined?($Trainer) ? $Trainer : nil)\n"
@@ -46,16 +47,22 @@ static const char kCompleteDexRuby[] =
     "    begin\n"
     "      name=(PBSpecies.getName(species) rescue '').to_s\n"
     "      next if name.length==0 || name =~ /^\\?+$/\n"
-    "      [0,1].each do |gender|\n"
-    "        pkmn=PokeBattle_Pokemon.new(species,1)\n"
-    "        pkmn.gender=gender if pkmn.respond_to?(:gender=)\n"
-    "        trainer.setSeen(pkmn) if trainer.respond_to?(:setSeen)\n"
-    "        trainer.setOwned(pkmn) if trainer.respond_to?(:setOwned)\n"
+    "      trainer.setSeen(species) if trainer.respond_to?(:setSeen)\n"
+    "      trainer.setOwned(species) if trainer.respond_to?(:setOwned)\n"
+    "      trainer.formseen=[] if !trainer.formseen\n"
+    "      trainer.formlastseen=[] if !trainer.formlastseen\n"
+    "      trainer.formseen[species]=[[],[]] if !trainer.formseen[species]\n"
+    "      trainer.formseen[species][0][0]=true\n"
+    "      trainer.formseen[species][1][0]=true\n"
+    "      trainer.formlastseen[species]=[0,0]\n"
+    "      if trainer.respond_to?(:seenShiny) && trainer.respond_to?(:seenShiny=)\n"
+    "        shiny=trainer.seenShiny\n"
+    "        shiny=[] if !shiny\n"
+    "        shiny[species]=[[],[]] if !shiny[species]\n"
+    "        shiny[species][0][0]=true\n"
+    "        shiny[species][1][0]=true\n"
+    "        trainer.seenShiny=shiny\n"
     "      end\n"
-    "      shiny=PokeBattle_Pokemon.new(species,1)\n"
-    "      shiny.makeShiny if shiny.respond_to?(:makeShiny)\n"
-    "      trainer.setSeen(shiny) if trainer.respond_to?(:setSeen)\n"
-    "      trainer.setOwned(shiny) if trainer.respond_to?(:setOwned)\n"
     "    rescue Exception\n"
     "    end\n"
     "  end\n"
