@@ -23,6 +23,9 @@ static void build_ruby() {
         "  $__uranium_trainer_hp_lock=%s\n"
         "  if defined?(PokeBattle_Battler)\n"
         "    class PokeBattle_Battler\n"
+        "      unless instance_methods.collect { |m| m.to_s }.include?(\"__uranium_trainer_repair_original_hp\")\n"
+        "        alias_method :__uranium_trainer_repair_original_hp, :hp\n"
+        "      end\n"
         "      unless instance_methods.collect { |m| m.to_s }.include?(\"__uranium_trainer_repair_original_pbReduceHP\")\n"
         "        alias_method :__uranium_trainer_repair_original_pbReduceHP, :pbReduceHP\n"
         "      end\n"
@@ -30,11 +33,26 @@ static void build_ruby() {
         // Ne pas se baser uniquement sur l'index de combat : certains
         // combats scripts remappent les indices. La reference du Pokemon de
         // la team du joueur reste en revanche la meme pendant le combat.
-        "        return false if !@pokemon || !$Trainer || !$Trainer.party\n"
-        "        $Trainer.party.each { |pkmn| return true if pkmn && pkmn.equal?(@pokemon) }\n"
+        "        if $Trainer && $Trainer.party && @pokemon\n"
+        "          $Trainer.party.each { |pkmn| return true if pkmn && pkmn.equal?(@pokemon) }\n"
+        "        end\n"
+        "        return @battle.pbOwnedByPlayer?(@index) if @battle && @battle.respond_to?(:pbOwnedByPlayer?)\n"
         "        false\n"
         "      rescue Exception\n"
         "        false\n"
+        "      end\n"
+        // Les scripts de certaines attaques Uranium peuvent modifier @hp sans
+        // passer par pbReduceHP. Le lecteur hp est commun aux calculs, aux
+        // animations et au test de K.O. Restaurer ici les PV du combattant du
+        // joueur couvre ces chemins speciaux sans toucher aux adversaires.
+        "      def hp\n"
+        "        if $__uranium_trainer_hp_lock && __uranium_trainer_player_battler? && @totalhp\n"
+        "          @hp=@totalhp\n"
+        "          @pokemon.hp=@pokemon.totalhp if @pokemon && @pokemon.respond_to?(:totalhp)\n"
+        "        end\n"
+        "        @hp\n"
+        "      rescue Exception\n"
+        "        __uranium_trainer_repair_original_hp\n"
         "      end\n"
         "      def pbReduceHP(amount,animation=false)\n"
         "        return 0 if $__uranium_trainer_hp_lock && __uranium_trainer_player_battler?\n"
