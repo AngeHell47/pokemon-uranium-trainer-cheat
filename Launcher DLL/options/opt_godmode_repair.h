@@ -3,8 +3,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-// Garde de compatibilite final pour le God mode. Il est enregistre apres
-// opt_hp afin de rester le dernier wrapper lorsque les scripts sont charges
-// tardivement par Uranium.
+// Point de compatibilite conserve pour la sequence d'initialisation du
+// payload. Le God mode est installe uniquement par opt_hp.cpp.
 bool opt_godmode_repair_init();
 void opt_godmode_repair_shutdown();
