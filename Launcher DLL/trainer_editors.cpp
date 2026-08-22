@@ -115,6 +115,7 @@ struct EditState {
     PokemonEditField pokemon_field;
     int sub_index;
     bool numeric;
+    bool replace_on_input;
     int max_length;
     char buffer[96];
     char original[96];
@@ -215,6 +216,9 @@ static void frame_rect(HDC dc, const RECT& rect, COLORREF color) {
 
 static void draw_text(HDC dc, const RECT& rect, const char* text,
                       COLORREF color, UINT flags) {
+    // Le DC memoire utilise blanc par defaut comme couleur de fond. Sans ce
+    // reglage, DrawText dessine un rectangle blanc derriere chaque libelle.
+    SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, color);
     RECT copy = rect;
     DrawTextA(dc, text ? text : "", -1, &copy, flags);
@@ -346,8 +350,9 @@ static void update_live_edit_value() {
         break;
     case EDIT_TRAINER_TIME: {
         int hours = 0, minutes = 0, seconds = 0;
-        if (sscanf_s(s_edit.buffer, "%d:%d:%d", &hours, &minutes, &seconds) == 3 ||
-            sscanf_s(s_edit.buffer, "%d", &seconds) == 1) {
+        const int fields = sscanf_s(s_edit.buffer, "%d:%d:%d",
+                                    &hours, &minutes, &seconds);
+        if (fields == 3) {
             if (hours < 0) hours = 0;
             if (minutes < 0) minutes = 0;
             if (seconds < 0) seconds = 0;
@@ -481,6 +486,10 @@ static void handle_editor_char(HWND window, WPARAM character) {
         return;
     }
     if (ch == '\b') {
+        if (s_edit.replace_on_input) {
+            s_edit.buffer[0] = '\0';
+            s_edit.replace_on_input = false;
+        }
         if (length > 0) s_edit.buffer[length - 1] = '\0';
         update_live_edit_value();
         InvalidateRect(window, NULL, FALSE);
@@ -489,8 +498,15 @@ static void handle_editor_char(HWND window, WPARAM character) {
     if ((unsigned char)ch < 32 || length >= s_edit.max_length ||
         length >= (int)sizeof(s_edit.buffer) - 1) return;
     if (s_edit.numeric && (ch < '0' || ch > '9')) return;
-    s_edit.buffer[length] = ch;
-    s_edit.buffer[length + 1] = '\0';
+    if (s_edit.kind == EDIT_TRAINER_TIME &&
+        !((ch >= '0' && ch <= '9') || ch == ':')) return;
+    if (s_edit.replace_on_input) {
+        s_edit.buffer[0] = '\0';
+        s_edit.replace_on_input = false;
+    }
+    const int updated_length = lstrlenA(s_edit.buffer);
+    s_edit.buffer[updated_length] = ch;
+    s_edit.buffer[updated_length + 1] = '\0';
     update_live_edit_value();
     InvalidateRect(window, NULL, FALSE);
 }
@@ -1679,7 +1695,7 @@ static void paint_trainer(HWND window) {
 
     RECT gender_label = {20, 180, 170, 210};
     draw_text(dc, gender_label, "Sexe", COLOR_DIM, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    const char* gender_labels[] = {"Garcon", "Neutre", "Fille"};
+    const char* gender_labels[] = {"Garcon", "Fille", "Neutre"};
     for (int i = 0; i < 3; ++i) {
         s_trainer_gender_rects[i] = {172 + i * 138, 176, 302 + i * 138, 210};
         draw_button(dc, s_trainer_gender_rects[i], gender_labels[i],
@@ -1748,6 +1764,9 @@ static void handle_trainer_click(int x, int y) {
         char value[32] = {};
         format_play_time(value, sizeof(value), s_trainer_draft.play_seconds);
         begin_edit(EDIT_TRAINER_TIME, s_trainer_window, value, false, 16);
+        // La premiere frappe remplace la valeur affichee : saisir 12:34:56
+        // ne necessite plus d'effacer manuellement l'ancien temps.
+        s_edit.replace_on_input = true;
         return;
     }
     for (int i = 0; i < 3; ++i) if (point_in(s_trainer_gender_rects[i], x, y)) {

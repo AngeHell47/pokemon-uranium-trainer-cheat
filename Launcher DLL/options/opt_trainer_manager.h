@@ -4,7 +4,7 @@
 
 struct TrainerProfile {
     char name[32];
-    int gender;          // 0=garcon, 1=neutre, 2=fille (format Uranium)
+    int gender;          // 0=garcon, 1=fille, 2=neutre (ID de joueur Uranium)
     int play_seconds;
     int badge_mask;      // bits 0..7
 };
