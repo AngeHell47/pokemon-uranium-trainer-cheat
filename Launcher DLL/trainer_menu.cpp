@@ -97,8 +97,8 @@ MenuItem g_items[] = {
 
     { "Forcer prochaine rencontre", ITEM_TYPE_TOGGLE,
       &g_force_next_wild, opt_encounter_toggle_force, NULL,0,0,NULL },
-    { "Pokemon force (#Dex)", ITEM_TYPE_SLIDER,
-      NULL,NULL, &g_forced_wild_species,1,800,opt_encounter_set_species },
+    { "Pokemon force (#Uranium)", ITEM_TYPE_SLIDER,
+      NULL,NULL, &g_forced_wild_species,1,201,opt_encounter_set_species },
     { "Niveau sauvage fixe", ITEM_TYPE_TOGGLE,
       &g_wild_level_enabled, opt_encounter_toggle_level, NULL,0,0,NULL },
     { "Niveau sauvage", ITEM_TYPE_SLIDER,

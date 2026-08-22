@@ -12,7 +12,10 @@ int  g_wild_shiny_rate = 1024;
 
 namespace {
 
-constexpr int kMaxSpecies = 800;
+// Pokemon Uranium 1.2.9 expose 201 especes dans PBSpecies. Les identifiants
+// du Pokedex national (par exemple 574) ne sont pas des identifiants valides
+// de cette edition et feraient echouer Pokemon.new pendant la rencontre.
+constexpr int kMaxSpecies = 201;
 constexpr int kNativeShinyDenominator = 1024;
 
 static char s_ini[MAX_PATH] = {};
@@ -34,6 +37,10 @@ static int clamp(int value, int low, int high) {
     if (value < low) return low;
     if (value > high) return high;
     return value;
+}
+
+static int valid_species_or_default(int value) {
+    return value >= 1 && value <= kMaxSpecies ? value : 1;
 }
 
 static void write_int(const char* key, int value) {
@@ -78,8 +85,12 @@ static void build_ruby() {
         "      def pbEncounteredPokemon(*args)\n"
         "        encounter=__uranium_trainer_original_pbEncounteredPokemon(*args)\n"
         "        if encounter && $__uranium_trainer_force_next_wild\n"
-        "          encounter=encounter.dup\n"
-        "          encounter[0]=$__uranium_trainer_force_species\n"
+        "          wanted=$__uranium_trainer_force_species.to_i\n"
+        "          maximum=(PBSpecies.maxValue rescue 0).to_i\n"
+        "          if wanted>=1 && maximum>0 && wanted<=maximum\n"
+        "            encounter=encounter.dup\n"
+        "            encounter[0]=wanted\n"
+        "          end\n"
         "          $__uranium_trainer_force_next_wild=false\n"
         "          $__uranium_trainer_encounter_writer.call($__uranium_trainer_encounter_force_address,[0].pack(\"l\"),4)\n"
         "        end\n"
@@ -163,7 +174,11 @@ static void queue_apply() {
 void opt_encounter_init(const char* ini_path) {
     lstrcpynA(s_ini, ini_path ? ini_path : "", MAX_PATH);
     g_force_next_wild = GetPrivateProfileIntA("Settings", "ForceNextWild", 0, s_ini) != 0;
-    g_forced_wild_species = clamp(GetPrivateProfileIntA("Settings", "ForcedWildSpecies", 1, s_ini), 1, kMaxSpecies);
+    const int saved_species =
+        GetPrivateProfileIntA("Settings", "ForcedWildSpecies", 1, s_ini);
+    g_forced_wild_species = valid_species_or_default(saved_species);
+    if (saved_species != g_forced_wild_species)
+        write_int("ForcedWildSpecies", g_forced_wild_species);
     g_wild_level_enabled = GetPrivateProfileIntA("Settings", "WildLevelEnabled", 0, s_ini) != 0;
     g_wild_level = clamp(GetPrivateProfileIntA("Settings", "WildLevel", 1, s_ini), 1, 100);
     g_wild_shiny_enabled = GetPrivateProfileIntA("Settings", "WildShinyEnabled", 0, s_ini) != 0;
@@ -194,7 +209,7 @@ void opt_encounter_toggle_force(bool enabled) {
 }
 
 void opt_encounter_set_species(int species) {
-    g_forced_wild_species = clamp(species, 1, kMaxSpecies);
+    g_forced_wild_species = valid_species_or_default(species);
     InterlockedExchange(&s_species, g_forced_wild_species);
     write_int("ForcedWildSpecies", g_forced_wild_species);
     queue_apply();
