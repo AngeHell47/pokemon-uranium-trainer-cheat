@@ -7,6 +7,7 @@
 #include "options/opt_egghatch.h"
 #include "options/opt_hmforget.h"
 #include "options/opt_ohk.h"
+#include "options/opt_damage.h"
 #include "options/opt_itemlock.h"
 #include "options/opt_money.h"
 #include "options/opt_noclip.h"
@@ -88,6 +89,9 @@ MenuItem g_items[] = {
 
     { "KO en un coup", ITEM_TYPE_TOGGLE,
       &g_ohk_lock, opt_ohk_toggle, NULL,0,0,NULL },
+
+    { "Multiplicateur de degats", ITEM_TYPE_SLIDER,
+      NULL,NULL, &g_damage_multiplier,1,100,opt_damage_apply },
 	  
     { "No-clip", ITEM_TYPE_TOGGLE,
       &g_noclip, opt_noclip_toggle, NULL,0,0,NULL },

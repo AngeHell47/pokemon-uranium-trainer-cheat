@@ -40,6 +40,9 @@ le chemin de capture specialise d'Uranium : une Ball peut alors retirer et
 ajouter a vos boites un Pokemon adverse de dresseur. Combinez-le avec
 "Capture 100%" pour une capture garantie.
 
+Le curseur "Multiplicateur de degats" regle les degats de vos Pokemon de x1
+a x100. Il ne modifie ni les degats recus, ni les degats de recul/allies.
+
 Le chargement direct ne modifie aucun reglage persistant : lancer Uranium.exe
 normalement conserve l'intro habituelle.
 
