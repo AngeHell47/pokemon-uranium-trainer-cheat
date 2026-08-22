@@ -3,6 +3,7 @@
 #include "options/opt_hp.h"
 #include "options/opt_pp.h"
 #include "options/opt_capture.h"
+#include "options/opt_trainer_capture.h"
 #include "options/opt_egghatch.h"
 #include "options/opt_hmforget.h"
 #include "options/opt_ohk.h"
@@ -125,6 +126,9 @@ MenuItem g_items[] = {
     { "Debloquer toutes les zones de vol", ITEM_TYPE_ACTION,
       NULL,NULL, NULL,0,0,NULL,opt_extras_unlock_fly_trigger },
 
+    { "Voler depuis n'importe ou", ITEM_TYPE_ACTION,
+      NULL,NULL, NULL,0,0,NULL,opt_extras_fly_anywhere_trigger },
+
     { "Ouvrir le PC ici", ITEM_TYPE_ACTION,
       NULL,NULL, NULL,0,0,NULL,opt_extras_open_pc_trigger },
 
@@ -167,6 +171,7 @@ struct QuickToggle {
 
 static QuickToggle s_quick_toggles[] = {
     { "Capture 100%", &g_capture_guaranteed, opt_capture_toggle },
+    { "Capturer dresseurs", &g_capture_trainers, opt_trainer_capture_toggle },
     { "Objets infinis", &g_item_lock, opt_itemlock_toggle },
     { "Eclosion instantanee", &g_egg_hatch_instant, opt_egghatch_toggle },
     { "CS effacables", &g_hm_forget_enabled, opt_hmforget_toggle },

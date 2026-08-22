@@ -34,6 +34,12 @@ compris pendant les combats de dresseurs. Objets infinis empeche la
 consommation des Pokeballs, soins, CT et baies ; les objets-clefs restent
 volontairement exclus afin de ne pas bloquer les scripts du scenario.
 
+"Voler depuis n'importe ou" ouvre directement la carte de destinations,
+sans verifier si le personnage se trouve dehors. "Capturer dresseurs" active
+le chemin de capture specialise d'Uranium : une Ball peut alors retirer et
+ajouter a vos boites un Pokemon adverse de dresseur. Combinez-le avec
+"Capture 100%" pour une capture garantie.
+
 Le chargement direct ne modifie aucun reglage persistant : lancer Uranium.exe
 normalement conserve l'intro habituelle.
 

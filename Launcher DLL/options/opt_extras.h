@@ -10,3 +10,4 @@ void opt_extras_shutdown();
 void opt_extras_unlock_fly_trigger();
 void opt_extras_open_pc_trigger();
 void opt_extras_complete_dex_trigger();
+void opt_extras_fly_anywhere_trigger();

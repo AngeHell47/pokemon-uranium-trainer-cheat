@@ -7,7 +7,8 @@ enum PendingAction {
     ACTION_NONE = 0,
     ACTION_UNLOCK_FLY = 1,
     ACTION_OPEN_PC = 2,
-    ACTION_COMPLETE_DEX = 3
+    ACTION_COMPLETE_DEX = 3,
+    ACTION_FLY_ANYWHERE = 4
 };
 
 static volatile LONG s_pending_action = ACTION_NONE;
@@ -75,11 +76,43 @@ static const char kCompleteDexRuby[] =
     "rescue Exception\n"
     "end\n";
 
+// Equivalent exact du gestionnaire Uranium de la Quadcopter, sans son appel
+// initial a checkCanUseFly : le choix de destination fonctionne ainsi depuis
+// une grotte ou un interieur, apres le chargement complet de la carte.
+static const char kFlyAnywhereRuby[] =
+    "begin\n"
+    "  raise 'Carte indisponible.' if !defined?(PokemonRegionMapScene) || !defined?(PokemonRegionMap)\n"
+    "  scene=PokemonRegionMapScene.new(-1,false)\n"
+    "  screen=PokemonRegionMap.new(scene)\n"
+    "  ret=screen.pbStartFlyScreen\n"
+    "  if ret\n"
+    "    $PokemonTemp.flydata=ret\n"
+    "    pbFlyAnimation(false,0,0,true)\n"
+    "    pbFadeOutIn(99999){\n"
+    "      $game_screen.start_tone_change(Tone.new(0,0,0,0),0)\n"
+    "      Kernel.pbCancelVehicles\n"
+    "      $game_temp.player_new_map_id=$PokemonTemp.flydata[0]\n"
+    "      $game_temp.player_new_x=$PokemonTemp.flydata[1]\n"
+    "      $game_temp.player_new_y=$PokemonTemp.flydata[2]\n"
+    "      $PokemonTemp.flydata=nil\n"
+    "      $game_temp.player_new_direction=2\n"
+    "      $scene.transfer_player\n"
+    "      $game_map.autoplay\n"
+    "      $game_map.refresh\n"
+    "    }\n"
+    "    pbFlyAnimation(true,0,0,true)\n"
+    "    pbEraseEscapePoint\n"
+    "  end\n"
+    "rescue Exception\n"
+    "end\n";
+
 static void __cdecl on_game_thread_tick(void*) {
     const LONG action = InterlockedExchange(&s_pending_action, ACTION_NONE);
     if (action == ACTION_NONE) return;
     const char* ruby = action == ACTION_UNLOCK_FLY ? kUnlockFlyRuby :
-                       action == ACTION_OPEN_PC ? kOpenPcRuby : kCompleteDexRuby;
+                       action == ACTION_OPEN_PC ? kOpenPcRuby :
+                       action == ACTION_COMPLETE_DEX ? kCompleteDexRuby :
+                       kFlyAnywhereRuby;
     if (rgss_safe_eval(ruby) != 0)
         InterlockedCompareExchange(&s_pending_action, action, ACTION_NONE);
 }
@@ -104,3 +137,4 @@ void opt_extras_shutdown() {
 void opt_extras_unlock_fly_trigger() { trigger(ACTION_UNLOCK_FLY); }
 void opt_extras_open_pc_trigger() { trigger(ACTION_OPEN_PC); }
 void opt_extras_complete_dex_trigger() { trigger(ACTION_COMPLETE_DEX); }
+void opt_extras_fly_anywhere_trigger() { trigger(ACTION_FLY_ANYWHERE); }

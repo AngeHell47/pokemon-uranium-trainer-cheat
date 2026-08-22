@@ -10,6 +10,7 @@
 #include "options/opt_godmode_repair.h"
 #include "options/opt_pp.h"
 #include "options/opt_capture.h"
+#include "options/opt_trainer_capture.h"
 #include "options/opt_egghatch.h"
 #include "options/opt_hmforget.h"
 #include "options/opt_ohk.h"
@@ -93,6 +94,7 @@ static DWORD WINAPI main_thread(LPVOID) {
     opt_hp_init(g_ini_path);
     opt_pp_init(g_ini_path);
     opt_capture_init(g_ini_path);
+    opt_trainer_capture_init(g_ini_path);
     opt_egghatch_init(g_ini_path);
     opt_hmforget_init(g_ini_path);
     opt_ohk_init(g_ini_path);
@@ -121,6 +123,7 @@ static DWORD WINAPI main_thread(LPVOID) {
     }
     opt_pp_set_hwnd_and_start(game);
     opt_capture_set_hwnd_and_start(game);
+    opt_trainer_capture_set_hwnd_and_start(game);
     opt_egghatch_set_hwnd_and_start(game);
     opt_hmforget_set_hwnd_and_start(game);
     opt_ohk_set_hwnd_and_start(game);
