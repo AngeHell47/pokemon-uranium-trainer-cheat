@@ -29,6 +29,9 @@ static void build_ruby() {
         "      unless instance_methods.collect { |m| m.to_s }.include?(\"__uranium_trainer_repair_original_pbReduceHP\")\n"
         "        alias_method :__uranium_trainer_repair_original_pbReduceHP, :pbReduceHP\n"
         "      end\n"
+        "      unless instance_methods.collect { |m| m.to_s }.include?(\"__uranium_trainer_repair_original_isFainted\")\n"
+        "        alias_method :__uranium_trainer_repair_original_isFainted, :isFainted?\n"
+        "      end\n"
         "      def __uranium_trainer_player_battler?\n"
         // Ne pas se baser uniquement sur l'index de combat : certains
         // combats scripts remappent les indices. La reference du Pokemon de
@@ -58,6 +61,10 @@ static void build_ruby() {
         "        return 0 if $__uranium_trainer_hp_lock && __uranium_trainer_player_battler?\n"
         "        __uranium_trainer_repair_original_pbReduceHP(amount,animation)\n"
         "      end\n"
+        "      def isFainted?\n"
+        "        return false if $__uranium_trainer_hp_lock && __uranium_trainer_player_battler?\n"
+        "        __uranium_trainer_repair_original_isFainted\n"
+        "      end\n"
         "    end\n"
         "  end\n"
         "  if defined?(PokeBattle_Move)\n"
@@ -76,6 +83,24 @@ static void build_ruby() {
         "        rescue Exception\n"
         "        end\n"
         "        __uranium_trainer_repair_original_pbReduceHPDamage(damage,attacker,opponent)\n"
+        "      end\n"
+        "    end\n"
+        "  end\n"
+        // Filet final : quelques scripts Uranium ecrivent directement les
+        // variables @hp. Synchroniser les objets de l'equipe et les battlers
+        // actifs toutes les quelques frames rend ces ecritures inoffensives,
+        // y compris pour les degats de terrain et les attaques speciales.
+        "  if $__uranium_trainer_hp_lock && defined?($Trainer) && $Trainer && $Trainer.party\n"
+        "    $Trainer.party.each do |pkmn|\n"
+        "      pkmn.instance_variable_set(:@hp,pkmn.totalhp) if pkmn && pkmn.respond_to?(:totalhp)\n"
+        "    end\n"
+        "    if defined?(PokeBattle_Battler)\n"
+        "      ObjectSpace.each_object(PokeBattle_Battler) do |battler|\n"
+        "        if battler.__uranium_trainer_player_battler? && battler.respond_to?(:totalhp)\n"
+        "          battler.instance_variable_set(:@hp,battler.totalhp)\n"
+        "          pkmn=(battler.pokemon rescue nil)\n"
+        "          pkmn.instance_variable_set(:@hp,pkmn.totalhp) if pkmn && pkmn.respond_to?(:totalhp)\n"
+        "        end\n"
         "      end\n"
         "    end\n"
         "  end\n"
