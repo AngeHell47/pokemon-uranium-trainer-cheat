@@ -21,6 +21,7 @@
 #include "options/opt_extras.h"
 //#include "options/opt_speedhack.h"
 #include "options/opt_zoom.h"
+#include "options/opt_minimap.h"
 #include "moves_db.h"
 #include "rgss_safe_dispatch.h"
 #include "trainer_editors.h"
@@ -107,7 +108,7 @@ MenuItem g_items[] = {
 
     { "Forcer prochaine rencontre", ITEM_TYPE_TOGGLE,
       &g_force_next_wild, opt_encounter_toggle_force, NULL,0,0,NULL },
-    { "Pokemon force (#Uranium)", ITEM_TYPE_SLIDER,
+    { "Pokemon ID (#Uranium)", ITEM_TYPE_SLIDER,
       NULL,NULL, &g_forced_wild_species,1,201,opt_encounter_set_species },
     { "Niveau sauvage fixe", ITEM_TYPE_TOGGLE,
       &g_wild_level_enabled, opt_encounter_toggle_level, NULL,0,0,NULL },
@@ -162,6 +163,19 @@ MenuItem g_items[] = {
       NULL,NULL, &g_speed_surf_value,1,8,opt_speed_apply_surf },
     { "Vitesse de velo", ITEM_TYPE_SLIDER,
       NULL,NULL, &g_speed_bike_value,1,8,opt_speed_apply_bike },
+
+    { "Afficher la minimap", ITEM_TYPE_TOGGLE,
+      &g_minimap_enabled,opt_minimap_toggle, NULL,0,0,NULL },
+    { "Taille minimap (px)", ITEM_TYPE_SLIDER,
+      NULL,NULL, &g_minimap_size,OPT_MINIMAP_MIN_SIZE,
+      OPT_MINIMAP_MAX_SIZE,opt_minimap_set_size },
+    { "Zoom minimap (%)", ITEM_TYPE_SLIDER,
+      NULL,NULL, &g_minimap_zoom,OPT_MINIMAP_MIN_ZOOM,
+      OPT_MINIMAP_MAX_ZOOM,opt_minimap_set_zoom },
+    { "Minimap ronde", ITEM_TYPE_TOGGLE,
+      &g_minimap_round,opt_minimap_set_round, NULL,0,0,NULL },
+    { "Afficher les FPS", ITEM_TYPE_TOGGLE,
+      &g_minimap_show_fps,opt_minimap_toggle_fps, NULL,0,0,NULL },
 	  
 };
 
@@ -189,7 +203,10 @@ static const int QUICK_TOGGLE_INSERT_SLOT = 5;
 // Options du menu principal affichees dans la colonne "Options rapides".
 // Les indices correspondent a God mode, PP, noclip, rencontres, heure,
 // meteo, soin et argent dans g_items.
-static const int s_quick_menu_items[] = {1, 2, 3, 4, 6, 7, 8, 9, 10};
+static const int s_quick_menu_items[] = {
+    1, 2, 3, 4, 6, 7, 8, 9, 10,
+    31, 32, 33, 34, 35
+};
 static const int QUICK_MENU_ITEM_COUNT =
     sizeof(s_quick_menu_items) / sizeof(s_quick_menu_items[0]);
 
@@ -203,6 +220,14 @@ static bool is_quick_menu_item(int item_index) {
         if (s_quick_menu_items[i] == item_index) return true;
     }
     return false;
+}
+
+// Certaines lignes sont les reglages detailles d'une meme option. Leur
+// separateur est volontairement omis pour former un bloc visuel continu.
+static bool item_group_continues_after(int item_index) {
+    return item_index == 9 ||                    // rencontre -> espece
+           item_index == 13 ||                   // shiny -> probabilite
+           (item_index >= 31 && item_index <= 33); // minimap
 }
 
 static int quick_menu_items_height() {
@@ -882,12 +907,14 @@ static void paint_quick_menu_items(HDC mem, HFONT fN, HFONT fB, HFONT fS) {
             FillRect(mem, &row, hover);
             DeleteObject(hover);
         }
-        HPEN separator = CreatePen(PS_SOLID, 1, RGB(40,40,60));
-        HPEN old_separator = (HPEN)SelectObject(mem, separator);
-        MoveToEx(mem, row.left, row.bottom - 1, NULL);
-        LineTo(mem, row.right, row.bottom - 1);
-        SelectObject(mem, old_separator);
-        DeleteObject(separator);
+        if (!item_group_continues_after(item_index)) {
+            HPEN separator = CreatePen(PS_SOLID, 1, RGB(40,40,60));
+            HPEN old_separator = (HPEN)SelectObject(mem, separator);
+            MoveToEx(mem, row.left, row.bottom - 1, NULL);
+            LineTo(mem, row.right, row.bottom - 1);
+            SelectObject(mem, old_separator);
+            DeleteObject(separator);
+        }
 
         SelectObject(mem, fN);
         SetTextColor(mem, COL_TEXT);
@@ -1144,11 +1171,7 @@ static void paint(HWND hw) {
 
     HFONT of = (HFONT)SelectObject(mem, fB);
     SetTextColor(mem, COL_TEXT);
-    char runtime_title[64];
-    _snprintf_s(runtime_title, sizeof(runtime_title), _TRUNCATE,
-                "Trainer DYN5  HP:%d  CS:%d",
-                opt_hp_runtime_state(), opt_hmforget_runtime_state());
-    DrawTextA(mem, runtime_title, -1, &trc,
+    DrawTextA(mem, "Uranium Trainer", -1, &trc,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
     RECT dh = {4,0,20,TITLE_H};
@@ -1170,12 +1193,14 @@ static void paint(HWND hw) {
             DeleteObject(hbr);
         }
 
-        HPEN sep = CreatePen(PS_SOLID, 1, RGB(40,40,60));
-        HPEN osep = (HPEN)SelectObject(mem, sep);
-        MoveToEx(mem, 2, y + ih - 1, NULL);
-        LineTo(mem, MENU_LEFT_W - 2, y + ih - 1);
-        SelectObject(mem, osep);
-        DeleteObject(sep);
+        if (!item_group_continues_after(i)) {
+            HPEN sep = CreatePen(PS_SOLID, 1, RGB(40,40,60));
+            HPEN osep = (HPEN)SelectObject(mem, sep);
+            MoveToEx(mem, 2, y + ih - 1, NULL);
+            LineTo(mem, MENU_LEFT_W - 2, y + ih - 1);
+            SelectObject(mem, osep);
+            DeleteObject(sep);
+        }
 
         SetTextColor(mem, COL_TEXT);
 
@@ -1403,13 +1428,6 @@ static void paint(HWND hw) {
     paint_quick_menu_items(mem, fN, fB, fS);
     paint_quick_toggles(mem, fN);
     paint_picker(mem, fN);
-
-    // Footer gauche
-    SelectObject(mem, fS);
-    SetTextColor(mem, COL_DIMTEXT);
-    RECT hrc = {0, H - 18, MENU_LEFT_W, H - 2};
-    DrawTextA(mem, "Inserer:masquer  |  Fleches+Entree  |  Glisser titre",
-              -1, &hrc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
     SelectObject(mem, of);
     DeleteObject(fB);

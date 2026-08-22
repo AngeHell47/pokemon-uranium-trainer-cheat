@@ -28,6 +28,7 @@
 #include "options/opt_extras.h"
 //#include "options/opt_speedhack.h"
 #include "options/opt_zoom.h"
+#include "options/opt_minimap.h"
 #pragma comment(lib, "psapi.lib")
 
 static char g_ini_path[MAX_PATH];
@@ -117,6 +118,7 @@ static DWORD WINAPI main_thread(LPVOID) {
     }
 	//opt_speedhack_init(g_ini_path);
     opt_zoom_init(g_ini_path);
+    opt_minimap_init(g_ini_path);
     opt_hp_set_hwnd_and_start(game);
     if (!opt_godmode_repair_init()) {
         rgss_safe_dispatch_shutdown();
@@ -142,6 +144,7 @@ static DWORD WINAPI main_thread(LPVOID) {
 	opt_heal_set_hwnd_and_start(game);
 	//opt_speedhack_set_hwnd_and_start(game);
     opt_zoom_set_hwnd_and_start(game);
+    opt_minimap_set_hwnd_and_start(game);
 	
     menu_open();
     if (g_trainer_ready) SetEvent(g_trainer_ready);

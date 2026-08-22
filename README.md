@@ -69,6 +69,8 @@ aucun fichier `moves.txt` ni DLL auxiliaire n'est requis à l'utilisation.
   Pokémon (PV, IV/EV, nature, objet tenu, attaques, PP et provenance).
 - Dézoom logique de la carte en conservant la taille physique de la fenêtre.
 - Zoom avant/arrière directement en jeu avec la molette de la souris.
+- Minimap configurable sur la carte, avec pointeur central du joueur, taille,
+  niveau de détail et forme carrée ou ronde.
 
 Les clics reçus par l'overlay sont bloqués avant d'atteindre le jeu. Les limites
 de validation et les essais restant à effectuer en situation réelle sont
