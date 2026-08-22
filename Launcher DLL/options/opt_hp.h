@@ -7,3 +7,4 @@ void opt_hp_init(const char* ini_path);
 void opt_hp_set_hwnd(HWND hwnd);
 void opt_hp_set_hwnd_and_start(HWND hwnd);  // appeler apres FindWindow
 void opt_hp_toggle(bool enabled);
+int opt_hp_runtime_state();

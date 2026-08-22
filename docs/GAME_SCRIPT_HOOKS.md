@@ -19,11 +19,13 @@ imbriqués à `Graphics.update` sans réentrer dans les callbacks du trainer.
 - Éclosion : le gestionnaire `Events.onStepTaken` décrémente `eggsteps`, puis
   appelle `pbHatch`. Un getter virtuel à 1 conserve l'animation et ne modifie
   pas le compteur réel si l'option est désactivée avant le prochain pas.
-- CS effaçables : `PokemonSummary#pbStartForgetScreen` appelle
-  `pbIsHiddenMove?` pour son unique refus. Le helper mémoire renvoie faux sur
-  demande sans affecter l'utilisation des CS sur la carte ni les objets HM.
-  Le helper mémoire est reposé périodiquement pour résister aux chargements
-  tardifs de scripts d'Uranium.
+- CS effaçables : le corps natif de `PokemonSummary#pbStartForgetScreen` est
+  reposé en mémoire avec une condition supplémentaire autour de son unique
+  refus. Le helper `pbIsHiddenMove?` est également réinstallé, sans affecter
+  l'utilisation des CS sur la carte ni les objets HM. Les deux méthodes sont
+  reposées périodiquement pour résister aux chargements tardifs d'Uranium. Le
+  drapeau `$DEBUG`, que le jeu consulte dans ce refus précis, est également
+  forcé pendant l'activation et remis à faux à la désactivation.
 
 ## Éditeurs persistants
 
@@ -138,6 +140,10 @@ un garde optionnel, sans modifier `Scripts.rxdata` :
   résiduels, le recul et les sacrifices forcés pour les battlers du joueur ;
 - `PokeBattle_Pokemon#hp=` protège l'objet de l'équipe lui-même, notamment
   contre le poison hors combat et les écritures directes.
+
+Les mêmes gardes sont posés sur les singletons des Pokémon du groupe et des
+battlers actifs afin de couvrir les classes internes remplacées tardivement par
+Uranium.
 
 Les protections consultent `$__uranium_trainer_hp_lock` et prouvent la
 propriété via `pbOwnedByPlayer?` ou l'identité dans `$Trainer.party`. Le payload
