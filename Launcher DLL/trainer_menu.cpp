@@ -11,6 +11,7 @@
 #include "options/opt_gamespeed.h"
 #include "options/opt_speed.h"
 #include "options/opt_noenc.h"
+#include "options/opt_encounter.h"
 #include "options/opt_time.h"
 #include "options/opt_weather.h"
 #include "options/opt_heal.h"
@@ -93,6 +94,19 @@ MenuItem g_items[] = {
 	  
     { "Sans rencontres sauvages", ITEM_TYPE_TOGGLE,
       &g_noenc, opt_noenc_toggle, NULL,0,0,NULL },
+
+    { "Forcer prochaine rencontre", ITEM_TYPE_TOGGLE,
+      &g_force_next_wild, opt_encounter_toggle_force, NULL,0,0,NULL },
+    { "Pokemon force (#Dex)", ITEM_TYPE_SLIDER,
+      NULL,NULL, &g_forced_wild_species,1,800,opt_encounter_set_species },
+    { "Niveau sauvage fixe", ITEM_TYPE_TOGGLE,
+      &g_wild_level_enabled, opt_encounter_toggle_level, NULL,0,0,NULL },
+    { "Niveau sauvage", ITEM_TYPE_SLIDER,
+      NULL,NULL, &g_wild_level,1,100,opt_encounter_set_level },
+    { "Shiny sauvage (1/N)", ITEM_TYPE_TOGGLE,
+      &g_wild_shiny_enabled, opt_encounter_toggle_shiny, NULL,0,0,NULL },
+    { "Chance shiny (1/N)", ITEM_TYPE_SLIDER,
+      NULL,NULL, &g_wild_shiny_rate,1,8192,opt_encounter_set_shiny_rate },
 
     { "Heure du jeu", ITEM_TYPE_TIME,
       NULL,NULL, NULL,0,0,NULL },
@@ -295,6 +309,8 @@ static bool  s_slider_in_quick_column = false;
 static int   s_hold_key_capture_item = -1;
 static UINT_PTR s_watch_timer = 0;
 static DWORD s_heal_flash_until = 0;  // GetTickCount() until which to show flash
+static int s_action_confirmation_item = -1;
+static DWORD s_action_confirmation_until = 0;
 
 static bool menu_keyboard_should_capture();
 static bool menu_context_is_foreground();
@@ -1752,6 +1768,7 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
         sync_overlay_to_game();
         opt_time_refresh_now();
         opt_weather_refresh_now();
+        opt_encounter_refresh_ui();
         if (s_heal_flash_until != 0 && GetTickCount() >= s_heal_flash_until) {
             s_heal_flash_until = 0;
             InvalidateRect(s_overlay, NULL, FALSE);

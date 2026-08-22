@@ -39,6 +39,7 @@ cl /nologo /O1 /GS- /MT /LD /W4 /utf-8 /DTRAINER_EXTERNAL_PAYLOAD ^
   "%DLLSRC%\options\opt_speed.cpp" ^
   "%DLLSRC%\options\opt_zoom.cpp" ^
   "%DLLSRC%\options\opt_noenc.cpp" ^
+  "%DLLSRC%\options\opt_encounter.cpp" ^
   "%DLLSRC%\options\opt_pokemon_manager.cpp" ^
   "%DLLSRC%\options\opt_time.cpp" ^
   "%DLLSRC%\options\opt_weather.cpp" ^

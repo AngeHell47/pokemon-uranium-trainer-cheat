@@ -17,6 +17,7 @@
 #include "options/opt_gamespeed.h"
 #include "options/opt_speed.h"
 #include "options/opt_noenc.h"
+#include "options/opt_encounter.h"
 #include "options/opt_time.h"
 #include "options/opt_weather.h"
 #include "options/opt_heal.h"
@@ -98,6 +99,7 @@ static DWORD WINAPI main_thread(LPVOID) {
     opt_gamespeed_init(g_ini_path);
     opt_speed_init(g_ini_path);
     opt_noenc_init(g_ini_path);
+    opt_encounter_init(g_ini_path);
 	opt_time_init(g_ini_path);
 	opt_weather_init(g_ini_path);
 	opt_heal_init(g_ini_path);
@@ -119,6 +121,7 @@ static DWORD WINAPI main_thread(LPVOID) {
     opt_gamespeed_set_hwnd_and_start(game);
     opt_speed_set_hwnd_and_start(game);
     opt_noenc_set_hwnd_and_start(game);
+    opt_encounter_set_hwnd_and_start(game);
 	opt_time_set_hwnd_and_start(game);
 	opt_weather_set_hwnd_and_start(game);
 	opt_heal_set_hwnd_and_start(game);

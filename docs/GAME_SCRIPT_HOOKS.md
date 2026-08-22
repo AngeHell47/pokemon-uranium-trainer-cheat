@@ -106,6 +106,12 @@ transition native via `$game_temp.player_new_map_id`, `player_new_x` et
   probabilité effective avec les relances, sans rendre shiny les Pokémon déjà
   possédés ni ceux des Dresseurs.
 
+Le trainer peut maintenant remplacer le résultat de la **prochaine** rencontre
+aléatoire par une espèce choisie (ID Pokédex 1 à 800) et fixer son niveau. Le
+taux shiny est un dénominateur `1/N` réglable de 1 à 8192 : il est tiré après
+la création complète du Pokémon sauvage et ajuste son PID pour respecter ce
+taux. Hors activation, le slider revient sur la valeur native 1/1024.
+
 ### PC accessible partout
 
 `StorageSystemPC#access` ouvre directement l'interface de boîtes, tandis que
