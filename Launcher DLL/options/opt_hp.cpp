@@ -145,14 +145,17 @@ static void build_ruby_apply() {
 }
 
 static void __cdecl on_game_thread_tick(void*) {
-    if (InterlockedExchange(&s_pending, 0) == 0) {
-        // Uranium peut recharger tardivement ses classes de combat. Reposer
-        // les trois petits corps une fois par seconde rend le hook resistant
-        // a cet ecrasement sans aucune ecriture disque.
-        const LONG interval =
-            InterlockedExchangeAdd(&s_enabled, 0) ? 5 : 60;
-        if (++s_refresh_frames < interval) return;
+    const bool requested = InterlockedExchange(&s_pending, 0) != 0;
+    if (!requested && InterlockedExchangeAdd(&s_installed, 0) != 0) {
+        // Les classes de combat sont chargees avant l'ouverture du trainer.
+        // Une fois les wrappers poses, les reevaluer a chaque seconde (et
+        // precedemment plusieurs fois par seconde) fait allouer du Ruby en
+        // plein rendu/animation sans fournir de protection supplementaire.
+        // Une demande explicite (activation/desactivation) reprogramme
+        // toujours l'evaluation via s_pending.
+        return;
     }
+    if (!requested && ++s_refresh_frames < 30) return;
     s_refresh_frames = 0;
     build_ruby_apply();
     if (rgss_safe_eval(s_ruby) != 0)
