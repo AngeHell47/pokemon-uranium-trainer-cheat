@@ -14,6 +14,7 @@
 #include "options/opt_time.h"
 #include "options/opt_weather.h"
 #include "options/opt_heal.h"
+#include "options/opt_extras.h"
 //#include "options/opt_speedhack.h"
 #include "options/opt_zoom.h"
 #include "moves_db.h"
@@ -100,7 +101,16 @@ MenuItem g_items[] = {
       NULL,NULL, NULL,0,0,NULL },
 
     { "Soigner equipe", ITEM_TYPE_ACTION,
-      NULL,NULL, NULL,0,0,NULL },
+      NULL,NULL, NULL,0,0,NULL,opt_heal_trigger },
+
+    { "Debloquer toutes les zones de vol", ITEM_TYPE_ACTION,
+      NULL,NULL, NULL,0,0,NULL,opt_extras_unlock_fly_trigger },
+
+    { "Ouvrir le PC ici", ITEM_TYPE_ACTION,
+      NULL,NULL, NULL,0,0,NULL,opt_extras_open_pc_trigger },
+
+    { "Completer tout le Pokedex", ITEM_TYPE_ACTION,
+      NULL,NULL, NULL,0,0,NULL,opt_extras_complete_dex_trigger },
 
     { "Argent ($)", ITEM_TYPE_SLIDER,
       NULL,NULL, &g_money_value,0,999999,opt_money_apply },
@@ -1262,7 +1272,10 @@ static void paint(HWND hw) {
             DeleteObject(bpn);
 
             SetTextColor(mem, COL_TEXT);
-            DrawTextA(mem, flashing ? "OK!" : "GO", -1, &brc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            const bool confirm = s_action_confirmation_item == i &&
+                                 GetTickCount() < s_action_confirmation_until;
+            DrawTextA(mem, confirm ? "CONF." : (flashing ? "OK!" : "GO"), -1,
+                      &brc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
         else if (g_items[i].type == ITEM_TYPE_POKEMON_MANAGER ||
                  g_items[i].type == ITEM_TYPE_INVENTORY_MANAGER) {
@@ -1497,6 +1510,31 @@ static void apply_slider(int i, int val, bool commit = true) {
     InvalidateRect(s_overlay, NULL, FALSE);
 }
 
+static bool action_requires_confirmation(int item) {
+    return item >= 0 && item < ITEM_COUNT &&
+           (g_items[item].on_action == opt_extras_unlock_fly_trigger ||
+            g_items[item].on_action == opt_extras_complete_dex_trigger);
+}
+
+static void trigger_action(int item) {
+    if (item < 0 || item >= ITEM_COUNT ||
+        g_items[item].type != ITEM_TYPE_ACTION || !g_items[item].on_action) return;
+    const DWORD now = GetTickCount();
+    if (action_requires_confirmation(item) &&
+        (s_action_confirmation_item != item || now >= s_action_confirmation_until)) {
+        s_action_confirmation_item = item;
+        s_action_confirmation_until = now + 4000;
+        InvalidateRect(s_overlay, NULL, FALSE);
+        return;
+    }
+    s_action_confirmation_item = -1;
+    s_action_confirmation_until = 0;
+    g_items[item].on_action();
+    if (g_items[item].on_action == opt_extras_open_pc_trigger) menu_close();
+    s_heal_flash_until = now + 400;
+    InvalidateRect(s_overlay, NULL, FALSE);
+}
+
 static void apply_game_zoom_wheel(int direction) {
     for (int i = 0; i < ITEM_COUNT; i++) {
         if (g_items[i].type != ITEM_TYPE_SLIDER ||
@@ -1718,6 +1756,12 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             s_heal_flash_until = 0;
             InvalidateRect(s_overlay, NULL, FALSE);
         }
+        if (s_action_confirmation_item >= 0 &&
+            GetTickCount() >= s_action_confirmation_until) {
+            s_action_confirmation_item = -1;
+            s_action_confirmation_until = 0;
+            InvalidateRect(s_overlay, NULL, FALSE);
+        }
         {
             static int t = 0;
             if (++t >= 10) {
@@ -1808,9 +1852,7 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
                     picker_open_weather(quick_weather_box_rect(slot));
                     InvalidateRect(hw, NULL, FALSE);
                 } else if (g_items[item].type == ITEM_TYPE_ACTION) {
-                    opt_heal_trigger();
-                    s_heal_flash_until = GetTickCount() + 400;
-                    InvalidateRect(hw, NULL, FALSE);
+                    trigger_action(item);
                 } else if (g_items[item].type == ITEM_TYPE_SLIDER &&
                            ptin(quick_slider_track_rect(slot), x, y)) {
                     s_slider_drag = true;
@@ -1875,9 +1917,7 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             else if (g_items[i].type == ITEM_TYPE_ACTION) {
-                opt_heal_trigger();
-                s_heal_flash_until = GetTickCount() + 400;
-                InvalidateRect(hw, NULL, FALSE);
+                trigger_action(i);
                 return 0;
             }
             else if (g_items[i].type == ITEM_TYPE_POKEMON_MANAGER) {
@@ -2092,9 +2132,7 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             if (s_hovered >= 0 && g_items[s_hovered].type == ITEM_TYPE_ACTION) {
-                opt_heal_trigger();
-                s_heal_flash_until = GetTickCount() + 400;
-                InvalidateRect(hw, NULL, FALSE);
+                trigger_action(s_hovered);
                 return 0;
             }
             if (s_hovered >= 0 &&

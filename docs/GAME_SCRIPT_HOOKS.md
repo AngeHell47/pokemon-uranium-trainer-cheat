@@ -114,6 +114,14 @@ est plus prévisible. L'action devra être refusée hors `Scene_Map`, pendant un
 événement ou un transfert, fermer temporairement l'overlay, puis restaurer son
 état après la fermeture de l'écran.
 
+Le trainer propose désormais cette action depuis la carte : il ferme l'overlay
+avant d'appeler `StorageSystemPC#access` et laisse intact le jeu lorsqu'une
+transition ou un événement est actif. Le déblocage des destinations de vol
+remplit `visitedMaps` pour les cartes déclarées dans `MapInfos.rxdata` ; ce
+choix est persistant dès la prochaine sauvegarde. La complétion du Pokédex
+utilise `setSeen` et `setOwned` pour chaque espèce, ses deux sexes et une
+variante shiny, plutôt que d'écrire partiellement les tableaux du dresseur.
+
 ## Combat et vitesse
 
 Le God mode ne falsifie pas `isFainted?` et ne restaure pas les PV à chaque

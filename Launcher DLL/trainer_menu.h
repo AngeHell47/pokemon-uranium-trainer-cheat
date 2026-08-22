@@ -42,6 +42,8 @@ struct MenuItem {
     int         slider_min;
     int         slider_max;
     void (*on_slide)(int);
+
+    void (*on_action)();
 };
 
 extern MenuItem  g_items[];

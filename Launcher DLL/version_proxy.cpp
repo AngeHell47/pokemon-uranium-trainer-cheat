@@ -20,6 +20,7 @@
 #include "options/opt_time.h"
 #include "options/opt_weather.h"
 #include "options/opt_heal.h"
+#include "options/opt_extras.h"
 //#include "options/opt_speedhack.h"
 #include "options/opt_zoom.h"
 #pragma comment(lib, "psapi.lib")
@@ -100,6 +101,11 @@ static DWORD WINAPI main_thread(LPVOID) {
 	opt_time_init(g_ini_path);
 	opt_weather_init(g_ini_path);
 	opt_heal_init(g_ini_path);
+    if (!opt_extras_init(g_ini_path)) {
+        rgss_safe_dispatch_shutdown();
+        release_trainer_singleton();
+        return 0;
+    }
 	//opt_speedhack_init(g_ini_path);
     opt_zoom_init(g_ini_path);
     opt_hp_set_hwnd_and_start(game);
@@ -122,6 +128,7 @@ static DWORD WINAPI main_thread(LPVOID) {
     menu_open();
     if (g_trainer_ready) SetEvent(g_trainer_ready);
     menu_start_loop();
+    opt_extras_shutdown();
     return 0;
 }
 
