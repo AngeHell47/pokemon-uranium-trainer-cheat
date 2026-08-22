@@ -33,6 +33,10 @@ static void build_ruby() {
         "        alias_method :__uranium_trainer_repair_original_isFainted, :isFainted?\n"
         "      end\n"
         "      def __uranium_trainer_player_battler?\n"
+        // Un slot vide a bien un index pair dans un combat double. Il ne faut
+        // surtout pas le considerer vivant, sinon les animations de capacite
+        // (Intimidation notamment) recoivent un battler nil.
+        "        return false if !@pokemon\n"
         // Ne pas se baser uniquement sur l'index de combat : certains
         // combats scripts remappent les indices. La reference du Pokemon de
         // la team du joueur reste en revanche la meme pendant le combat.
