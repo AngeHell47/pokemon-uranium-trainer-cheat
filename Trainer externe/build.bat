@@ -37,6 +37,7 @@ cl /nologo /O1 /GS- /MT /LD /W4 /utf-8 /DTRAINER_EXTERNAL_PAYLOAD ^
   "%DLLSRC%\options\opt_itemlock.cpp" ^
   "%DLLSRC%\options\opt_money.cpp" ^
   "%DLLSRC%\options\opt_inventory_manager.cpp" ^
+  "%DLLSRC%\options\opt_trainer_manager.cpp" ^
   "%DLLSRC%\options\opt_noclip.cpp" ^
   "%DLLSRC%\options\opt_gamespeed.cpp" ^
   "%DLLSRC%\options\opt_speed.cpp" ^

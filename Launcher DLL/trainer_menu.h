@@ -28,6 +28,7 @@
 #define ITEM_TYPE_ACTION   6
 #define ITEM_TYPE_POKEMON_MANAGER 7
 #define ITEM_TYPE_INVENTORY_MANAGER 8
+#define ITEM_TYPE_TRAINER_MANAGER 9
 
 struct MenuItem {
     const char* label;

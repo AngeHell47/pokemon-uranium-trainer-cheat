@@ -14,6 +14,9 @@ Les boutons "Gerer tous les Pokemon" et "Gerer tout l'inventaire" ouvrent des
 fenetres autonomes. La premiere couvre l'equipe et les boites, y compris la
 creation/suppression et les attaques/PP/IV/EV. La seconde affiche toutes les
 poches et le catalogue complet pour ajouter, retirer ou fixer une quantite.
+"Gerer le dresseur" ouvre une troisieme fenetre pour modifier le pseudo, le
+sexe, le temps de jeu et chacun des huit badges. Cliquez sur Appliquer, puis
+sauvegardez dans le jeu pour rendre ces changements permanents.
 
 No-clip : active l'option, puis maintiens la touche affichee dans le petit
 bouton (CTRL par defaut). Clique sur ce bouton et presse une autre touche pour

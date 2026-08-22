@@ -9,6 +9,7 @@ void trainer_editors_shutdown();
 
 void trainer_editors_show_pokemon();
 void trainer_editors_show_inventory();
+void trainer_editors_show_trainer();
 void trainer_editors_hide_all();
 bool trainer_editors_any_open();
 bool trainer_editors_is_editing();

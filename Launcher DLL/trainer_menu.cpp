@@ -53,6 +53,10 @@
 #define ITEM_TYPE_INVENTORY_MANAGER 8
 #endif
 
+#ifndef ITEM_TYPE_TRAINER_MANAGER
+#define ITEM_TYPE_TRAINER_MANAGER 9
+#endif
+
 #ifndef PARTYMON_H
 #define PARTYMON_H 270
 #endif
@@ -133,6 +137,8 @@ MenuItem g_items[] = {
     { "Gerer tous les Pokemon", ITEM_TYPE_POKEMON_MANAGER,
       NULL,NULL, NULL,0,0,NULL },
     { "Gerer tout l'inventaire", ITEM_TYPE_INVENTORY_MANAGER,
+      NULL,NULL, NULL,0,0,NULL },
+    { "Gerer le dresseur", ITEM_TYPE_TRAINER_MANAGER,
       NULL,NULL, NULL,0,0,NULL },
 
     { "Dezoom camera (%)", ITEM_TYPE_SLIDER,
@@ -1301,7 +1307,8 @@ static void paint(HWND hw) {
                       &brc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
         else if (g_items[i].type == ITEM_TYPE_POKEMON_MANAGER ||
-                 g_items[i].type == ITEM_TYPE_INVENTORY_MANAGER) {
+                 g_items[i].type == ITEM_TYPE_INVENTORY_MANAGER ||
+                 g_items[i].type == ITEM_TYPE_TRAINER_MANAGER) {
             RECT lrc = {PAD, y, MENU_LEFT_W - 76, y + ITEM_H};
             DrawTextA(mem, g_items[i].label, -1, &lrc,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -1961,6 +1968,11 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
                 InterlockedExchange(&s_block_game_keyboard, 2);
                 return 0;
             }
+            else if (g_items[i].type == ITEM_TYPE_TRAINER_MANAGER) {
+                trainer_editors_show_trainer();
+                InterlockedExchange(&s_block_game_keyboard, 2);
+                return 0;
+            }
             else {
                 InvalidateRect(hw, NULL, FALSE);
             }
@@ -2175,6 +2187,12 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             if (s_hovered >= 0 &&
                 g_items[s_hovered].type == ITEM_TYPE_INVENTORY_MANAGER) {
                 trainer_editors_show_inventory();
+                InterlockedExchange(&s_block_game_keyboard, 2);
+                return 0;
+            }
+            if (s_hovered >= 0 &&
+                g_items[s_hovered].type == ITEM_TYPE_TRAINER_MANAGER) {
+                trainer_editors_show_trainer();
                 InterlockedExchange(&s_block_game_keyboard, 2);
                 return 0;
             }

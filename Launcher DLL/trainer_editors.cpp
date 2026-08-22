@@ -3,6 +3,7 @@
 #include "moves_db.h"
 #include "options/opt_inventory_manager.h"
 #include "options/opt_pokemon_manager.h"
+#include "options/opt_trainer_manager.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +16,8 @@ enum {
     POKEMON_WINDOW_HEIGHT = 720,
     INVENTORY_WINDOW_WIDTH = 940,
     INVENTORY_WINDOW_HEIGHT = 680,
+    TRAINER_WINDOW_WIDTH = 620,
+    TRAINER_WINDOW_HEIGHT = 430,
     EDITOR_TITLE_HEIGHT = 30,
     LIST_ROW_HEIGHT = 22
 };
@@ -35,9 +38,11 @@ static HINSTANCE s_instance = NULL;
 static HWND s_game = NULL;
 static HWND s_pokemon_window = NULL;
 static HWND s_inventory_window = NULL;
+static HWND s_trainer_window = NULL;
 static HWND s_keyboard_window = NULL;
 static bool s_pokemon_open = false;
 static bool s_inventory_open = false;
+static bool s_trainer_open = false;
 
 static bool s_dragging = false;
 static HWND s_drag_window = NULL;
@@ -86,6 +91,11 @@ static int s_inventory_active_pane = 0;
 static int s_inventory_delete_item = 0;
 static DWORD s_inventory_delete_deadline = 0;
 
+static TrainerProfile s_trainer_profile = {};
+static TrainerProfile s_trainer_draft = {};
+static LONG s_trainer_revision = -1;
+static char s_trainer_status[128] = {};
+
 enum EditKind {
     EDIT_NONE = 0,
     EDIT_POKEMON_FIELD,
@@ -93,6 +103,8 @@ enum EditKind {
     EDIT_CREATE_LEVEL,
     EDIT_ITEM_SEARCH,
     EDIT_INVENTORY_QUANTITY,
+    EDIT_TRAINER_NAME,
+    EDIT_TRAINER_TIME,
     EDIT_CHOICE_SEARCH
 };
 
@@ -171,6 +183,14 @@ static RECT s_inventory_refresh_rect = {};
 static RECT s_inventory_close_rect = {};
 static RECT s_pocket_buttons[10] = {};
 static int s_pocket_button_count = 0;
+
+static RECT s_trainer_name_rect = {};
+static RECT s_trainer_time_rect = {};
+static RECT s_trainer_gender_rects[3] = {};
+static RECT s_trainer_badge_rects[8] = {};
+static RECT s_trainer_apply_rect = {};
+static RECT s_trainer_refresh_rect = {};
+static RECT s_trainer_close_rect = {};
 
 static bool point_in(const RECT& rect, int x, int y) {
     POINT point = {x, y};
@@ -320,6 +340,21 @@ static void update_live_edit_value() {
         if (s_inventory_quantity < 0) s_inventory_quantity = 0;
         if (s_inventory_quantity > 999) s_inventory_quantity = 999;
         break;
+    case EDIT_TRAINER_NAME:
+        lstrcpynA(s_trainer_draft.name, s_edit.buffer,
+                  sizeof(s_trainer_draft.name));
+        break;
+    case EDIT_TRAINER_TIME: {
+        int hours = 0, minutes = 0, seconds = 0;
+        if (sscanf_s(s_edit.buffer, "%d:%d:%d", &hours, &minutes, &seconds) == 3 ||
+            sscanf_s(s_edit.buffer, "%d", &seconds) == 1) {
+            if (hours < 0) hours = 0;
+            if (minutes < 0) minutes = 0;
+            if (seconds < 0) seconds = 0;
+            s_trainer_draft.play_seconds = hours * 3600 + minutes * 60 + seconds;
+        }
+        break;
+    }
     case EDIT_CHOICE_SEARCH:
         lstrcpynA(s_choice.search, s_edit.buffer, sizeof(s_choice.search));
         s_choice.scroll = 0;
@@ -338,6 +373,14 @@ static void cancel_edit() {
         s_create_level = atoi(s_edit.original);
     else if (s_edit.kind == EDIT_INVENTORY_QUANTITY)
         s_inventory_quantity = atoi(s_edit.original);
+    else if (s_edit.kind == EDIT_TRAINER_NAME)
+        lstrcpynA(s_trainer_draft.name, s_edit.original,
+                  sizeof(s_trainer_draft.name));
+    else if (s_edit.kind == EDIT_TRAINER_TIME) {
+        int hours = 0, minutes = 0, seconds = 0;
+        if (sscanf_s(s_edit.original, "%d:%d:%d", &hours, &minutes, &seconds) == 3)
+            s_trainer_draft.play_seconds = hours * 3600 + minutes * 60 + seconds;
+    }
     HWND window = s_edit.window;
     memset(&s_edit, 0, sizeof(s_edit));
     if (window) InvalidateRect(window, NULL, FALSE);
@@ -1566,6 +1609,171 @@ static void paint_inventory(HWND window) {
     EndPaint(window, &paint);
 }
 
+static void format_play_time(char* out, int capacity, int total_seconds) {
+    if (!out || capacity <= 0) return;
+    if (total_seconds < 0) total_seconds = 0;
+    const int hours = total_seconds / 3600;
+    const int minutes = (total_seconds / 60) % 60;
+    const int seconds = total_seconds % 60;
+    _snprintf_s(out, capacity, _TRUNCATE, "%d:%02d:%02d", hours, minutes, seconds);
+}
+
+static void refresh_trainer_cache() {
+    TrainerProfile profile = {};
+    LONG revision = -1;
+    char status[128] = {};
+    if (!opt_trainer_manager_copy_profile(&profile, &revision, status, sizeof(status))) return;
+    if (revision != s_trainer_revision) {
+        s_trainer_profile = profile;
+        if (s_edit.window != s_trainer_window)
+            s_trainer_draft = profile;
+        s_trainer_revision = revision;
+    }
+    lstrcpynA(s_trainer_status, status, sizeof(s_trainer_status));
+}
+
+static void paint_trainer(HWND window) {
+    PAINTSTRUCT paint = {};
+    HDC target = BeginPaint(window, &paint);
+    HDC dc = CreateCompatibleDC(target);
+    HBITMAP bitmap = CreateCompatibleBitmap(target, TRAINER_WINDOW_WIDTH,
+                                            TRAINER_WINDOW_HEIGHT);
+    HBITMAP old_bitmap = (HBITMAP)SelectObject(dc, bitmap);
+    HFONT font = CreateFontA(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                             DEFAULT_PITCH | FF_DONTCARE, "Segoe UI");
+    HFONT old_font = (HFONT)SelectObject(dc, font);
+    RECT whole = {0, 0, TRAINER_WINDOW_WIDTH, TRAINER_WINDOW_HEIGHT};
+    fill_rect(dc, whole, UI_BACKGROUND);
+    draw_title(dc, TRAINER_WINDOW_WIDTH, "Gerer le dresseur", &s_trainer_close_rect);
+
+    RECT hint = {16, 40, 604, 65};
+    draw_text(dc, hint, "Modifiez le profil puis cliquez sur Appliquer. Sauvegardez ensuite dans le jeu.",
+              COLOR_DIM, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    RECT name_label = {20, 82, 170, 112};
+    draw_text(dc, name_label, "Pseudo", COLOR_DIM, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    s_trainer_name_rect = {172, 80, 594, 114};
+    fill_rect(dc, s_trainer_name_rect, s_edit.kind == EDIT_TRAINER_NAME ?
+              RGB(65, 65, 105) : COLOR_PANEL_ALT);
+    frame_rect(dc, s_trainer_name_rect, COLOR_ACCENT);
+    const char* name = s_edit.kind == EDIT_TRAINER_NAME ? s_edit.buffer : s_trainer_draft.name;
+    RECT name_text = {180, 80, 586, 114};
+    draw_text(dc, name_text, name[0] ? name : "(sans pseudo)",
+              name[0] ? COLOR_TEXT : COLOR_DIM, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    if (s_edit.kind == EDIT_TRAINER_NAME) draw_edit_caret(dc, name_text, name, false);
+
+    RECT time_label = {20, 128, 170, 158};
+    draw_text(dc, time_label, "Temps de jeu (H:MM:SS)", COLOR_DIM,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    s_trainer_time_rect = {172, 126, 360, 160};
+    fill_rect(dc, s_trainer_time_rect, s_edit.kind == EDIT_TRAINER_TIME ?
+              RGB(65, 65, 105) : COLOR_PANEL_ALT);
+    frame_rect(dc, s_trainer_time_rect, COLOR_ACCENT);
+    char play_time[32] = {};
+    format_play_time(play_time, sizeof(play_time), s_trainer_draft.play_seconds);
+    const char* time = s_edit.kind == EDIT_TRAINER_TIME ? s_edit.buffer : play_time;
+    draw_text(dc, s_trainer_time_rect, time, COLOR_TEXT, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    if (s_edit.kind == EDIT_TRAINER_TIME) draw_edit_caret(dc, s_trainer_time_rect, time, true);
+
+    RECT gender_label = {20, 180, 170, 210};
+    draw_text(dc, gender_label, "Sexe", COLOR_DIM, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    const char* gender_labels[] = {"Garcon", "Neutre", "Fille"};
+    for (int i = 0; i < 3; ++i) {
+        s_trainer_gender_rects[i] = {172 + i * 138, 176, 302 + i * 138, 210};
+        draw_button(dc, s_trainer_gender_rects[i], gender_labels[i],
+                    s_trainer_draft.gender == i ? COLOR_ACCENT : RGB(65, 65, 90));
+    }
+
+    RECT badges_label = {20, 232, 594, 258};
+    draw_text(dc, badges_label, "Badges (cliquer pour cocher/decocher)", COLOR_DIM,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    const char* badge_names[] = {"Normal", "Bright Gem", "Surf", "Pixel",
+                                 "Salsa", "Drama", "Apex", "Zen"};
+    for (int i = 0; i < 8; ++i) {
+        const int row = i / 4;
+        const int column = i % 4;
+        s_trainer_badge_rects[i] = {20 + column * 145, 266 + row * 42,
+                                    156 + column * 145, 300 + row * 42};
+        const bool checked = (s_trainer_draft.badge_mask & (1 << i)) != 0;
+        char badge[64] = {};
+        _snprintf_s(badge, sizeof(badge), _TRUNCATE, "%s %s",
+                    checked ? "[x]" : "[ ]", badge_names[i]);
+        draw_button(dc, s_trainer_badge_rects[i], badge,
+                    checked ? COLOR_SUCCESS : RGB(65, 65, 90));
+    }
+
+    s_trainer_apply_rect = {20, 360, 256, 396};
+    s_trainer_refresh_rect = {270, 360, 420, 396};
+    draw_button(dc, s_trainer_apply_rect, "Appliquer", COLOR_SUCCESS);
+    draw_button(dc, s_trainer_refresh_rect, "Recharger", RGB(70, 70, 105));
+    RECT status = {20, 404, 594, 426};
+    draw_text(dc, status, s_trainer_status, COLOR_DIM,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    BitBlt(target, 0, 0, TRAINER_WINDOW_WIDTH, TRAINER_WINDOW_HEIGHT,
+           dc, 0, 0, SRCCOPY);
+    SelectObject(dc, old_font);
+    SelectObject(dc, old_bitmap);
+    DeleteObject(font);
+    DeleteObject(bitmap);
+    DeleteDC(dc);
+    EndPaint(window, &paint);
+}
+
+static void close_trainer() {
+    if (s_edit.window == s_trainer_window) cancel_edit();
+    s_trainer_open = false;
+    opt_trainer_manager_stop();
+    ShowWindow(s_trainer_window, SW_HIDE);
+    if (s_keyboard_window == s_trainer_window)
+        s_keyboard_window = s_pokemon_open ? s_pokemon_window :
+                            (s_inventory_open ? s_inventory_window : NULL);
+}
+
+static void handle_trainer_click(int x, int y) {
+    s_keyboard_window = s_trainer_window;
+    if (point_in(s_trainer_close_rect, x, y)) { close_trainer(); return; }
+    if (y < EDITOR_TITLE_HEIGHT) {
+        s_dragging = true; s_drag_window = s_trainer_window;
+        s_drag_offset_x = x; s_drag_offset_y = y; SetCapture(s_trainer_window);
+        return;
+    }
+    if (point_in(s_trainer_name_rect, x, y)) {
+        begin_edit(EDIT_TRAINER_NAME, s_trainer_window, s_trainer_draft.name, false, 20);
+        return;
+    }
+    if (point_in(s_trainer_time_rect, x, y)) {
+        char value[32] = {};
+        format_play_time(value, sizeof(value), s_trainer_draft.play_seconds);
+        begin_edit(EDIT_TRAINER_TIME, s_trainer_window, value, false, 16);
+        return;
+    }
+    for (int i = 0; i < 3; ++i) if (point_in(s_trainer_gender_rects[i], x, y)) {
+        s_trainer_draft.gender = i; InvalidateRect(s_trainer_window, NULL, FALSE); return;
+    }
+    for (int i = 0; i < 8; ++i) if (point_in(s_trainer_badge_rects[i], x, y)) {
+        s_trainer_draft.badge_mask ^= (1 << i);
+        InvalidateRect(s_trainer_window, NULL, FALSE); return;
+    }
+    if (point_in(s_trainer_apply_rect, x, y)) {
+        if (s_edit.window == s_trainer_window) commit_edit();
+        opt_trainer_manager_apply(s_trainer_draft);
+        lstrcpyA(s_trainer_status, "Application en cours...");
+        InvalidateRect(s_trainer_window, NULL, FALSE); return;
+    }
+    if (point_in(s_trainer_refresh_rect, x, y)) {
+        if (s_edit.window == s_trainer_window) cancel_edit();
+        opt_trainer_manager_refresh(); return;
+    }
+    if (s_edit.window == s_trainer_window) commit_edit();
+}
+
+static bool trainer_point_is_editable(int x, int y) {
+    return point_in(s_trainer_name_rect, x, y) || point_in(s_trainer_time_rect, x, y);
+}
+
 static void close_pokemon() {
     if (s_choice.open) close_choice();
     if (s_edit.window == s_pokemon_window) cancel_edit();
@@ -2068,6 +2276,49 @@ static LRESULT CALLBACK InventoryWindowProc(HWND window, UINT message,
     return DefWindowProcA(window, message, wparam, lparam);
 }
 
+static LRESULT CALLBACK TrainerWindowProc(HWND window, UINT message,
+                                          WPARAM wparam, LPARAM lparam) {
+    switch (message) {
+    case WM_NCHITTEST: return HTCLIENT;
+    case WM_MOUSEACTIVATE: return MA_ACTIVATE;
+    case WM_SETCURSOR: {
+        POINT point = {};
+        GetCursorPos(&point);
+        ScreenToClient(window, &point);
+        SetCursor(LoadCursor(NULL, trainer_point_is_editable(point.x, point.y) ?
+                              IDC_IBEAM : IDC_ARROW));
+        return TRUE;
+    }
+    case WM_ERASEBKGND: return 1;
+    case WM_PAINT: paint_trainer(window); return 0;
+    case WM_TIMER:
+        refresh_trainer_cache();
+        sync_window(window, s_trainer_open);
+        InvalidateRect(window, NULL, FALSE);
+        return 0;
+    case WM_LBUTTONDOWN:
+        handle_trainer_click((short)LOWORD(lparam), (short)HIWORD(lparam));
+        return 0;
+    case WM_MOUSEMOVE:
+        move_dragged_window(window, (short)LOWORD(lparam), (short)HIWORD(lparam));
+        return 0;
+    case WM_LBUTTONUP:
+        if (s_dragging && s_drag_window == window) {
+            s_dragging = false; s_drag_window = NULL; ReleaseCapture();
+        }
+        return 0;
+    case WM_CHAR:
+        handle_editor_char(window, wparam);
+        return 0;
+    case WM_KEYDOWN:
+        if (handle_edit_key(window, wparam)) return 0;
+        if (wparam == VK_ESCAPE) close_trainer();
+        else if (wparam == VK_F5) opt_trainer_manager_refresh();
+        return 0;
+    }
+    return DefWindowProcA(window, message, wparam, lparam);
+}
+
 static bool register_editor_class(const char* name, WNDPROC procedure) {
     WNDCLASSEXA window_class = {};
     window_class.cbSize = sizeof(window_class);
@@ -2090,8 +2341,15 @@ bool trainer_editors_init(HINSTANCE instance, HWND game_window,
         opt_pokemon_manager_shutdown();
         return false;
     }
+    if (!opt_trainer_manager_init(ini_path)) {
+        opt_inventory_manager_shutdown();
+        opt_pokemon_manager_shutdown();
+        return false;
+    }
     if (!register_editor_class("TrainerPokemonEditor", PokemonWindowProc) ||
-        !register_editor_class("TrainerInventoryEditor", InventoryWindowProc)) {
+        !register_editor_class("TrainerInventoryEditor", InventoryWindowProc) ||
+        !register_editor_class("TrainerProfileEditor", TrainerWindowProc)) {
+        opt_trainer_manager_shutdown();
         opt_inventory_manager_shutdown();
         opt_pokemon_manager_shutdown();
         return false;
@@ -2107,17 +2365,26 @@ bool trainer_editors_init(HINSTANCE instance, HWND game_window,
         "TrainerInventoryEditor", "", WS_POPUP, 0, 0,
         INVENTORY_WINDOW_WIDTH, INVENTORY_WINDOW_HEIGHT,
         NULL, NULL, instance, NULL);
-    if (!s_pokemon_window || !s_inventory_window) {
+    s_trainer_window = CreateWindowExA(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+        "TrainerProfileEditor", "", WS_POPUP, 0, 0,
+        TRAINER_WINDOW_WIDTH, TRAINER_WINDOW_HEIGHT,
+        NULL, NULL, instance, NULL);
+    if (!s_pokemon_window || !s_inventory_window || !s_trainer_window) {
         if (s_pokemon_window) DestroyWindow(s_pokemon_window);
         if (s_inventory_window) DestroyWindow(s_inventory_window);
+        if (s_trainer_window) DestroyWindow(s_trainer_window);
         s_pokemon_window = NULL;
         s_inventory_window = NULL;
+        s_trainer_window = NULL;
+        opt_trainer_manager_shutdown();
         opt_inventory_manager_shutdown();
         opt_pokemon_manager_shutdown();
         return false;
     }
     SetTimer(s_pokemon_window, 1, 250, NULL);
     SetTimer(s_inventory_window, 1, 250, NULL);
+    SetTimer(s_trainer_window, 1, 250, NULL);
     return true;
 }
 
@@ -2133,6 +2400,12 @@ void trainer_editors_shutdown() {
         DestroyWindow(s_inventory_window);
         s_inventory_window = NULL;
     }
+    if (s_trainer_window) {
+        KillTimer(s_trainer_window, 1);
+        DestroyWindow(s_trainer_window);
+        s_trainer_window = NULL;
+    }
+    opt_trainer_manager_shutdown();
     opt_inventory_manager_shutdown();
     opt_pokemon_manager_shutdown();
 }
@@ -2140,6 +2413,7 @@ void trainer_editors_shutdown() {
 void trainer_editors_show_pokemon() {
     if (!s_pokemon_window) return;
     close_inventory();
+    close_trainer();
     s_pokemon_open = true;
     s_keyboard_window = s_pokemon_window;
     refresh_pokemon_cache();
@@ -2153,6 +2427,7 @@ void trainer_editors_show_pokemon() {
 void trainer_editors_show_inventory() {
     if (!s_inventory_window) return;
     close_pokemon();
+    close_trainer();
     s_inventory_open = true;
     s_keyboard_window = s_inventory_window;
     refresh_inventory_cache();
@@ -2163,24 +2438,42 @@ void trainer_editors_show_inventory() {
     InvalidateRect(s_inventory_window, NULL, FALSE);
 }
 
+void trainer_editors_show_trainer() {
+    if (!s_trainer_window) return;
+    close_pokemon();
+    close_inventory();
+    s_trainer_open = true;
+    s_keyboard_window = s_trainer_window;
+    s_trainer_revision = -1;
+    lstrcpyA(s_trainer_status, "Chargement du profil...");
+    opt_trainer_manager_start();
+    position_editor(s_trainer_window, TRAINER_WINDOW_WIDTH,
+                    TRAINER_WINDOW_HEIGHT, 48);
+    InvalidateRect(s_trainer_window, NULL, FALSE);
+}
+
 void trainer_editors_hide_all() {
     memset(&s_edit, 0, sizeof(s_edit));
     memset(&s_choice, 0, sizeof(s_choice));
     s_dragging = false;
     s_drag_window = NULL;
-    if (GetCapture() == s_pokemon_window || GetCapture() == s_inventory_window)
+    if (GetCapture() == s_pokemon_window || GetCapture() == s_inventory_window ||
+        GetCapture() == s_trainer_window)
         ReleaseCapture();
     s_pokemon_open = false;
     s_inventory_open = false;
+    s_trainer_open = false;
     opt_pokemon_manager_stop();
     opt_inventory_manager_stop();
+    opt_trainer_manager_stop();
     s_keyboard_window = NULL;
     if (s_pokemon_window) ShowWindow(s_pokemon_window, SW_HIDE);
     if (s_inventory_window) ShowWindow(s_inventory_window, SW_HIDE);
+    if (s_trainer_window) ShowWindow(s_trainer_window, SW_HIDE);
 }
 
 bool trainer_editors_any_open() {
-    return s_pokemon_open || s_inventory_open;
+    return s_pokemon_open || s_inventory_open || s_trainer_open;
 }
 
 bool trainer_editors_is_editing() {
@@ -2194,7 +2487,8 @@ bool trainer_editors_contains_screen_point(const POINT& point) {
 bool trainer_editors_owns_window(HWND window) {
     return window &&
            ((s_pokemon_open && window == s_pokemon_window) ||
-            (s_inventory_open && window == s_inventory_window));
+            (s_inventory_open && window == s_inventory_window) ||
+            (s_trainer_open && window == s_trainer_window));
 }
 
 HWND trainer_editors_window_at_screen_point(const POINT& point) {
@@ -2205,6 +2499,9 @@ HWND trainer_editors_window_at_screen_point(const POINT& point) {
     if (s_inventory_open && s_inventory_window && IsWindowVisible(s_inventory_window) &&
         GetWindowRect(s_inventory_window, &rect) && PtInRect(&rect, point))
         return s_inventory_window;
+    if (s_trainer_open && s_trainer_window && IsWindowVisible(s_trainer_window) &&
+        GetWindowRect(s_trainer_window, &rect) && PtInRect(&rect, point))
+        return s_trainer_window;
     return NULL;
 }
 
@@ -2213,8 +2510,11 @@ HWND trainer_editors_keyboard_window() {
         return s_pokemon_window;
     if (s_keyboard_window == s_inventory_window && s_inventory_open)
         return s_inventory_window;
+    if (s_keyboard_window == s_trainer_window && s_trainer_open)
+        return s_trainer_window;
     if (s_pokemon_open) return s_pokemon_window;
     if (s_inventory_open) return s_inventory_window;
+    if (s_trainer_open) return s_trainer_window;
     return NULL;
 }
 
