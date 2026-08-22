@@ -5,7 +5,8 @@
 #include "options/opt_capture.h"
 #include "options/opt_egghatch.h"
 #include "options/opt_hmforget.h"
-//#include "options/opt_ohk.h"
+#include "options/opt_ohk.h"
+#include "options/opt_itemlock.h"
 #include "options/opt_money.h"
 #include "options/opt_noclip.h"
 #include "options/opt_gamespeed.h"
@@ -80,8 +81,8 @@ MenuItem g_items[] = {
     { "PP infinis", ITEM_TYPE_TOGGLE,
       &g_pp_lock, opt_pp_toggle, NULL,0,0,NULL },
 
-    //{ "One Hit Kill", ITEM_TYPE_TOGGLE,
-    //  &g_ohk_lock, opt_ohk_toggle, NULL,0,0,NULL },
+    { "KO en un coup", ITEM_TYPE_TOGGLE,
+      &g_ohk_lock, opt_ohk_toggle, NULL,0,0,NULL },
 	  
     { "No-clip", ITEM_TYPE_TOGGLE,
       &g_noclip, opt_noclip_toggle, NULL,0,0,NULL },
@@ -160,6 +161,7 @@ struct QuickToggle {
 
 static QuickToggle s_quick_toggles[] = {
     { "Capture 100%", &g_capture_guaranteed, opt_capture_toggle },
+    { "Objets infinis", &g_item_lock, opt_itemlock_toggle },
     { "Eclosion instantanee", &g_egg_hatch_instant, opt_egghatch_toggle },
     { "CS effacables", &g_hm_forget_enabled, opt_hmforget_toggle },
 };
@@ -1127,7 +1129,12 @@ static void paint(HWND hw) {
 
     HFONT of = (HFONT)SelectObject(mem, fB);
     SetTextColor(mem, COL_TEXT);
-    DrawTextA(mem, "Trainer", -1, &trc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    char runtime_title[64];
+    _snprintf_s(runtime_title, sizeof(runtime_title), _TRUNCATE,
+                "Trainer DYN5  HP:%d  CS:%d",
+                opt_hp_runtime_state(), opt_hmforget_runtime_state());
+    DrawTextA(mem, runtime_title, -1, &trc,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
     RECT dh = {4,0,20,TITLE_H};
     SetTextColor(mem, RGB(160,160,200));

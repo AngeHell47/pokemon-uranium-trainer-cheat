@@ -12,7 +12,8 @@
 #include "options/opt_capture.h"
 #include "options/opt_egghatch.h"
 #include "options/opt_hmforget.h"
-//#include "options/opt_ohk.h"
+#include "options/opt_ohk.h"
+#include "options/opt_itemlock.h"
 #include "options/opt_money.h"
 #include "options/opt_noclip.h"
 #include "options/opt_gamespeed.h"
@@ -94,7 +95,8 @@ static DWORD WINAPI main_thread(LPVOID) {
     opt_capture_init(g_ini_path);
     opt_egghatch_init(g_ini_path);
     opt_hmforget_init(g_ini_path);
-    //opt_ohk_init(g_ini_path);
+    opt_ohk_init(g_ini_path);
+    opt_itemlock_init(g_ini_path);
     opt_money_init(g_ini_path);
     opt_noclip_init(g_ini_path);
     opt_gamespeed_init(g_ini_path);
@@ -121,7 +123,8 @@ static DWORD WINAPI main_thread(LPVOID) {
     opt_capture_set_hwnd_and_start(game);
     opt_egghatch_set_hwnd_and_start(game);
     opt_hmforget_set_hwnd_and_start(game);
-    //opt_ohk_set_hwnd_and_start(game);
+    opt_ohk_set_hwnd_and_start(game);
+    opt_itemlock_set_hwnd_and_start(game);
     opt_money_set_hwnd_and_start(game);
     opt_noclip_set_hwnd_and_start(game);
     opt_gamespeed_set_hwnd_and_start(game);

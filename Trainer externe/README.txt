@@ -26,6 +26,11 @@ Sans touche assignee (reglage par defaut), l'acceleration reste permanente.
 Clique sur le petit bouton de touche pour choisir un raccourci a maintenir ;
 Echap, Retour arriere ou Suppr restaure le mode sans touche.
 
+KO en un coup met les Pokemon adverses KO des le premier degat inflige, y
+compris pendant les combats de dresseurs. Objets infinis empeche la
+consommation des Pokeballs, soins, CT et baies ; les objets-clefs restent
+volontairement exclus afin de ne pas bloquer les scripts du scenario.
+
 Le chargement direct ne modifie aucun reglage persistant : lancer Uranium.exe
 normalement conserve l'intro habituelle.
 
