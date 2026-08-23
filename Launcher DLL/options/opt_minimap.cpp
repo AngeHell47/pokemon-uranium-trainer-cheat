@@ -20,6 +20,7 @@ static volatile LONG s_show_fps = 0;
 static volatile LONG s_size = 128;
 static volatile LONG s_zoom = 100;
 static volatile LONG s_pending = 1;
+static volatile LONG s_installed = 0;
 static DWORD s_last_install_attempt = 0;
 
 static int clamp_value(int value, int minimum, int maximum) {
@@ -37,6 +38,7 @@ static void request_update() {
 // carte lisible (murs/routes/eau/sol) sans charger les bitmaps de tilesets a
 // chaque frame.
 static const char kMiniMapRuby[] =
+"installed=0\n"
 "begin\n"
 "  unless defined?(::UraniumMiniMap)\n"
 "    class ::UraniumMiniMap\n"
@@ -301,7 +303,10 @@ static const char kMiniMapRuby[] =
 "            @sprite.visible=false if @sprite && !@sprite.disposed?\n"
 "            return\n"
 "          end\n"
-"          return if !$scene || !defined?(Scene_Map) || !$scene.is_a?(Scene_Map)\n"
+// UraniumMiniMap.update n'est appelee que par Scene_Map#update. Eviter ici
+// is_a? retire une recherche de classe RGSS inutile a chaque image, qui etait
+// justement la routine native dans laquelle le crash C0000005 s'est produit.
+"          return if !$game_map || !$game_player\n"
 "          ensure_sprite\n"
 "          @sprite.visible=true\n"
 "          @sprite.x=Graphics.width-@size-12\n"
@@ -318,6 +323,7 @@ static const char kMiniMapRuby[] =
 "        end\n"
 "      end\n"
 "    end\n"
+"  end\n"
 "    if defined?(::Scene_Map) && !::Scene_Map.method_defined?(:__uranium_minimap_update_v1)\n"
 "      class ::Scene_Map\n"
 "        alias __uranium_minimap_update_v1 update\n"
@@ -337,26 +343,35 @@ static const char kMiniMapRuby[] =
 "        end\n"
 "      end\n"
 "    end\n"
-"  end\n"
+"    installed=1 if ::Scene_Map.method_defined?(:__uranium_minimap_update_v1)\n"
 "  ::UraniumMiniMap.configure(%d,%d,%d,%d,%d) if defined?(::UraniumMiniMap)\n"
+"rescue Exception\n"
+"end\n"
+"begin\n"
+"  Win32API.new(\"kernel32\",\"RtlMoveMemory\",[\"l\",\"p\",\"l\"],\"v\").call(%lu,[installed].pack(\"l\"),4)\n"
 "rescue Exception\n"
 "end\n";
 
 static void __cdecl on_game_thread_tick(void*) {
     const DWORD now = GetTickCount();
     const bool pending = InterlockedExchange(&s_pending, 0) != 0;
-    // Scene_Map peut ne pas etre charge au premier safe point : le bootstrap
-    // est idempotent et retente periodiquement jusqu'a ce qu'il le soit.
-    if (!pending && s_last_install_attempt != 0 && now - s_last_install_attempt < 1000)
-        return;
+    const bool installed =
+        InterlockedExchangeAdd(&s_installed, 0) != 0;
+    // Une fois le hook acquitte, aucune evaluation Ruby n'est necessaire tant
+    // que l'utilisateur ne change pas un reglage. Avant Scene_Map, conserver
+    // seulement un retry borne a une tentative par seconde.
+    if (!pending && installed) return;
+    if (!pending && s_last_install_attempt != 0 &&
+        now - s_last_install_attempt < 1000) return;
     s_last_install_attempt = now;
-    char ruby[sizeof(kMiniMapRuby) + 96] = {};
+    char ruby[sizeof(kMiniMapRuby) + 128] = {};
     _snprintf_s(ruby, sizeof(ruby), _TRUNCATE, kMiniMapRuby,
                 (int)InterlockedCompareExchange(&s_enabled, 0, 0),
                 (int)InterlockedCompareExchange(&s_size, 0, 0),
                 (int)InterlockedCompareExchange(&s_zoom, 0, 0),
                 (int)InterlockedCompareExchange(&s_round, 0, 0),
-                (int)InterlockedCompareExchange(&s_show_fps, 0, 0));
+                (int)InterlockedCompareExchange(&s_show_fps, 0, 0),
+                (unsigned long)(ULONG_PTR)&s_installed);
     if (rgss_safe_eval(ruby) != 0) InterlockedExchange(&s_pending, 1);
 }
 
@@ -373,6 +388,8 @@ void opt_minimap_init(const char* ini_path) {
     InterlockedExchange(&s_size,g_minimap_size);
     InterlockedExchange(&s_zoom,g_minimap_zoom);
     InterlockedExchange(&s_pending,1);
+    InterlockedExchange(&s_installed,0);
+    s_last_install_attempt=0;
 }
 
 void opt_minimap_set_hwnd_and_start(HWND hwnd) {

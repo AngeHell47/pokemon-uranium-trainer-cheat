@@ -110,6 +110,10 @@ cl /nologo /O2 /GS /MT /EHsc /std:c++17 /utf-8 trainer_external.cpp trainer_exte
   /Fe:UraniumTrainer.exe /link /SUBSYSTEM:WINDOWS /MACHINE:X86 user32.lib gdi32.lib comctl32.lib
 if errorlevel 1 exit /b 1
 
+copy /Y "build\version.dll" "version.dll" >nul
+if errorlevel 1 exit /b 1
+
 echo.
 echo Build complete: %CD%\UraniumTrainer.exe
+echo Proxy complete: %CD%\version.dll
 endlocal

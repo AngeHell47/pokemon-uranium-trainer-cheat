@@ -28,7 +28,6 @@ static volatile LONG s_shiny_rate = kNativeShinyDenominator;
 static volatile LONG s_pending = 0;
 static volatile LONG s_installed = 0;
 static volatile LONG s_retry_started = 0;
-static LONG s_refresh_frames = 0;
 static char s_ruby[8192] = {};
 static char s_species_name[64] = {};
 
@@ -64,6 +63,8 @@ static void build_ruby() {
     const char* force_shiny = InterlockedExchangeAdd(&s_shiny_enabled, 0) ? "true" : "false";
 
     _snprintf_s(s_ruby, sizeof(s_ruby), _TRUNCATE,
+        "encounter_installed=false\n"
+        "event_installed=false\n"
         "installed=0\n"
         "begin\n"
         "  $__uranium_trainer_force_next_wild=%s\n"
@@ -104,7 +105,7 @@ static void build_ruby() {
         "        encounter\n"
         "      end\n"
         "    end\n"
-        "    installed=1\n"
+        "    encounter_installed=true\n"
         "  end\n"
         // L'evenement officiel est le point final commun de creation. Il
         // donne un niveau strict (apres Pressure) et une probabilite shiny
@@ -130,8 +131,9 @@ static void build_ruby() {
         "        end\n"
         "      end\n"
         "    end\n"
-        "    installed=1\n"
+        "    event_installed=true\n"
         "  end\n"
+        "  installed=1 if encounter_installed && event_installed\n"
         "rescue Exception\n"
         "end\n"
         "begin\n"
@@ -145,13 +147,11 @@ static void build_ruby() {
 }
 
 static void __cdecl on_game_thread_tick(void*) {
-    if (InterlockedExchange(&s_pending, 0) == 0) {
-        // Les scripts de rencontres sont recharges apres l'arrivee sur la
-        // carte dans certaines sauvegardes. Reposer les deux petits wrappers
-        // les rend disponibles quelle que soit la phase de chargement.
-        if (++s_refresh_frames < 30) return;
-    }
-    s_refresh_frames = 0;
+    // Les globales Ruby suffisent pour modifier les options apres
+    // l'installation. Ne jamais reevaluer le script en tache de fond : le
+    // retry natif ne le repropose que tant que les deux points d'accroche ne
+    // sont pas disponibles, ou sur une demande explicite de l'utilisateur.
+    if (InterlockedExchange(&s_pending, 0) == 0) return;
     build_ruby();
     if (rgss_safe_eval(s_ruby) != 0) InterlockedExchange(&s_pending, 1);
 }
@@ -201,7 +201,6 @@ void opt_encounter_init(const char* ini_path) {
     InterlockedExchange(&s_shiny_rate, g_wild_shiny_rate);
     InterlockedExchange(&s_pending, 1);
     InterlockedExchange(&s_installed, 0);
-    s_refresh_frames = 0;
 }
 
 void opt_encounter_set_hwnd_and_start(HWND hwnd) {

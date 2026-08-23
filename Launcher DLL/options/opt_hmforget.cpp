@@ -11,7 +11,6 @@ static volatile LONG s_pending = 0;
 static volatile LONG s_installed = 0;
 static volatile LONG s_retry_started = 0;
 static volatile LONG s_runtime_state = 0;
-static LONG          s_refresh_frames = 0;
 static char          s_ruby[4096];
 
 static void post_to_game() {
@@ -91,13 +90,10 @@ static void build_ruby() {
 }
 
 static void __cdecl on_game_thread_tick(void*) {
-    if (InterlockedExchange(&s_pending, 0) == 0) {
-        // Certains ecrans rechargent tardivement leur script. Reposer ce
-        // helper une fois par seconde garantit que la version dynamique reste
-        // celle effectivement appelee, sans modifier Scripts.rxdata.
-        if (++s_refresh_frames < 60) return;
-    }
-    s_refresh_frames = 0;
+    // PokemonSummary est charge une seule fois par la VM. Apres acquittement,
+    // les bascules ON/OFF ne changent que les globales du wrapper existant ;
+    // le reevaluer chaque seconde mutait inutilement les tables de methodes.
+    if (InterlockedExchange(&s_pending, 0) == 0) return;
     build_ruby();
     if (rgss_safe_eval(s_ruby) != 0)
         InterlockedExchange(&s_pending, 1);
@@ -130,7 +126,6 @@ void opt_hmforget_init(const char* ini_path) {
     InterlockedExchange(&s_pending, 1);
     InterlockedExchange(&s_installed, 0);
     InterlockedExchange(&s_runtime_state, 0);
-    s_refresh_frames = 0;
 }
 
 void opt_hmforget_set_hwnd_and_start(HWND hwnd) {

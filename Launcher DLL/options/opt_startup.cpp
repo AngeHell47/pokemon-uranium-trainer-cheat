@@ -2,8 +2,11 @@
 #include "../rgss_safe_dispatch.h"
 #include "../trainer_runtime.h"
 
+#include <shellapi.h>
 #include <stdio.h>
 #include <string.h>
+
+#pragma comment(lib, "shell32.lib")
 
 bool g_auto_load_save = false;
 bool g_fast_boot = false;
@@ -36,7 +39,7 @@ static bool startup_error(const char* reason, const char* path) {
     if (!reason) reason = "opération impossible";
     if (!path) path = "";
     _snprintf_s(s_last_error, sizeof(s_last_error), _TRUNCATE,
-                "Impossible d'activer le démarrage automatique.\n\n%s\n\nFichier ciblé : %s\n\nSi le jeu est installé dans Program Files, relance UraniumTrainer.exe en tant qu'administrateur.",
+                "Impossible d'activer le démarrage automatique.\n\n%s\n\nFichier ciblé : %s\n\nLa DLL injectée hérite des droits du jeu : lancer uniquement UraniumTrainer.exe en administrateur ne suffit pas toujours. Lance aussi le jeu en administrateur ou accepte la demande UAC du trainer.",
                 reason, path);
     return false;
 }
@@ -69,6 +72,100 @@ static bool is_trainer_version_proxy(const char* path) {
     }
     CloseHandle(file);
     return found;
+}
+
+// Une DLL injectée s'exécute avec le jeton du jeu. Si le jeu est installé dans
+// Program Files mais lancé normalement, même un launcher élevé ne peut pas
+// écrire à côté de l'exécutable. Dans ce cas, déléguer uniquement le déplacement
+// du proxy à cmd.exe avec le verbe runas déclenche la demande UAC attendue.
+static bool install_version_proxy_elevated(const void* bytes, DWORD size,
+                                           const char* target,
+                                           char* failure, size_t failure_capacity) {
+    if (failure && failure_capacity) failure[0] = '\0';
+    if (!bytes || !size || !target || !target[0]) return false;
+
+    char temp_dir[MAX_PATH] = {};
+    if (!GetTempPathA(sizeof(temp_dir), temp_dir)) {
+        if (failure && failure_capacity)
+            wsprintfA(failure, "Le dossier temporaire est introuvable (erreur %lu).",
+                      (unsigned long)GetLastError());
+        return false;
+    }
+
+    char source[MAX_PATH] = {};
+    if (!GetTempFileNameA(temp_dir, "utr", 0, source)) {
+        if (failure && failure_capacity)
+            wsprintfA(failure, "Le fichier temporaire n'a pas pu être créé (erreur %lu).",
+                      (unsigned long)GetLastError());
+        return false;
+    }
+
+    HANDLE file = CreateFileA(source, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+                              FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) {
+        const DWORD error = GetLastError();
+        DeleteFileA(source);
+        if (failure && failure_capacity)
+            wsprintfA(failure, "Le proxy temporaire n'a pas pu être écrit (erreur %lu).",
+                      (unsigned long)error);
+        return false;
+    }
+    DWORD written = 0;
+    const bool written_ok = WriteFile(file, bytes, size, &written, NULL) &&
+                            written == size;
+    const DWORD write_error = written_ok ? ERROR_SUCCESS : GetLastError();
+    CloseHandle(file);
+    if (!written_ok) {
+        DeleteFileA(source);
+        if (failure && failure_capacity)
+            wsprintfA(failure, "Le proxy temporaire n'a pas pu être écrit (erreur %lu).",
+                      (unsigned long)write_error);
+        return false;
+    }
+
+    char command[MAX_PATH * 2 + 128] = {};
+    _snprintf_s(command, sizeof(command), _TRUNCATE,
+                "/d /c move /Y \"%s\" \"%s\" >nul",
+                source, target);
+    char comspec[MAX_PATH] = {};
+    GetEnvironmentVariableA("ComSpec", comspec, sizeof(comspec));
+    if (!comspec[0]) lstrcpyA(comspec, "cmd.exe");
+
+    SHELLEXECUTEINFOA execute = {};
+    execute.cbSize = sizeof(execute);
+    execute.fMask = SEE_MASK_NOCLOSEPROCESS;
+    execute.hwnd = NULL;
+    execute.lpVerb = "runas";
+    execute.lpFile = comspec;
+    execute.lpParameters = command;
+    execute.nShow = SW_HIDE;
+    if (!ShellExecuteExA(&execute)) {
+        const DWORD error = GetLastError();
+        DeleteFileA(source);
+        if (failure && failure_capacity)
+            wsprintfA(failure, "Windows n'a pas pu demander l'élévation (erreur %lu).",
+                      (unsigned long)error);
+        return false;
+    }
+
+    const DWORD wait = WaitForSingleObject(execute.hProcess, 30000);
+    DWORD exit_code = 1;
+    if (wait == WAIT_OBJECT_0) GetExitCodeProcess(execute.hProcess, &exit_code);
+    if (execute.hProcess) CloseHandle(execute.hProcess);
+    DeleteFileA(source);
+    if (wait != WAIT_OBJECT_0 || exit_code != 0 ||
+        GetFileAttributesA(target) == INVALID_FILE_ATTRIBUTES ||
+        !is_trainer_version_proxy(target)) {
+        if (failure && failure_capacity) {
+            if (wait != WAIT_OBJECT_0)
+                wsprintfA(failure, "L'installation élevée a expiré ou a été annulée.");
+            else
+                wsprintfA(failure, "L'installation élevée a échoué (code %lu).",
+                          (unsigned long)exit_code);
+        }
+        return false;
+    }
+    return true;
 }
 
 static bool remove_version_proxy() {
@@ -134,23 +231,52 @@ static bool install_version_proxy() {
     HANDLE file = CreateFileA(temporary, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
                               FILE_ATTRIBUTE_NORMAL, NULL);
     if (file == INVALID_HANDLE_VALUE) {
+        const DWORD error = GetLastError();
+        if (error == ERROR_ACCESS_DENIED) {
+            char elevated_error[192] = {};
+            if (install_version_proxy_elevated(bytes, size, game_path,
+                                               elevated_error, sizeof(elevated_error)))
+                return true;
+            return startup_error(elevated_error[0] ? elevated_error :
+                                 "Windows refuse l'écriture du proxy (erreur 5).",
+                                 game_path);
+        }
         char reason[160] = {};
         wsprintfA(reason, "Windows refuse l'écriture (erreur %lu).",
-                  (unsigned long)GetLastError());
+                  (unsigned long)error);
         return startup_error(reason, game_path);
     }
     DWORD written = 0;
     const bool ok = WriteFile(file, bytes, size, &written, NULL) && written == size;
+    const DWORD write_error = ok ? ERROR_SUCCESS : GetLastError();
     CloseHandle(file);
     if (!ok) {
         DeleteFileA(temporary);
+        if (write_error == ERROR_ACCESS_DENIED) {
+            char elevated_error[192] = {};
+            if (install_version_proxy_elevated(bytes, size, game_path,
+                                               elevated_error, sizeof(elevated_error)))
+                return true;
+            return startup_error(elevated_error[0] ? elevated_error :
+                                 "Windows refuse l'écriture du proxy (erreur 5).",
+                                 game_path);
+        }
         return startup_error("La copie de version.dll n'a pas pu être écrite.", game_path);
     }
     if (!MoveFileExA(temporary, game_path, MOVEFILE_WRITE_THROUGH)) {
+        const DWORD error = GetLastError();
         char reason[160] = {};
         wsprintfA(reason, "Windows refuse l'installation (erreur %lu).",
-                  (unsigned long)GetLastError());
+                  (unsigned long)error);
         DeleteFileA(temporary);
+        if (error == ERROR_ACCESS_DENIED) {
+            char elevated_error[192] = {};
+            if (install_version_proxy_elevated(bytes, size, game_path,
+                                               elevated_error, sizeof(elevated_error)))
+                return true;
+            return startup_error(elevated_error[0] ? elevated_error : reason,
+                                 game_path);
+        }
         return startup_error(reason, game_path);
     }
     return true;

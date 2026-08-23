@@ -157,7 +157,10 @@ static const char s_patch_body[] =
 "        end\n"
 "\n"
 "        def stable_map?(scene,need_spritesets=true)\n"
-"          return false if !scene || !scene.is_a?(Scene_Map)\n"
+// stable_map? est appelee depuis Scene_Map#update ou avec $scene, puis valide
+// deja les objets de carte et @spritesets. Le test is_a? par image etait donc
+// redondant et traversait exactement la routine RGSS du crash C0000005.
+"          return false if !scene\n"
 "          return false if !$game_player || !$game_map\n"
 "          return false if !Graphics.respond_to?(:dll_camera_set_size)\n"
 "          return false if !Object.private_method_defined?(:pbSetResizeFactor2) &&\n"
@@ -282,7 +285,7 @@ static const char s_patch_body[] =
 "        end\n"
 "\n"
 "        def recreate(scene)\n"
-"          return true if !scene || !scene.is_a?(Scene_Map)\n"
+"          return true if !scene\n"
 "          scene.disposeSpritesets\n"
 "          scene.createSpritesets\n"
 "          return true\n"

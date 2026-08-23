@@ -23,8 +23,9 @@ imbriqués à `Graphics.update` sans réentrer dans les callbacks du trainer.
   reposé en mémoire avec une condition supplémentaire autour de son unique
   refus. Le helper `pbIsHiddenMove?` est également réinstallé, sans affecter
   l'utilisation des CS sur la carte ni les objets HM. Les deux méthodes sont
-  reposées périodiquement pour résister aux chargements tardifs d'Uranium. Le
-  drapeau `$DEBUG`, que le jeu consulte dans ce refus précis, est également
+  installées une fois après acquittement de `PokemonSummary`, puis uniquement
+  mises à jour lors d'une bascule explicite de l'option. Le drapeau `$DEBUG`,
+  que le jeu consulte dans ce refus précis, est également
   forcé pendant l'activation et remis à faux à la désactivation.
 
 ## Éditeurs persistants
@@ -113,6 +114,12 @@ aléatoire par une espèce choisie (ID Pokédex 1 à 800) et fixer son niveau. L
 taux shiny est un dénominateur `1/N` réglable de 1 à 1024 : il est tiré après
 la création complète du Pokémon sauvage et ajuste son PID pour respecter ce
 taux. Hors activation, le slider revient sur la valeur native 1/1024.
+
+Les deux points d'accroche (`$PokemonEncounters` et
+`Events.onWildPokemonCreate`) doivent désormais confirmer leur installation.
+Le bootstrap réessaie seulement tant que l'un manque ; une fois acquitté, il
+n'exécute plus `RGSSEval` périodiquement et les réglages utilisent les globales
+Ruby déjà installées.
 
 ### PC accessible partout
 

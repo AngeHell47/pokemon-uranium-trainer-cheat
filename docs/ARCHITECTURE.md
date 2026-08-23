@@ -36,7 +36,10 @@ présence de la fenêtre d'overlay. Une deuxième connexion réutilise donc
 l'instance prête sans charger un second payload. En mode d'attache externe
 normal, aucun `version.dll` de trainer n'est nécessaire à côté de `Uranium.exe`;
 l'option « Start trainer with game » installe explicitement le proxy géré à cet
-emplacement pour les lancements suivants.
+emplacement pour les lancements suivants. Le payload injecté hérite toutefois
+du niveau d'élévation du jeu, pas de celui du launcher : si `Uranium.exe` est
+dans `Program Files` et lancé normalement, l'installation du proxy bascule
+sur une demande UAC dédiée avant de déplacer le fichier.
 
 ## Principes de sûreté
 

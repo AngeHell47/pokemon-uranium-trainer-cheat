@@ -3003,6 +3003,18 @@ static bool partymon_on_keydown(WPARAM vk) {
 }
 #endif
 
+static void show_startup_error(HWND owner) {
+    const char* utf8 = opt_startup_last_error();
+    wchar_t message[1024] = {};
+    if (!utf8 || MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                     utf8, -1, message, ARRAYSIZE(message)) == 0) {
+        MultiByteToWideChar(CP_ACP, 0, utf8 ? utf8 : "", -1,
+                            message, ARRAYSIZE(message));
+    }
+    MessageBoxW(owner, message, L"Uranium Trainer",
+                MB_OK | MB_ICONWARNING);
+}
+
 // ------------------------------------------------------------
 // WINDOW PROC
 // ------------------------------------------------------------
@@ -3157,8 +3169,7 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
                 if (opt_startup_set_auto_trainer(requested))
                     s_auto_start_trainer = requested;
                 else if (requested)
-                    MessageBoxA(hw, opt_startup_last_error(),
-                                "Uranium Trainer", MB_OK | MB_ICONWARNING);
+                    show_startup_error(hw);
                 if (!s_auto_start_trainer && s_fast_boot) {
                     s_fast_boot = false;
                     opt_startup_set_fast_boot(false);

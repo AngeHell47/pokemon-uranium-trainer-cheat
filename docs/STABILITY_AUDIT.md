@@ -125,3 +125,18 @@ un registre borné de callbacks à la frontière native volontaire de Ruby. Une
 garde de profondeur empêche toute réentrée si un script appelle indirectement
 `Graphics.update`. Toutes les options effectivement compilées utilisent ce
 répartiteur ; le prototype OHK historique n'est pas inclus dans le build.
+
+## Récurrence C0000005 à `RGSS102E.dll+0x717E6`
+
+L'adresse correspond précisément aux méthodes Ruby `Object#is_a?` et
+`Object#kind_of?` (`class or module required`). Le trainer ajoutait encore deux
+appels `is_a?(Scene_Map)` à chaque image via le dézoom et la mini-carte. Ces
+tests redondants ont été retirés : leurs appelants sont déjà
+`Scene_Map#update` et valident ensuite les objets de carte nécessaires.
+
+La mini-carte possède maintenant un acquittement natif d'installation et ne
+réévalue plus son module chaque seconde après succès. Les hooks de rencontres
+attendent l'acquittement conjoint de `$PokemonEncounters` et de
+`Events.onWildPokemonCreate`, puis cessent également toute réévaluation de
+fond. Le remplacement CS suit la même règle. Les changements explicites de
+réglage continuent d'être transmis au prochain point sûr RGSS.

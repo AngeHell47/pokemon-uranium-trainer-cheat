@@ -6,16 +6,32 @@ A standalone trainer for Pokémon Uranium. It attaches to a game that is already
 
 ![Trainer preview](Trainer%20externe/preview.png)
 
-## How to use
+## Installation
+
+Choose either of these methods:
+
+### Automatic loading with `version.dll`
+
+1. Copy `version.dll` next to the game's `Uranium.exe`.
+2. Start Pokémon Uranium normally.
+
+The trainer loads automatically with the game, so the external injector is not
+required. Remove `version.dll` from the game directory to disable automatic
+loading.
+
+### External injector
 
 1. Start Pokémon Uranium normally.
 2. Open `UraniumTrainer.exe`.
 3. Select the `Uranium.exe` process.
 4. Click **Attach to process**.
 
-The menu opens automatically in the game. Press `Insert` to show or hide it.
+With either method, the menu opens inside the game. Press `Insert` to show or
+hide it.
 
 > If the game is running as administrator, run the trainer as administrator too.
+> Copying `version.dll` into a protected `Program Files` directory may also
+> require administrator permission.
 
 ## Features
 
@@ -37,4 +53,7 @@ cd "Trainer externe"
 build.bat
 ```
 
-The compiled executable is available at `Trainer externe/UraniumTrainer.exe`.
+The compiled files are available at:
+
+- `Trainer externe/UraniumTrainer.exe`
+- `Trainer externe/version.dll`
