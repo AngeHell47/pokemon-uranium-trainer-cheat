@@ -62,6 +62,35 @@ static HWND find_own_game_window() {
     return game;
 }
 
+static void disable_active_trainer_options() {
+    // Each option publishes its normal state to the RGSS thread. The ordered
+    // dispatcher flush below makes sure those values reach Ruby before its
+    // callbacks and hooks are removed.
+    opt_pause_toggle(false);
+    opt_hp_toggle(false);
+    opt_pp_toggle(false);
+    opt_capture_toggle(false);
+    opt_trainer_capture_toggle(false);
+    opt_egghatch_toggle(false);
+    opt_hmforget_toggle(false);
+    opt_ohk_toggle(false);
+    opt_damage_apply(1);
+    opt_itemlock_toggle(false);
+    opt_noclip_toggle(false);
+    opt_gamespeed_apply(1);
+    opt_gamespeed_toggle(false);
+    opt_speed_reset_defaults();
+    opt_noenc_toggle(false);
+    opt_encounter_toggle_force(false);
+    opt_encounter_toggle_level(false);
+    opt_encounter_toggle_shiny(false);
+    opt_time_apply_hour(-1);
+    opt_weather_apply(-1);
+    opt_zoom_apply(100);
+    opt_minimap_toggle_fps(false);
+    opt_minimap_toggle(false);
+}
+
 static DWORD WINAPI main_thread(LPVOID) {
     HMODULE hRgss = NULL;
     for (int i=0;i<3000&&!hRgss;i++){hRgss=GetModuleHandleA("RGSS102E.dll");if(!hRgss)Sleep(10);}
@@ -149,6 +178,10 @@ static DWORD WINAPI main_thread(LPVOID) {
     menu_open();
     if (g_trainer_ready) SetEvent(g_trainer_ready);
     menu_start_loop();
+    disable_active_trainer_options();
+    // Do not detach the dispatcher before this frame: the Ruby wrappers must
+    // receive their OFF/default values while the game thread is still safe.
+    rgss_safe_dispatch_flush(INFINITE);
     opt_godmode_repair_shutdown();
     opt_extras_shutdown();
     rgss_safe_dispatch_shutdown();

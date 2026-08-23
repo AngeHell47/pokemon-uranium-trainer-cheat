@@ -60,6 +60,10 @@ bool rgss_safe_dispatch_is_stopping();
 bool rgss_safe_dispatch_register(RgssSafeCallback callback, void* context);
 void rgss_safe_dispatch_unregister(RgssSafeCallback callback, void* context);
 
+// Wait until every callback already registered before this call has run once
+// on the RGSS thread. This is used to apply a last, ordered cleanup frame.
+bool rgss_safe_dispatch_flush(DWORD timeout_ms);
+
 // Hint sans garantie de latence : reveille la pompe Win32 pendant le bootstrap.
 // Une fois le detour confirme, les callbacks sont naturellement draines a
 // chaque frame et n'ont pas besoin de notifier.

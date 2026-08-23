@@ -18,6 +18,10 @@ struct CallbackEntry {
     void* context;
 };
 
+struct CallbackBarrier {
+    HANDLE complete;
+};
+
 enum DispatchState {
     DISPATCH_STOPPED = 0,
     DISPATCH_BOOTSTRAP = 1,
@@ -84,6 +88,11 @@ static RGSSEval_t s_eval = NULL;
 
 static RubyValue __cdecl graphics_update_detour(RubyValue self);
 static void remove_bootstrap_hooks();
+
+static void __cdecl signal_callback_barrier(void* context) {
+    CallbackBarrier* barrier = (CallbackBarrier*)context;
+    if (barrier && barrier->complete) SetEvent(barrier->complete);
+}
 
 static void set_diagnostic_stage(LONG stage) {
     InterlockedExchange(&s_diag_stage, stage);
@@ -895,6 +904,25 @@ void rgss_safe_dispatch_unregister(RgssSafeCallback callback, void* context) {
     // Ne pas attendre notre propre snapshot si un callback se desinscrit.
     if (!rgss_safe_dispatch_is_safe_thread() && s_snapshot_idle)
         WaitForSingleObject(s_snapshot_idle, INFINITE);
+}
+
+bool rgss_safe_dispatch_flush(DWORD timeout_ms) {
+    if (rgss_safe_dispatch_is_safe_thread()) return false;
+    HANDLE complete = CreateEventA(NULL, TRUE, FALSE, NULL);
+    if (!complete) return false;
+
+    CallbackBarrier barrier = {complete};
+    if (!rgss_safe_dispatch_register(signal_callback_barrier, &barrier)) {
+        CloseHandle(complete);
+        return false;
+    }
+
+    rgss_safe_dispatch_notify();
+    const bool completed =
+        WaitForSingleObject(complete, timeout_ms) == WAIT_OBJECT_0;
+    rgss_safe_dispatch_unregister(signal_callback_barrier, &barrier);
+    CloseHandle(complete);
+    return completed;
 }
 
 void rgss_safe_dispatch_notify() {
