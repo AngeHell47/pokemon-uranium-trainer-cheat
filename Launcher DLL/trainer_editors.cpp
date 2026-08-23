@@ -15,12 +15,13 @@ namespace {
 enum {
     POKEMON_WINDOW_WIDTH = 1060,
     POKEMON_WINDOW_HEIGHT = 720,
-    INVENTORY_WINDOW_WIDTH = 940,
-    INVENTORY_WINDOW_HEIGHT = 680,
+    INVENTORY_WINDOW_WIDTH = 720,
+    INVENTORY_WINDOW_HEIGHT = 620,
     TRAINER_WINDOW_WIDTH = 620,
     TRAINER_WINDOW_HEIGHT = 430,
     EDITOR_TITLE_HEIGHT = 36,
-    LIST_ROW_HEIGHT = 22
+    LIST_ROW_HEIGHT = 22,
+    INVENTORY_LIST_ROW_HEIGHT = 30
 };
 
 static const COLORREF UI_BACKGROUND = RGB(11, 16, 26);
@@ -79,9 +80,7 @@ static InventoryCatalogEntry s_inventory_catalog[INVENTORY_MANAGER_MAX_CATALOG] 
 static int s_inventory_count = 0;
 static int s_catalog_count = 0;
 static LONG s_inventory_revision = -1;
-static LONG s_inventory_status_revision = -1;
 static bool s_inventory_truncated = false;
-static char s_inventory_status[128] = {};
 static int s_inventory_pocket = -1;
 static int s_inventory_scroll = 0;
 static int s_catalog_scroll = 0;
@@ -89,6 +88,7 @@ static int s_inventory_selected_item = 0;
 static int s_inventory_quantity = 1;
 static char s_item_search[64] = {};
 static int s_inventory_active_pane = 0;
+static bool s_inventory_add_mode = false;
 static int s_inventory_delete_item = 0;
 static DWORD s_inventory_delete_deadline = 0;
 
@@ -104,6 +104,7 @@ enum EditKind {
     EDIT_CREATE_LEVEL,
     EDIT_ITEM_SEARCH,
     EDIT_INVENTORY_QUANTITY,
+    EDIT_INVENTORY_ROW_QUANTITY,
     EDIT_TRAINER_NAME,
     EDIT_TRAINER_TIME,
     EDIT_CHOICE_SEARCH
@@ -178,13 +179,22 @@ static RECT s_inventory_owned_rect = {};
 static RECT s_inventory_catalog_rect = {};
 static RECT s_inventory_search_rect = {};
 static RECT s_inventory_quantity_rect = {};
-static RECT s_inventory_set_rect = {};
-static RECT s_inventory_give_rect = {};
-static RECT s_inventory_remove_rect = {};
+static RECT s_inventory_add_button = {};
+static RECT s_inventory_add_confirm = {};
+static RECT s_inventory_add_cancel = {};
 static RECT s_inventory_refresh_rect = {};
 static RECT s_inventory_close_rect = {};
 static RECT s_pocket_buttons[10] = {};
 static int s_pocket_button_count = 0;
+
+struct InventoryRowHit {
+    RECT quantity;
+    RECT remove;
+    int item_id;
+};
+
+static InventoryRowHit s_inventory_row_hits[24] = {};
+static int s_inventory_row_hit_count = 0;
 
 static RECT s_trainer_name_rect = {};
 static RECT s_trainer_time_rect = {};
@@ -394,7 +404,8 @@ static void update_live_edit_value() {
     case EDIT_INVENTORY_QUANTITY:
         s_inventory_quantity = atoi(s_edit.buffer);
         if (s_inventory_quantity < 0) s_inventory_quantity = 0;
-        if (s_inventory_quantity > 999) s_inventory_quantity = 999;
+        if (s_inventory_quantity > INVENTORY_MANAGER_MAX_QUANTITY)
+            s_inventory_quantity = INVENTORY_MANAGER_MAX_QUANTITY;
         break;
     case EDIT_TRAINER_NAME:
         lstrcpynA(s_trainer_draft.name, s_edit.buffer,
@@ -458,6 +469,13 @@ static void commit_edit() {
             opt_pokemon_manager_set_text(
                 s_edit.target, s_edit.pokemon_field, s_edit.buffer);
         }
+    } else if (s_edit.kind == EDIT_INVENTORY_ROW_QUANTITY &&
+               s_edit.sub_index > 0) {
+        int quantity = atoi(s_edit.buffer);
+        if (quantity < 0) quantity = 0;
+        if (quantity > INVENTORY_MANAGER_MAX_QUANTITY)
+            quantity = INVENTORY_MANAGER_MAX_QUANTITY;
+        opt_inventory_manager_set_quantity(s_edit.sub_index, quantity);
     } else {
         update_live_edit_value();
     }
@@ -822,18 +840,6 @@ static int item_quantity(int item_id) {
     return 0;
 }
 
-static const char* item_name(int item_id) {
-    for (int i = 0; i < s_catalog_count; ++i) {
-        if (s_inventory_catalog[i].item_id == item_id)
-            return s_inventory_catalog[i].name;
-    }
-    for (int i = 0; i < s_inventory_count; ++i) {
-        if (s_inventory_entries[i].item_id == item_id)
-            return s_inventory_entries[i].name;
-    }
-    return "No item selected";
-}
-
 static void refresh_pokemon_cache() {
     LONG revision = 0;
     bool truncated = false;
@@ -875,13 +881,7 @@ static void refresh_inventory_cache() {
         s_inventory_revision = revision;
         s_catalog_count = opt_inventory_manager_copy_catalog(
             s_inventory_catalog, INVENTORY_MANAGER_MAX_CATALOG, NULL);
-        if (s_inventory_selected_item > 0 &&
-            !item_name(s_inventory_selected_item)[0])
-            s_inventory_selected_item = 0;
     }
-    opt_inventory_manager_copy_status(s_inventory_status,
-                                      sizeof(s_inventory_status),
-                                      &s_inventory_status_revision);
 }
 
 static void add_pokemon_hit(const RECT& rect, PokemonEditField field,
@@ -1529,15 +1529,30 @@ static void paint_pokemon(HWND window) {
 }
 
 static void draw_inventory_lists(HDC dc) {
-    s_inventory_owned_rect = {12, 104, 454, 538};
-    s_inventory_catalog_rect = {466, 104, 928, 538};
+    s_inventory_owned_rect = {16, 152, 704, 604};
+    RECT header = {16, 128, 704, 152};
+    fill_rect(dc, header, COLOR_TITLE);
+    frame_rect(dc, header, COLOR_BORDER);
+    RECT id_header = {28, 128, 82, 152};
+    RECT item_header = {88, 128, 416, 152};
+    RECT pocket_header = {424, 128, 488, 152};
+    RECT quantity_header = {500, 128, 586, 152};
+    draw_text(dc, id_header, "ID", COLOR_DIM,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, item_header, "Item", COLOR_DIM,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, pocket_header, "Pocket", COLOR_DIM,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, quantity_header, "Quantity", COLOR_DIM,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
     fill_rect(dc, s_inventory_owned_rect, COLOR_PANEL);
-    fill_rect(dc, s_inventory_catalog_rect, COLOR_PANEL);
     frame_rect(dc, s_inventory_owned_rect, COLOR_BORDER);
-    frame_rect(dc, s_inventory_catalog_rect, COLOR_BORDER);
+    s_inventory_row_hit_count = 0;
 
     const int owned_visible = (s_inventory_owned_rect.bottom -
-                               s_inventory_owned_rect.top) / LIST_ROW_HEIGHT;
+                               s_inventory_owned_rect.top) /
+                              INVENTORY_LIST_ROW_HEIGHT;
     const int owned_count = inventory_filtered_count();
     int owned_max_scroll = owned_count - owned_visible;
     if (owned_max_scroll < 0) owned_max_scroll = 0;
@@ -1548,56 +1563,181 @@ static void draw_inventory_lists(HDC dc) {
         if (index < 0) break;
         const InventoryEntry& item = s_inventory_entries[index];
         RECT row_rect = {s_inventory_owned_rect.left + 1,
-                         s_inventory_owned_rect.top + row * LIST_ROW_HEIGHT + 1,
+                         s_inventory_owned_rect.top +
+                             row * INVENTORY_LIST_ROW_HEIGHT + 1,
                          s_inventory_owned_rect.right - 1,
-                         s_inventory_owned_rect.top + (row + 1) * LIST_ROW_HEIGHT};
+                         s_inventory_owned_rect.top +
+                             (row + 1) * INVENTORY_LIST_ROW_HEIGHT};
         if (row & 1) fill_rect(dc, row_rect, RGB(21, 29, 44));
         if (item.item_id == s_inventory_selected_item) {
             fill_rect(dc, row_rect, COLOR_HOVER);
-            RECT selected_accent = {row_rect.left, row_rect.top,
-                                    row_rect.left + 3, row_rect.bottom};
-            fill_rect(dc, selected_accent, COLOR_ACCENT);
         }
-        char line[160] = {};
-        _snprintf(line, sizeof(line) - 1, "P%d   #%d   %-38s x%d",
-                  item.pocket, item.item_id, item.name, item.quantity);
-        RECT text_rect = {row_rect.left + 5, row_rect.top,
-                          row_rect.right - 4, row_rect.bottom};
-        draw_text(dc, text_rect, line, COLOR_TEXT,
+        char id[24] = {};
+        wsprintfA(id, "#%d", item.item_id);
+        RECT id_rect = {28, row_rect.top, 82, row_rect.bottom};
+        RECT name_rect = {88, row_rect.top, 416, row_rect.bottom};
+        RECT pocket_rect = {424, row_rect.top, 488, row_rect.bottom};
+        char pocket[16] = {};
+        wsprintfA(pocket, "P%d", item.pocket);
+        draw_text(dc, id_rect, id, COLOR_DIM,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        draw_text(dc, name_rect, item.name, COLOR_TEXT,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        draw_text(dc, pocket_rect, pocket, COLOR_DIM,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+        if (s_inventory_row_hit_count <
+            (int)(sizeof(s_inventory_row_hits) /
+                  sizeof(s_inventory_row_hits[0]))) {
+            InventoryRowHit& hit =
+                s_inventory_row_hits[s_inventory_row_hit_count++];
+            hit.item_id = item.item_id;
+            hit.quantity = {500, row_rect.top + 4, 586, row_rect.bottom - 4};
+            hit.remove = {600, row_rect.top + 4, 692, row_rect.bottom - 4};
+
+            const bool editing =
+                s_edit.kind == EDIT_INVENTORY_ROW_QUANTITY &&
+                s_edit.sub_index == item.item_id;
+            fill_rounded_rect(dc, hit.quantity,
+                              editing ? RGB(65, 65, 105) : COLOR_PANEL_ALT, 6);
+            frame_rounded_rect(dc, hit.quantity,
+                               editing ? COLOR_ACCENT : COLOR_BORDER, 6);
+            char quantity[16] = {};
+            wsprintfA(quantity, "%d", item.quantity);
+            const char* shown = editing ? s_edit.buffer : quantity;
+            draw_text(dc, hit.quantity, shown, COLOR_TEXT,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            if (editing)
+                draw_edit_caret(dc, hit.quantity, s_edit.buffer, true);
+
+            const bool pending =
+                s_inventory_delete_item == item.item_id &&
+                s_inventory_delete_deadline > GetTickCount();
+            draw_button(dc, hit.remove, pending ? "Confirm" : "Delete",
+                        COLOR_DANGER);
+        }
     }
 
-    const int catalog_visible = (s_inventory_catalog_rect.bottom -
-                                 s_inventory_catalog_rect.top) / LIST_ROW_HEIGHT;
-    const int catalog_count = item_catalog_filtered_count();
-    int catalog_max_scroll = catalog_count - catalog_visible;
-    if (catalog_max_scroll < 0) catalog_max_scroll = 0;
-    if (s_catalog_scroll > catalog_max_scroll)
-        s_catalog_scroll = catalog_max_scroll;
-    for (int row = 0; row < catalog_visible; ++row) {
+    if (owned_count == 0) {
+        RECT empty = {32, 220, 688, 300};
+        draw_text(dc, empty, "Your bag is empty.", COLOR_DIM,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+}
+
+static void draw_inventory_add_dialog(HDC dc) {
+    RECT veil = {1, EDITOR_TITLE_HEIGHT, INVENTORY_WINDOW_WIDTH - 1,
+                 INVENTORY_WINDOW_HEIGHT - 1};
+    fill_rect(dc, veil, RGB(7, 11, 19));
+
+    RECT dialog = {54, 54, 666, 566};
+    fill_rounded_rect(dc, dialog, COLOR_PANEL, 10);
+    frame_rounded_rect(dc, dialog, COLOR_ACCENT, 10);
+    RECT title = {72, 66, 648, 92};
+    draw_text(dc, title, "Add item", COLOR_TEXT,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    RECT description = {72, 92, 648, 114};
+    draw_text(dc, description,
+              "Choose an item and enter the quantity to add.", COLOR_DIM,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    s_inventory_search_rect = {72, 122, 648, 152};
+    fill_rounded_rect(dc, s_inventory_search_rect,
+                      s_edit.kind == EDIT_ITEM_SEARCH ?
+                          RGB(65, 65, 105) : COLOR_PANEL_ALT, 6);
+    frame_rounded_rect(dc, s_inventory_search_rect, COLOR_ACCENT, 6);
+    RECT search_text = {82, 122, 638, 152};
+    const char* shown_search = s_edit.kind == EDIT_ITEM_SEARCH ?
+        s_edit.buffer : s_item_search;
+    draw_text(dc, search_text, shown_search[0] ? shown_search :
+              "Search by name or ID...",
+              shown_search[0] ? COLOR_TEXT : COLOR_DIM,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (s_edit.kind == EDIT_ITEM_SEARCH)
+        draw_edit_caret(dc, search_text, s_edit.buffer, false);
+
+    RECT catalog_header = {72, 162, 648, 186};
+    fill_rect(dc, catalog_header, COLOR_TITLE);
+    frame_rect(dc, catalog_header, COLOR_BORDER);
+    RECT id_header = {82, 162, 132, 186};
+    RECT item_header = {140, 162, 540, 186};
+    RECT owned_header = {548, 162, 638, 186};
+    draw_text(dc, id_header, "ID", COLOR_DIM,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, item_header, "Item", COLOR_DIM,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, owned_header, "In bag", COLOR_DIM,
+              DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+
+    s_inventory_catalog_rect = {72, 186, 648, 472};
+    fill_rect(dc, s_inventory_catalog_rect, COLOR_PANEL_ALT);
+    frame_rect(dc, s_inventory_catalog_rect, COLOR_BORDER);
+    const int visible = (s_inventory_catalog_rect.bottom -
+                         s_inventory_catalog_rect.top) / LIST_ROW_HEIGHT;
+    const int filtered = item_catalog_filtered_count();
+    int maximum = filtered - visible;
+    if (maximum < 0) maximum = 0;
+    if (s_catalog_scroll > maximum) s_catalog_scroll = maximum;
+    for (int row = 0; row < visible; ++row) {
         const int index = item_catalog_filtered_at(s_catalog_scroll + row);
         if (index < 0) break;
         const InventoryCatalogEntry& item = s_inventory_catalog[index];
-        RECT row_rect = {s_inventory_catalog_rect.left + 1,
-                         s_inventory_catalog_rect.top + row * LIST_ROW_HEIGHT + 1,
-                         s_inventory_catalog_rect.right - 1,
-                         s_inventory_catalog_rect.top + (row + 1) * LIST_ROW_HEIGHT};
+        RECT row_rect = {73, 186 + row * LIST_ROW_HEIGHT, 647,
+                         186 + (row + 1) * LIST_ROW_HEIGHT};
         if (row & 1) fill_rect(dc, row_rect, RGB(21, 29, 44));
         if (item.item_id == s_inventory_selected_item) {
             fill_rect(dc, row_rect, COLOR_HOVER);
-            RECT selected_accent = {row_rect.left, row_rect.top,
-                                    row_rect.left + 3, row_rect.bottom};
-            fill_rect(dc, selected_accent, COLOR_ACCENT);
+            RECT accent = {row_rect.left, row_rect.top,
+                           row_rect.left + 3, row_rect.bottom};
+            fill_rect(dc, accent, COLOR_ACCENT);
         }
-        char line[160] = {};
-        _snprintf(line, sizeof(line) - 1, "P%d   #%d   %-43s (x%d)",
-                  item.pocket, item.item_id, item.name,
-                  item_quantity(item.item_id));
-        RECT text_rect = {row_rect.left + 5, row_rect.top,
-                          row_rect.right - 4, row_rect.bottom};
-        draw_text(dc, text_rect, line, COLOR_TEXT,
+        char id[24] = {};
+        char owned[24] = {};
+        wsprintfA(id, "#%d", item.item_id);
+        const int current = item_quantity(item.item_id);
+        if (current > 0) wsprintfA(owned, "x%d", current);
+        else lstrcpyA(owned, "-");
+        RECT id_rect = {82, row_rect.top, 132, row_rect.bottom};
+        RECT name_rect = {140, row_rect.top, 540, row_rect.bottom};
+        RECT owned_rect = {548, row_rect.top, 638, row_rect.bottom};
+        draw_text(dc, id_rect, id, COLOR_DIM,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        draw_text(dc, name_rect, item.name, COLOR_TEXT,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        draw_text(dc, owned_rect, owned,
+                  current > 0 ? COLOR_TEXT : COLOR_DIM,
+                  DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
     }
+    if (filtered == 0) {
+        RECT empty = {90, 240, 630, 310};
+        draw_text(dc, empty, "No items found.", COLOR_DIM,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+
+    RECT quantity_label = {72, 492, 146, 524};
+    draw_text(dc, quantity_label, "Quantity", COLOR_DIM,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    s_inventory_quantity_rect = {148, 492, 226, 524};
+    fill_rounded_rect(dc, s_inventory_quantity_rect,
+                      s_edit.kind == EDIT_INVENTORY_QUANTITY ?
+                          RGB(65, 65, 105) : COLOR_PANEL_ALT, 6);
+    frame_rounded_rect(dc, s_inventory_quantity_rect, COLOR_ACCENT, 6);
+    char quantity[16] = {};
+    wsprintfA(quantity, "%d", s_inventory_quantity);
+    draw_text(dc, s_inventory_quantity_rect,
+              s_edit.kind == EDIT_INVENTORY_QUANTITY ?
+                  s_edit.buffer : quantity,
+              COLOR_TEXT, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    if (s_edit.kind == EDIT_INVENTORY_QUANTITY)
+        draw_edit_caret(dc, s_inventory_quantity_rect, s_edit.buffer, true);
+
+    s_inventory_add_confirm = {292, 492, 472, 524};
+    s_inventory_add_cancel = {482, 492, 648, 524};
+    const bool can_add = s_inventory_selected_item > 0 &&
+                         s_inventory_quantity > 0;
+    draw_button(dc, s_inventory_add_confirm, "Add selected item",
+                can_add ? COLOR_SUCCESS : RGB(55, 68, 80));
+    draw_button(dc, s_inventory_add_cancel, "Cancel", RGB(70, 70, 105));
 }
 
 static void paint_inventory(HWND window) {
@@ -1619,91 +1759,40 @@ static void paint_inventory(HWND window) {
     draw_title(dc, INVENTORY_WINDOW_WIDTH, "Inventory manager",
                &s_inventory_close_rect);
 
-    RECT owned_title = {12, 38, 454, 62};
-    RECT catalog_title = {466, 38, 928, 62};
-    char owned_text[96] = {};
-    _snprintf(owned_text, sizeof(owned_text) - 1, "Owned items (%d)%s",
-              s_inventory_count, s_inventory_truncated ? " - list truncated" : "");
-    draw_text(dc, owned_title, owned_text, COLOR_TEXT,
+    RECT owned_title = {16, 48, 250, 80};
+    RECT owned_count_rect = {250, 48, 310, 80};
+    draw_text(dc, owned_title, "Owned items", COLOR_TEXT,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, catalog_title, "Full catalog / give an item", COLOR_TEXT,
+    char owned_count[32] = {};
+    _snprintf(owned_count, sizeof(owned_count) - 1, "%d%s", s_inventory_count,
+              s_inventory_truncated ? "+" : "");
+    draw_text(dc, owned_count_rect, owned_count, COLOR_DIM,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    s_inventory_add_button = {418, 48, 558, 80};
+    s_inventory_refresh_rect = {566, 48, 704, 80};
+    draw_button(dc, s_inventory_add_button, "Add item", COLOR_SUCCESS);
+    draw_button(dc, s_inventory_refresh_rect, "Refresh", RGB(70, 70, 105));
+
+    RECT pockets_label = {16, 92, 82, 118};
+    draw_text(dc, pockets_label, "Pockets", COLOR_DIM,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
     s_pocket_button_count = 0;
-    int pocket_x = 12;
+    int pocket_x = 82;
     for (int i = -1; i <= 8; ++i) {
-        RECT button = {pocket_x, 68, pocket_x + (i < 0 ? 48 : 39), 96};
+        RECT button = {pocket_x, 92, pocket_x + (i < 0 ? 56 : 38), 118};
         s_pocket_buttons[s_pocket_button_count++] = button;
         char label[12] = {};
         if (i < 0) lstrcpyA(label, "All");
         else wsprintfA(label, "P%d", i);
         draw_button(dc, button, label,
                     s_inventory_pocket == i ? COLOR_ACCENT : RGB(65, 65, 90));
-        pocket_x = button.right + 4;
+        pocket_x = button.right + 5;
     }
 
-    s_inventory_search_rect = {466, 68, 928, 96};
-    fill_rect(dc, s_inventory_search_rect,
-              s_edit.kind == EDIT_ITEM_SEARCH ? RGB(65, 65, 105) : COLOR_PANEL_ALT);
-    frame_rect(dc, s_inventory_search_rect, COLOR_ACCENT);
-    RECT search_text = {472, 68, 922, 96};
-    const char* shown_search = s_edit.kind == EDIT_ITEM_SEARCH ?
-                               s_edit.buffer : s_item_search;
-    draw_text(dc, search_text, shown_search[0] ? shown_search :
-              "Click and enter a name or ID...", shown_search[0] ?
-              COLOR_TEXT : COLOR_DIM,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-    if (s_edit.kind == EDIT_ITEM_SEARCH)
-        draw_edit_caret(dc, search_text, s_edit.buffer, false);
-
     draw_inventory_lists(dc);
-
-    RECT selected_rect = {12, 548, 928, 582};
-    fill_rounded_rect(dc, selected_rect, COLOR_PANEL_ALT, 8);
-    frame_rounded_rect(dc, selected_rect, COLOR_BORDER, 8);
-    char selected[256] = {};
-    _snprintf(selected, sizeof(selected) - 1,
-              "Selected: #%d  %s     Current quantity: %d",
-              s_inventory_selected_item,
-              item_name(s_inventory_selected_item),
-              item_quantity(s_inventory_selected_item));
-    RECT selected_text = {18, 548, 922, 582};
-    draw_text(dc, selected_text, selected, COLOR_TEXT,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-
-    RECT quantity_label = {12, 590, 82, 622};
-    draw_text(dc, quantity_label, "Quantity", COLOR_DIM,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    s_inventory_quantity_rect = {84, 590, 164, 622};
-    fill_rect(dc, s_inventory_quantity_rect,
-              s_edit.kind == EDIT_INVENTORY_QUANTITY ? RGB(65, 65, 105) : COLOR_PANEL_ALT);
-    frame_rect(dc, s_inventory_quantity_rect, COLOR_ACCENT);
-    char quantity[16] = {};
-    format_int(quantity, sizeof(quantity), s_inventory_quantity);
-    draw_text(dc, s_inventory_quantity_rect,
-              s_edit.kind == EDIT_INVENTORY_QUANTITY ? s_edit.buffer : quantity,
-              COLOR_TEXT, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    if (s_edit.kind == EDIT_INVENTORY_QUANTITY)
-        draw_edit_caret(dc, s_inventory_quantity_rect, s_edit.buffer, true);
-
-    s_inventory_set_rect = {176, 590, 326, 622};
-    s_inventory_give_rect = {336, 590, 486, 622};
-    s_inventory_remove_rect = {496, 590, 646, 622};
-    s_inventory_refresh_rect = {780, 590, 928, 622};
-    draw_button(dc, s_inventory_set_rect, "Set quantity", COLOR_ACCENT);
-    draw_button(dc, s_inventory_give_rect, "Give +", COLOR_SUCCESS);
-    const bool delete_pending = s_inventory_delete_item == s_inventory_selected_item &&
-                                s_inventory_delete_deadline > GetTickCount();
-    draw_button(dc, s_inventory_remove_rect,
-                delete_pending ? "Confirm removal" : "Remove all", COLOR_DANGER);
-    draw_button(dc, s_inventory_refresh_rect, "Refresh", RGB(70, 70, 105));
-
-    RECT status_rect = {12, 634, 928, 667};
-    fill_rounded_rect(dc, status_rect, COLOR_PANEL_ALT, 8);
-    frame_rounded_rect(dc, status_rect, COLOR_BORDER, 8);
-    RECT status_text = {18, 634, 922, 667};
-    draw_text(dc, status_text, s_inventory_status, COLOR_DIM,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (s_inventory_add_mode) draw_inventory_add_dialog(dc);
 
     BitBlt(target, 0, 0, INVENTORY_WINDOW_WIDTH, INVENTORY_WINDOW_HEIGHT,
            dc, 0, 0, SRCCOPY);
@@ -1906,6 +1995,7 @@ static void close_pokemon() {
 
 static void close_inventory() {
     if (s_edit.window == s_inventory_window) cancel_edit();
+    s_inventory_add_mode = false;
     s_inventory_open = false;
     opt_inventory_manager_stop();
     ShowWindow(s_inventory_window, SW_HIDE);
@@ -2077,72 +2167,114 @@ static void handle_inventory_click(int x, int y) {
         SetCapture(s_inventory_window);
         return;
     }
+
+    if (s_inventory_add_mode) {
+        if (point_in(s_inventory_search_rect, x, y)) {
+            if (s_edit.kind != EDIT_ITEM_SEARCH)
+                begin_edit(EDIT_ITEM_SEARCH, s_inventory_window,
+                           s_item_search, false, 63);
+            return;
+        }
+        if (point_in(s_inventory_catalog_rect, x, y)) {
+            if (s_edit.window == s_inventory_window) commit_edit();
+            s_inventory_active_pane = 1;
+            const int row = (y - s_inventory_catalog_rect.top) /
+                            LIST_ROW_HEIGHT;
+            const int index = item_catalog_filtered_at(s_catalog_scroll + row);
+            if (index >= 0)
+                s_inventory_selected_item =
+                    s_inventory_catalog[index].item_id;
+            InvalidateRect(s_inventory_window, NULL, FALSE);
+            return;
+        }
+        if (point_in(s_inventory_quantity_rect, x, y)) {
+            char quantity[16] = {};
+            format_int(quantity, sizeof(quantity), s_inventory_quantity);
+            begin_edit(EDIT_INVENTORY_QUANTITY, s_inventory_window,
+                       quantity, true, 2);
+            s_edit.replace_on_input = true;
+            return;
+        }
+        if (point_in(s_inventory_add_confirm, x, y)) {
+            if (s_edit.window == s_inventory_window) commit_edit();
+            if (s_inventory_selected_item > 0 &&
+                s_inventory_quantity > 0) {
+                opt_inventory_manager_give(s_inventory_selected_item,
+                                           s_inventory_quantity);
+                s_inventory_add_mode = false;
+                s_inventory_selected_item = 0;
+                s_item_search[0] = '\0';
+            }
+            InvalidateRect(s_inventory_window, NULL, FALSE);
+            return;
+        }
+        if (point_in(s_inventory_add_cancel, x, y)) {
+            if (s_edit.window == s_inventory_window) cancel_edit();
+            s_inventory_add_mode = false;
+            s_inventory_selected_item = 0;
+            s_item_search[0] = '\0';
+            InvalidateRect(s_inventory_window, NULL, FALSE);
+            return;
+        }
+        return;
+    }
+
+    if (point_in(s_inventory_add_button, x, y)) {
+        if (s_edit.window == s_inventory_window) commit_edit();
+        s_inventory_add_mode = true;
+        s_inventory_selected_item = 0;
+        s_inventory_quantity = 1;
+        s_catalog_scroll = 0;
+        s_item_search[0] = '\0';
+        s_inventory_active_pane = 1;
+        InvalidateRect(s_inventory_window, NULL, FALSE);
+        return;
+    }
+    if (point_in(s_inventory_refresh_rect, x, y)) {
+        if (s_edit.window == s_inventory_window) commit_edit();
+        opt_inventory_manager_refresh();
+        return;
+    }
     for (int i = 0; i < s_pocket_button_count; ++i) {
         if (point_in(s_pocket_buttons[i], x, y)) {
+            if (s_edit.window == s_inventory_window) commit_edit();
             s_inventory_pocket = i - 1;
             s_inventory_scroll = 0;
             InvalidateRect(s_inventory_window, NULL, FALSE);
             return;
         }
     }
-    if (point_in(s_inventory_search_rect, x, y)) {
-        begin_edit(EDIT_ITEM_SEARCH, s_inventory_window, s_item_search,
-                   false, 63);
-        return;
-    }
-    if (point_in(s_inventory_owned_rect, x, y)) {
-        s_inventory_active_pane = 0;
-        const int row = (y - s_inventory_owned_rect.top) / LIST_ROW_HEIGHT;
-        const int index = inventory_filtered_at(s_inventory_scroll + row);
-        if (index >= 0)
-            s_inventory_selected_item = s_inventory_entries[index].item_id;
-        InvalidateRect(s_inventory_window, NULL, FALSE);
-        return;
-    }
-    if (point_in(s_inventory_catalog_rect, x, y)) {
-        s_inventory_active_pane = 1;
-        const int row = (y - s_inventory_catalog_rect.top) / LIST_ROW_HEIGHT;
-        const int index = item_catalog_filtered_at(s_catalog_scroll + row);
-        if (index >= 0)
-            s_inventory_selected_item = s_inventory_catalog[index].item_id;
-        InvalidateRect(s_inventory_window, NULL, FALSE);
-        return;
-    }
-    if (point_in(s_inventory_quantity_rect, x, y)) {
-        char quantity[16] = {};
-        format_int(quantity, sizeof(quantity), s_inventory_quantity);
-        begin_edit(EDIT_INVENTORY_QUANTITY, s_inventory_window,
-                   quantity, true, 3);
-        return;
-    }
-    if (point_in(s_inventory_set_rect, x, y) && s_inventory_selected_item > 0) {
-        opt_inventory_manager_set_quantity(s_inventory_selected_item,
-                                           s_inventory_quantity);
-        return;
-    }
-    if (point_in(s_inventory_give_rect, x, y) && s_inventory_selected_item > 0) {
-        opt_inventory_manager_give(s_inventory_selected_item,
-                                   s_inventory_quantity);
-        return;
-    }
-    if (point_in(s_inventory_remove_rect, x, y) && s_inventory_selected_item > 0) {
-        const DWORD now = GetTickCount();
-        if (s_inventory_delete_item == s_inventory_selected_item &&
-            s_inventory_delete_deadline > now) {
-            opt_inventory_manager_set_quantity(s_inventory_selected_item, 0);
-            s_inventory_delete_deadline = 0;
-        } else {
-            s_inventory_delete_item = s_inventory_selected_item;
-            s_inventory_delete_deadline = now + 4000;
-            lstrcpyA(s_inventory_status,
-                     "Click Remove all again to confirm.");
+
+    for (int i = 0; i < s_inventory_row_hit_count; ++i) {
+        const InventoryRowHit& hit = s_inventory_row_hits[i];
+        if (point_in(hit.quantity, x, y)) {
+            if (s_edit.kind == EDIT_INVENTORY_ROW_QUANTITY &&
+                s_edit.sub_index != hit.item_id)
+                commit_edit();
+            char quantity[16] = {};
+            format_int(quantity, sizeof(quantity), item_quantity(hit.item_id));
+            begin_edit(EDIT_INVENTORY_ROW_QUANTITY, s_inventory_window,
+                       quantity, true, 2);
+            s_edit.sub_index = hit.item_id;
+            s_edit.replace_on_input = true;
+            s_inventory_active_pane = 0;
+            return;
         }
-        InvalidateRect(s_inventory_window, NULL, FALSE);
-        return;
-    }
-    if (point_in(s_inventory_refresh_rect, x, y)) {
-        opt_inventory_manager_refresh();
-        return;
+        if (point_in(hit.remove, x, y)) {
+            if (s_edit.window == s_inventory_window) commit_edit();
+            const DWORD now = GetTickCount();
+            if (s_inventory_delete_item == hit.item_id &&
+                s_inventory_delete_deadline > now) {
+                opt_inventory_manager_set_quantity(hit.item_id, 0);
+                s_inventory_delete_deadline = 0;
+                s_inventory_delete_item = 0;
+            } else {
+                s_inventory_delete_item = hit.item_id;
+                s_inventory_delete_deadline = now + 4000;
+            }
+            InvalidateRect(s_inventory_window, NULL, FALSE);
+            return;
+        }
     }
     if (s_edit.window == s_inventory_window) commit_edit();
 }
@@ -2177,16 +2309,7 @@ static void scroll_pokemon(int x, int y, int direction) {
 }
 
 static void scroll_inventory(int x, int y, int direction) {
-    if (point_in(s_inventory_owned_rect, x, y)) {
-        s_inventory_active_pane = 0;
-        s_inventory_scroll -= direction * 3;
-        const int visible = (s_inventory_owned_rect.bottom -
-                             s_inventory_owned_rect.top) / LIST_ROW_HEIGHT;
-        int maximum = inventory_filtered_count() - visible;
-        if (maximum < 0) maximum = 0;
-        if (s_inventory_scroll < 0) s_inventory_scroll = 0;
-        if (s_inventory_scroll > maximum) s_inventory_scroll = maximum;
-    } else if (point_in(s_inventory_catalog_rect, x, y)) {
+    if (s_inventory_add_mode && point_in(s_inventory_catalog_rect, x, y)) {
         s_inventory_active_pane = 1;
         s_catalog_scroll -= direction * 3;
         const int visible = (s_inventory_catalog_rect.bottom -
@@ -2195,6 +2318,17 @@ static void scroll_inventory(int x, int y, int direction) {
         if (maximum < 0) maximum = 0;
         if (s_catalog_scroll < 0) s_catalog_scroll = 0;
         if (s_catalog_scroll > maximum) s_catalog_scroll = maximum;
+    } else if (!s_inventory_add_mode &&
+               point_in(s_inventory_owned_rect, x, y)) {
+        s_inventory_active_pane = 0;
+        s_inventory_scroll -= direction * 3;
+        const int visible = (s_inventory_owned_rect.bottom -
+                             s_inventory_owned_rect.top) /
+                            INVENTORY_LIST_ROW_HEIGHT;
+        int maximum = inventory_filtered_count() - visible;
+        if (maximum < 0) maximum = 0;
+        if (s_inventory_scroll < 0) s_inventory_scroll = 0;
+        if (s_inventory_scroll > maximum) s_inventory_scroll = maximum;
     }
     InvalidateRect(s_inventory_window, NULL, FALSE);
 }
@@ -2250,8 +2384,13 @@ static int pokemon_point_edit_kind(int x, int y) {
 }
 
 static bool inventory_point_is_editable(int x, int y) {
-    return point_in(s_inventory_search_rect, x, y) ||
-           point_in(s_inventory_quantity_rect, x, y);
+    if (s_inventory_add_mode)
+        return point_in(s_inventory_search_rect, x, y) ||
+               point_in(s_inventory_quantity_rect, x, y);
+    for (int i = 0; i < s_inventory_row_hit_count; ++i) {
+        if (point_in(s_inventory_row_hits[i].quantity, x, y)) return true;
+    }
+    return false;
 }
 
 static LRESULT set_editor_cursor(HWND window, bool pokemon_window) {
@@ -2347,8 +2486,10 @@ static LRESULT CALLBACK InventoryWindowProc(HWND window, UINT message,
         refresh_inventory_cache();
         sync_window(window, s_inventory_open);
         if (s_inventory_delete_deadline != 0 &&
-            GetTickCount() > s_inventory_delete_deadline)
+            GetTickCount() > s_inventory_delete_deadline) {
             s_inventory_delete_deadline = 0;
+            s_inventory_delete_item = 0;
+        }
         InvalidateRect(window, NULL, FALSE);
         return 0;
     case WM_LBUTTONDOWN:
@@ -2377,7 +2518,13 @@ static LRESULT CALLBACK InventoryWindowProc(HWND window, UINT message,
         return 0;
     case WM_KEYDOWN:
         if (handle_edit_key(window, wparam)) return 0;
-        if (wparam == VK_ESCAPE) close_inventory();
+        if (wparam == VK_ESCAPE && s_inventory_add_mode) {
+            s_inventory_add_mode = false;
+            s_inventory_selected_item = 0;
+            s_item_search[0] = '\0';
+            InvalidateRect(window, NULL, FALSE);
+        }
+        else if (wparam == VK_ESCAPE) close_inventory();
         else if (wparam == VK_F5) opt_inventory_manager_refresh();
         else if (wparam == VK_UP) {
             if (s_inventory_active_pane == 0 && s_inventory_scroll > 0)

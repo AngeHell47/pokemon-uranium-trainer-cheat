@@ -18,7 +18,8 @@ struct InventoryCatalogEntry {
 
 enum {
     INVENTORY_MANAGER_MAX_ENTRIES = 1024,
-    INVENTORY_MANAGER_MAX_CATALOG = 1000
+    INVENTORY_MANAGER_MAX_CATALOG = 1000,
+    INVENTORY_MANAGER_MAX_QUANTITY = 99
 };
 
 bool opt_inventory_manager_init(const char* ini_path);

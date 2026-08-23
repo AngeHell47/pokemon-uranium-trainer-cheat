@@ -242,7 +242,8 @@ static void build_ruby_write(const InventoryCommand& command) {
         (int)command.item_id,
         (int)command.quantity,
         give ?
-        "    requested=[[amount,0].max,999].min\n"
+        "    remaining=[99-current,0].max\n"
+        "    requested=[[amount,0].max,remaining].min\n"
         "    if requested>0\n"
         "      if bag.respond_to?(:pbCanStore?) && !bag.pbCanStore?(item_id,requested)\n"
         "        code=-4; message=\"Pas assez de place dans cette poche.\"\n"
@@ -253,7 +254,7 @@ static void build_ruby_write(const InventoryCommand& command) {
         "        end\n"
         "      end\n"
         "    end" :
-        "    target=[[amount,0].max,999].min\n"
+        "    target=[[amount,0].max,99].min\n"
         "    if target>current\n"
         "      delta=target-current\n"
         "      if bag.respond_to?(:pbCanStore?) && !bag.pbCanStore?(item_id,delta)\n"
@@ -265,7 +266,11 @@ static void build_ruby_write(const InventoryCommand& command) {
         "        end\n"
         "      end\n"
         "    elsif target<current\n"
-        "      ok=bag.pbDeleteItem(item_id,current-target)\n"
+        "      # Une modification explicite depuis l'editeur doit contourner\n"
+        "      # la protection Objets infinis, qui remplace pbDeleteItem par\n"
+        "      # une methode renvoyant true sans toucher au contenu du sac.\n"
+        "      delete_method=bag.respond_to?(:__uranium_trainer_original_pbDeleteItem) ? :__uranium_trainer_original_pbDeleteItem : :pbDeleteItem\n"
+        "      ok=bag.send(delete_method,item_id,current-target)\n"
         "      if ok==false\n"
         "        code=-4; message=\"Suppression refusee par le sac.\"\n"
         "      end\n"
@@ -429,14 +434,16 @@ void opt_inventory_manager_copy_status(char* out, int capacity, LONG* revision) 
 void opt_inventory_manager_set_quantity(int item_id, int quantity) {
     if (item_id <= 0) return;
     if (quantity < 0) quantity = 0;
-    if (quantity > 999) quantity = 999;
+    if (quantity > INVENTORY_MANAGER_MAX_QUANTITY)
+        quantity = INVENTORY_MANAGER_MAX_QUANTITY;
     if (!enqueue(INVENTORY_COMMAND_SET, item_id, quantity))
         set_status("Unable to queue the command.");
 }
 
 void opt_inventory_manager_give(int item_id, int quantity) {
     if (item_id <= 0 || quantity <= 0) return;
-    if (quantity > 999) quantity = 999;
+    if (quantity > INVENTORY_MANAGER_MAX_QUANTITY)
+        quantity = INVENTORY_MANAGER_MAX_QUANTITY;
     if (!enqueue(INVENTORY_COMMAND_GIVE, item_id, quantity))
         set_status("Unable to queue the command.");
 }
