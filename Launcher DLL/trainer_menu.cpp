@@ -22,6 +22,7 @@
 //#include "options/opt_speedhack.h"
 #include "options/opt_zoom.h"
 #include "options/opt_minimap.h"
+#include "options/opt_startup.h"
 #include "moves_db.h"
 #include "rgss_safe_dispatch.h"
 #include "trainer_editors.h"
@@ -114,6 +115,11 @@ static const Translation kTranslations[] = {
     { "Click the key button, then press a new shortcut", "Cliquez sur la touche, puis choisissez un nouveau raccourci", "Haz clic en la tecla y pulsa un nuevo atajo" },
     { "Trainer Session", "Session du trainer", "Sesión del trainer" },
     { "Stop Trainer", "Arrêter le trainer", "Detener el trainer" },
+    { "Start trainer with game", "Lancer le trainer avec le jeu", "Iniciar el trainer con el juego" },
+    { "Installs the required version.dll next to Uranium.exe", "Installe le version.dll requis à côté de Uranium.exe", "Instala el version.dll necesario junto a Uranium.exe" },
+    { "Fast boot", "Démarrage rapide", "Inicio rápido" },
+    { "Skip the intro and load the default save on next launch", "Passe l'intro et charge la sauvegarde par défaut au prochain lancement", "Omite la introducción y carga la partida predeterminada al iniciar" },
+    { "On", "Activé", "Sí" }, { "Off", "Désactivé", "No" },
     { "Default Speeds", "Vitesses par défaut", "Velocidades predeterminadas" },
     { "Reset", "Réinitialiser", "Restablecer" },
     { "Default", "Par défaut", "Predeterminado" },
@@ -508,6 +514,8 @@ static int   s_drag_ox = 0, s_drag_oy = 0;
 static bool  s_menu_positioned = false;
 static int   s_menu_toggle_key = VK_INSERT;
 static bool  s_menu_hotkey_capture = false;
+static bool  s_auto_start_trainer = false;
+static bool  s_fast_boot = false;
 static bool  s_slider_drag   = false;
 static int   s_slider_idx    = -1;
 static int   s_slider_start_value = 0;
@@ -1894,7 +1902,7 @@ static RECT modern_card_rect(int column) {
     if (s_active_tab == TAB_SETTINGS) {
         if (column != 0) return {0, 0, 0, 0};
         return {left, top, left + width,
-                top + MODERN_CARD_HEADER_H + MODERN_SETTINGS_ROW_H * 2 + 10};
+                top + MODERN_CARD_HEADER_H + MODERN_SETTINGS_ROW_H * 4 + 10};
     }
     int content_height = 0;
     const int* items = NULL;
@@ -1937,8 +1945,13 @@ static RECT modern_settings_default_rect() {
 }
 
 static RECT modern_settings_unload_rect() {
-    RECT row = modern_settings_row_rect(1);
+    RECT row = modern_settings_row_rect(3);
     return {row.right - 166, row.top + 17, row.right, row.bottom - 17};
+}
+
+static RECT modern_settings_toggle_rect(int row_index) {
+    RECT row = modern_settings_row_rect(row_index);
+    return {row.right - 104, row.top + 17, row.right, row.bottom - 17};
 }
 
 static RECT modern_item_rect(int item) {
@@ -2313,7 +2326,41 @@ static void modern_draw_settings(HDC dc, HFONT label_font,
     DrawTextA(dc, trainer_ui_text("Default", NULL), -1, &default_button,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
-    RECT unload_row = modern_settings_row_rect(1);
+    const int toggle_rows[] = {1, 2};
+    const char* toggle_labels[] = {"Start trainer with game", "Fast boot"};
+    const char* toggle_descriptions[] = {
+        "Installs the required version.dll next to Uranium.exe",
+        "Skip the intro and load the default save on next launch"
+    };
+    const bool toggle_values[] = {s_auto_start_trainer, s_fast_boot};
+    for (int i = 0; i < 2; ++i) {
+        RECT toggle_row = modern_settings_row_rect(toggle_rows[i]);
+        RECT toggle_button = modern_settings_toggle_rect(toggle_rows[i]);
+        RECT toggle_label = {toggle_row.left + 10, toggle_row.top + 8,
+                             toggle_button.left - 16, toggle_row.top + 34};
+        SelectObject(dc, label_font); SetTextColor(dc, COL_TEXT);
+        DrawTextA(dc, trainer_ui_text(toggle_labels[i], NULL), -1, &toggle_label,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        RECT toggle_description = {toggle_row.left + 10, toggle_row.top + 33,
+                                   toggle_button.left - 16, toggle_row.bottom - 7};
+        SelectObject(dc, small_font); SetTextColor(dc, COL_DIMTEXT);
+        DrawTextA(dc, trainer_ui_text(toggle_descriptions[i], NULL), -1,
+                  &toggle_description, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
+                  DT_END_ELLIPSIS);
+        const bool available = i == 0 || s_auto_start_trainer;
+        fill_rounded_rect(dc, toggle_button,
+            !available ? RGB(42, 48, 59) :
+            (toggle_values[i] ? RGB(40, 111, 83) : RGB(51, 65, 93)), 9);
+        frame_rounded_rect(dc, toggle_button,
+            !available ? RGB(62, 70, 84) :
+            (toggle_values[i] ? RGB(72, 185, 130) : RGB(73, 89, 121)), 9);
+        SetTextColor(dc, !available ? RGB(134, 143, 158) :
+            (toggle_values[i] ? RGB(222, 255, 238) : RGB(220, 226, 240)));
+        DrawTextA(dc, trainer_ui_text(toggle_values[i] ? "On" : "Off", NULL), -1,
+                  &toggle_button, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+
+    RECT unload_row = modern_settings_row_rect(3);
     RECT unload_button = modern_settings_unload_rect();
     RECT unload_label = {unload_row.left + 10, unload_row.top + 8,
                          unload_button.left - 16, unload_row.bottom - 8};
@@ -2916,6 +2963,26 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             if (ptin(modern_settings_default_rect(), x, y)) {
                 s_menu_hotkey_capture = false;
                 save_menu_toggle_key(VK_INSERT);
+                InvalidateRect(hw, NULL, FALSE);
+                return 0;
+            }
+            if (ptin(modern_settings_toggle_rect(1), x, y)) {
+                const bool requested = !s_auto_start_trainer;
+                // Do not report the option as enabled if version.dll could not
+                // be installed (for example, another DLL already occupies it).
+                if (opt_startup_set_auto_trainer(requested))
+                    s_auto_start_trainer = requested;
+                if (!s_auto_start_trainer && s_fast_boot) {
+                    s_fast_boot = false;
+                    opt_startup_set_fast_boot(false);
+                }
+                InvalidateRect(hw, NULL, FALSE);
+                return 0;
+            }
+            if (ptin(modern_settings_toggle_rect(2), x, y)) {
+                if (!s_auto_start_trainer) return 0;
+                s_fast_boot = !s_fast_boot;
+                opt_startup_set_fast_boot(s_fast_boot);
                 InvalidateRect(hw, NULL, FALSE);
                 return 0;
             }
@@ -3567,6 +3634,10 @@ bool menu_init(HINSTANCE hinst, HWND game_hwnd) {
         "Settings", "MenuToggleKey", VK_INSERT, "trainer.ini");
     if (s_menu_toggle_key <= 0 || s_menu_toggle_key > 254)
         s_menu_toggle_key = VK_INSERT;
+    // opt_startup owns the absolute game-folder ini path.  Using it here is
+    // essential when the trainer was injected by an executable in Launcher/.
+    s_auto_start_trainer = opt_startup_auto_trainer_enabled();
+    s_fast_boot = s_auto_start_trainer && opt_startup_fast_boot_enabled();
     char language[8] = {};
     GetPrivateProfileStringA("Settings", "UiLanguage", "en", language,
                              sizeof(language), "trainer.ini");

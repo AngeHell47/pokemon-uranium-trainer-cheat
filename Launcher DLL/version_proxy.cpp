@@ -219,6 +219,19 @@ BOOL APIENTRY DllMain(HMODULE hm,DWORD reason,LPVOID){
     if(reason==DLL_PROCESS_ATTACH){
         g_trainer_module=hm;
         DisableThreadLibraryCalls(hm);
+        char base[MAX_PATH]; GetModuleFileNameA(NULL,base,MAX_PATH);
+        char* p=base+lstrlenA(base); while(p>base&&*p!='\\')p--; *(p+1)=0;
+        lstrcpyA(g_ini_path,base); lstrcatA(g_ini_path,"trainer.ini");
+#ifndef TRAINER_EXTERNAL_PAYLOAD
+        char path[MAX_PATH]; GetSystemDirectoryA(path,MAX_PATH); lstrcatA(path,"\\version.dll");
+        hReal=LoadLibraryA(path);
+        for(int i=0;i<11;i++) fp[i]=GetProcAddress(hReal,EXPORTS[i]);
+        // Leave the proxy fully functional but do not claim the trainer
+        // singleton when auto-start is disabled.  An external trainer can
+        // then still attach to this game normally.
+        if(GetPrivateProfileIntA("Settings", "AutoStartTrainer", 0, g_ini_path) == 0)
+            return TRUE;
+#endif
         char mutex_name[96];
         wsprintfA(mutex_name,"Local\\PolkamonUraniumTrainer_%lu",GetCurrentProcessId());
         g_trainer_singleton=CreateMutexA(NULL,FALSE,mutex_name);
@@ -232,14 +245,6 @@ BOOL APIENTRY DllMain(HMODULE hm,DWORD reason,LPVOID){
             CloseHandle(g_trainer_singleton);
             g_trainer_singleton=NULL;
         }
-        char base[MAX_PATH]; GetModuleFileNameA(NULL,base,MAX_PATH);
-        char* p=base+lstrlenA(base); while(p>base&&*p!='\\')p--; *(p+1)=0;
-        lstrcpyA(g_ini_path,base); lstrcatA(g_ini_path,"trainer.ini");
-#ifndef TRAINER_EXTERNAL_PAYLOAD
-        char path[MAX_PATH]; GetSystemDirectoryA(path,MAX_PATH); lstrcatA(path,"\\version.dll");
-        hReal=LoadLibraryA(path);
-        for(int i=0;i<11;i++) fp[i]=GetProcAddress(hReal,EXPORTS[i]);
-#endif
         if(first_trainer_instance){
             HANDLE thread=CreateThread(NULL,0,main_thread,NULL,0,NULL);
             if(thread) CloseHandle(thread);

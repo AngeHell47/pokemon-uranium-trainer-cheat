@@ -1,3 +1,4 @@
 #include <windows.h>
 
 101 RCDATA "..\\Launcher DLL\\options\\moves.txt"
+102 RCDATA "build\\version.dll"

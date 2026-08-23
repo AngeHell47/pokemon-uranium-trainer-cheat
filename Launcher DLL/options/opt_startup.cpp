@@ -1,10 +1,12 @@
 #include "opt_startup.h"
 #include "../rgss_safe_dispatch.h"
+#include "../trainer_runtime.h"
 
 #include <stdio.h>
 #include <string.h>
 
 bool g_auto_load_save = false;
+bool g_fast_boot = false;
 
 static volatile LONG s_installed = 0;
 static volatile LONG s_game_ready = 0;
@@ -12,6 +14,118 @@ static volatile LONG s_retry_started = 0;
 static volatile LONG s_auto_load = 0;
 static char s_ruby[12288];
 static char s_ready_probe[1024];
+static char s_ini[MAX_PATH] = {};
+
+// Kept in the external payload so it can install the exact proxy DLL that was
+// built with it.  A separately installed proxy simply needs the preference.
+#define IDR_AUTOSTART_VERSION_PROXY 102
+
+static bool get_game_version_path(char* path, size_t capacity) {
+    if (!path || capacity < MAX_PATH ||
+        !GetModuleFileNameA(NULL, path, (DWORD)capacity)) return false;
+    char* slash = strrchr(path, '\\');
+    if (!slash) return false;
+    *(slash + 1) = '\0';
+    if (lstrlenA(path) + lstrlenA("version.dll") >= (int)capacity) return false;
+    lstrcatA(path, "version.dll");
+    return true;
+}
+
+static bool is_trainer_version_proxy(const char* path) {
+    // This marker has been present in every trainer proxy build.  It prevents
+    // Settings from deleting or adopting an unrelated version.dll.
+    static const char marker[] = "PolkamonUraniumTrainer_%lu";
+    HANDLE file = CreateFileA(path, GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    char bytes[4096 + sizeof(marker)] = {};
+    DWORD retained = 0;
+    bool found = false;
+    for (;;) {
+        DWORD read = 0;
+        if (!ReadFile(file, bytes + retained, 4096, &read, NULL) || read == 0)
+            break;
+        const DWORD total = retained + read;
+        for (DWORD i = 0; i + sizeof(marker) - 1 <= total; ++i) {
+            if (memcmp(bytes + i, marker, sizeof(marker) - 1) == 0) {
+                found = true;
+                break;
+            }
+        }
+        if (found) break;
+        retained = total < sizeof(marker) - 2 ? total : sizeof(marker) - 2;
+        memmove(bytes, bytes + total - retained, retained);
+    }
+    CloseHandle(file);
+    return found;
+}
+
+static bool remove_version_proxy() {
+    char game_path[MAX_PATH] = {};
+    if (!get_game_version_path(game_path, sizeof(game_path))) return false;
+    if (GetFileAttributesA(game_path) == INVALID_FILE_ATTRIBUTES) return true;
+    if (!is_trainer_version_proxy(game_path)) return false;
+
+    if (DeleteFileA(game_path)) return true;
+
+    // Uranium normally has version.dll mapped until process exit.  Windows can
+    // usually rename a mapped DLL; removing its active filename disables the
+    // next launch immediately.  The renamed file is then deleted when free.
+    char disabled[MAX_PATH] = {};
+    _snprintf_s(disabled, sizeof(disabled), _TRUNCATE,
+                "%s.trainer-disabled", game_path);
+    if (GetFileAttributesA(disabled) != INVALID_FILE_ATTRIBUTES &&
+        is_trainer_version_proxy(disabled))
+        DeleteFileA(disabled);
+    if (MoveFileExA(game_path, disabled,
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        if (!DeleteFileA(disabled))
+            MoveFileExA(disabled, NULL, MOVEFILE_DELAY_UNTIL_REBOOT);
+        return true;
+    }
+
+    // Last resort for systems that forbid renaming mapped images.  The setting
+    // still disables the proxy, and reactivation recognizes this managed DLL.
+    MoveFileExA(game_path, NULL, MOVEFILE_DELAY_UNTIL_REBOOT);
+    return true;
+}
+
+static bool install_version_proxy() {
+    char game_path[MAX_PATH] = {};
+    if (!get_game_version_path(game_path, sizeof(game_path))) return false;
+
+    char module_path[MAX_PATH] = {};
+    GetModuleFileNameA(g_trainer_module, module_path, sizeof(module_path));
+    // Already running through the installed proxy: no file operation needed.
+    if (_stricmp(game_path, module_path) == 0) return true;
+    // A previous session may have disabled the proxy while Windows still had
+    // it mapped.  Re-adopt our own file, but never replace an unrelated DLL.
+    if (GetFileAttributesA(game_path) != INVALID_FILE_ATTRIBUTES)
+        return is_trainer_version_proxy(game_path);
+
+    HRSRC resource = FindResourceA(g_trainer_module,
+        MAKEINTRESOURCEA(IDR_AUTOSTART_VERSION_PROXY), RT_RCDATA);
+    if (!resource) return false;
+    HGLOBAL loaded = LoadResource(g_trainer_module, resource);
+    const DWORD size = SizeofResource(g_trainer_module, resource);
+    const void* bytes = loaded ? LockResource(loaded) : NULL;
+    if (!bytes || !size) return false;
+
+    char temporary[MAX_PATH] = {};
+    _snprintf_s(temporary, sizeof(temporary), _TRUNCATE, "%s.new", game_path);
+    HANDLE file = CreateFileA(temporary, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+                              FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    DWORD written = 0;
+    const bool ok = WriteFile(file, bytes, size, &written, NULL) && written == size;
+    CloseHandle(file);
+    if (!ok || !MoveFileExA(temporary, game_path, MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileA(temporary);
+        return false;
+    }
+    return true;
+}
 
 static void post_to_game() {
     rgss_safe_dispatch_notify();
@@ -222,8 +336,12 @@ static void start_retry_thread() {
 }
 
 void opt_startup_init(const char* ini_path) {
-    (void)ini_path;
-    g_auto_load_save =
+    lstrcpynA(s_ini, ini_path ? ini_path : "trainer.ini", sizeof(s_ini));
+    const bool auto_trainer =
+        GetPrivateProfileIntA("Settings", "AutoStartTrainer", 0, s_ini) != 0;
+    g_fast_boot = auto_trainer &&
+        GetPrivateProfileIntA("Settings", "FastBoot", 0, s_ini) != 0;
+    g_auto_load_save = g_fast_boot ||
         strstr(GetCommandLineA(), "--trainer-direct-load") != NULL;
     InterlockedExchange(&s_auto_load, g_auto_load_save ? 1 : 0);
     InterlockedExchange(&s_installed, 0);
@@ -240,6 +358,37 @@ void opt_startup_init(const char* ini_path) {
         "rescue Exception\n"
         "end\n",
         (unsigned long)(ULONG_PTR)&s_game_ready);
+}
+
+bool opt_startup_set_auto_trainer(bool enabled) {
+    if (!enabled) {
+        if (!remove_version_proxy()) return false;
+        g_fast_boot = false;
+        WritePrivateProfileStringA("Settings", "FastBoot", "0", s_ini);
+        WritePrivateProfileStringA("Settings", "AutoStartTrainer", "0", s_ini);
+        return true;
+    }
+    if (!install_version_proxy()) return false;
+    WritePrivateProfileStringA("Settings", "AutoStartTrainer", "1", s_ini);
+    return true;
+}
+
+void opt_startup_set_fast_boot(bool enabled) {
+    // Fast boot is meaningful only when the proxy will load the trainer on the
+    // next launch.  Keep the persisted state coherent even if this is called
+    // from a future UI entry point.
+    if (enabled && GetPrivateProfileIntA("Settings", "AutoStartTrainer", 0, s_ini) == 0)
+        enabled = false;
+    g_fast_boot = enabled;
+    WritePrivateProfileStringA("Settings", "FastBoot", enabled ? "1" : "0", s_ini);
+}
+
+bool opt_startup_auto_trainer_enabled() {
+    return GetPrivateProfileIntA("Settings", "AutoStartTrainer", 0, s_ini) != 0;
+}
+
+bool opt_startup_fast_boot_enabled() {
+    return GetPrivateProfileIntA("Settings", "FastBoot", 0, s_ini) != 0;
 }
 
 void opt_startup_set_hwnd_and_start(HWND hwnd) {

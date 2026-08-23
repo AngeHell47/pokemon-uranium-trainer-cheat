@@ -2,8 +2,7 @@
 
 A standalone 32-bit Windows trainer for the RGSS1 version of Pokémon Uranium.
 It lets you launch the game directly or attach to an existing game process,
-then injects its embedded overlay safely into the game's RGSS thread. No
-`version.dll` needs to be copied next to the game.
+then injects its embedded overlay safely into the game's RGSS thread.
 
 ## Using the trainer
 
@@ -12,7 +11,7 @@ then injects its embedded overlay safely into the game's RGSS thread. No
 3. To attach to a game already running, select the process labelled `[Game]` and click **Connect to selected game**.
 4. Press `Insert` to hide or show the overlay, or click the close button in its title bar.
 
-The launcher closes after a successful injection and initialized overlay. It stays open and displays the error if anything fails. Direct launch is temporary: it does not save a startup preference or change normal launches of `Uranium.exe`.
+The launcher closes after a successful injection and initialized overlay. It stays open and displays the error if anything fails.
 
 Run the trainer at the same privilege level as the game. If the game runs as administrator, run the trainer as administrator too.
 
@@ -20,7 +19,7 @@ Run the trainer at the same privilege level as the game. If the game runs as adm
 
 The trainer opens in English by default. Use the United States, French or Spanish flag in the top-right of the **Uranium Trainer** title bar to switch the overlay language. The selected language is saved in `trainer.ini`.
 
-The compact main window is organized into six tabs: **Player**, **Battle**, **Encounters**, **World**, **Display** and **Settings**. Each page uses short cards instead of one continuous feature list. The **Settings** tab lets you replace the global `Insert` show/hide shortcut, restore its default value, or use **Stop Trainer** to turn off all active trainer options, restore normal movement/camera/minimap behavior, and remove the trainer UI and hooks for the current game session. The overlay and its Pokémon, inventory and trainer editors remain visible and interactive when Uranium loses focus or is minimized. After its initial placement, the overlay keeps the position chosen by the user.
+The compact main window is organized into six tabs: **Player**, **Battle**, **Encounters**, **World**, **Display** and **Settings**. Each page uses short cards instead of one continuous feature list. **Settings** includes two startup switches: **Start trainer with game** installs the embedded `version.dll` alongside `Uranium.exe` and enables automatic loading; **Fast boot** skips the intro and loads the default save on the next launch. The installed proxy remains harmless when automatic loading is disabled, so the external trainer can still be used normally. Settings also lets you replace the global `Insert` show/hide shortcut, restore its default value, or use **Stop Trainer** to turn off all active trainer options, restore normal movement/camera/minimap behavior, and remove the trainer UI and hooks for the current game session. The overlay and its Pokémon, inventory and trainer editors remain visible and interactive when Uranium loses focus or is minimized. After its initial placement, the overlay keeps the position chosen by the user.
 
 The **Global speed** control keeps its x1–x5 slider; the separate duplicate multiplier row has been removed. The **Pokemon ID** control displays the selected value followed by the corresponding Pokémon name; the name is read from the game data.
 
