@@ -283,13 +283,19 @@ static void draw_button(HDC dc, const RECT& rect, const char* text,
 static void draw_close_button(HDC dc, const RECT& rect) {
     fill_rounded_rect(dc, rect, RGB(71, 43, 57), 6);
     frame_rounded_rect(dc, rect, RGB(181, 83, 110), 6);
-    const int inset = (rect.right - rect.left) < 26 ? 6 : 8;
+
+    // Les boutons de fermeture des editeurs sont plus larges que hauts.
+    // Utiliser les memes marges sur chaque axe ecrasait la croix verticalement.
+    // Le glyphe est donc un carre centre, independant du ratio du bouton.
+    const int center_x = (rect.left + rect.right) / 2;
+    const int center_y = (rect.top + rect.bottom) / 2;
+    const int half_size = 5;
     HPEN close_pen = CreatePen(PS_SOLID, 2, RGB(255, 241, 244));
     HPEN old_pen = (HPEN)SelectObject(dc, close_pen);
-    MoveToEx(dc, rect.left + inset, rect.top + inset, NULL);
-    LineTo(dc, rect.right - inset, rect.bottom - inset);
-    MoveToEx(dc, rect.right - inset, rect.top + inset, NULL);
-    LineTo(dc, rect.left + inset, rect.bottom - inset);
+    MoveToEx(dc, center_x - half_size, center_y - half_size, NULL);
+    LineTo(dc, center_x + half_size, center_y + half_size);
+    MoveToEx(dc, center_x + half_size, center_y - half_size, NULL);
+    LineTo(dc, center_x - half_size, center_y + half_size);
     SelectObject(dc, old_pen);
     DeleteObject(close_pen);
 }
