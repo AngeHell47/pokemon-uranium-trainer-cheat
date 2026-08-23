@@ -27,6 +27,7 @@
 #include "options/opt_weather.h"
 #include "options/opt_heal.h"
 #include "options/opt_extras.h"
+#include "options/opt_autosave.h"
 //#include "options/opt_speedhack.h"
 #include "options/opt_zoom.h"
 #include "options/opt_minimap.h"
@@ -148,6 +149,12 @@ static DWORD WINAPI main_thread(LPVOID) {
         release_trainer_singleton();
         return 0;
     }
+    if (!opt_autosave_init(g_ini_path)) {
+        opt_extras_shutdown();
+        rgss_safe_dispatch_shutdown();
+        release_trainer_singleton();
+        return 0;
+    }
 	//opt_speedhack_init(g_ini_path);
     opt_zoom_init(g_ini_path);
     opt_minimap_init(g_ini_path);
@@ -186,6 +193,7 @@ static DWORD WINAPI main_thread(LPVOID) {
     // receive their OFF/default values while the game thread is still safe.
     rgss_safe_dispatch_flush(INFINITE);
     opt_godmode_repair_shutdown();
+    opt_autosave_shutdown();
     opt_extras_shutdown();
     rgss_safe_dispatch_shutdown();
     gamepad_input_shutdown();

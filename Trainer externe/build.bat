@@ -55,6 +55,7 @@ cl /nologo /O1 /GS- /MT /LD /W4 /utf-8 ^
   "%DLLSRC%\options\opt_weather.cpp" ^
   "%DLLSRC%\options\opt_heal.cpp" ^
   "%DLLSRC%\options\opt_extras.cpp" ^
+  "%DLLSRC%\options\opt_autosave.cpp" ^
   build\trainer_logo.res ^
   /Fe:build\version.dll /link /DEF:"%DLLSRC%\version.def" /MACHINE:X86 ^
   psapi.lib kernel32.lib user32.lib gdi32.lib d3d9.lib
@@ -97,6 +98,7 @@ cl /nologo /O1 /GS- /MT /LD /W4 /utf-8 /DTRAINER_EXTERNAL_PAYLOAD ^
   "%DLLSRC%\options\opt_weather.cpp" ^
   "%DLLSRC%\options\opt_heal.cpp" ^
   "%DLLSRC%\options\opt_extras.cpp" ^
+  "%DLLSRC%\options\opt_autosave.cpp" ^
   build\payload_resources.res ^
   /Fo:build\payload_obj\ /Fe:build\trainer_payload.dll ^
   /link /MACHINE:X86 /MAP:build\trainer_payload.map ^

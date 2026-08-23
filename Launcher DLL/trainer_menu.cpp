@@ -19,6 +19,7 @@
 #include "options/opt_weather.h"
 #include "options/opt_heal.h"
 #include "options/opt_extras.h"
+#include "options/opt_autosave.h"
 //#include "options/opt_speedhack.h"
 #include "options/opt_zoom.h"
 #include "options/opt_minimap.h"
@@ -33,6 +34,7 @@
 #include <gdiplus.h>
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
 
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -109,6 +111,24 @@ static const Translation kTranslations[] = {
     { "Encounters", "Rencontres", "Encuentros" }, { "World", "Monde", "Mundo" },
     { "Display", "Affichage", "Pantalla" },
     { "Settings", "Paramètres", "Ajustes" },
+    { "Autosave", "Autosave", "Autoguardado" },
+    { "Automatic states", "États automatiques", "Estados automáticos" },
+    { "Autosave every minute", "Sauvegarde toutes les minutes", "Guardar cada minuto" },
+    { "Keeps the 10 latest states in a separate folder. Native game saves are never replaced.", "Conserve les 10 derniers états dans un dossier séparé. Les sauvegardes natives du jeu ne sont jamais remplacées.", "Conserva los 10 últimos estados en una carpeta separada. Las partidas nativas nunca se reemplazan." },
+    { "Latest states", "Derniers états", "Últimos estados" },
+    { "State", "État", "Estado" },
+    { "Load", "Charger", "Cargar" },
+    { "Empty", "Vide", "Vacío" },
+    { "Next state in", "Prochain état dans", "Próximo estado en" },
+    { "Waiting for a safe moment (battle or event in progress)", "En attente d'un moment sûr (combat ou événement en cours)", "Esperando un momento seguro (combate o evento en curso)" },
+    { "Saving state...", "Sauvegarde de l'état...", "Guardando estado..." },
+    { "State saved", "État sauvegardé", "Estado guardado" },
+    { "Loading state...", "Chargement de l'état...", "Cargando estado..." },
+    { "State loaded", "État chargé", "Estado cargado" },
+    { "Autosave error", "Erreur d'autosave", "Error de autoguardado" },
+    { "Load failed or unavailable right now", "Chargement impossible ou indisponible pour le moment", "No se puede cargar en este momento" },
+    { "Load this state?", "Charger cet état ?", "¿Cargar este estado?" },
+    { "Current unsaved progress will be lost. Your native game save will remain untouched.", "La progression actuelle non sauvegardée sera perdue. La sauvegarde native du jeu restera intacte.", "El progreso actual no guardado se perderá. La partida nativa no se modificará." },
     { "Trainer Tools", "Outils du dresseur", "Herramientas del entrenador" },
     { "Profile Editors", "Éditeurs du profil", "Editores de perfil" },
     { "Features", "Fonctionnalités", "Funcionalidades" },
@@ -284,6 +304,7 @@ enum MainTab {
     TAB_ENCOUNTERS,
     TAB_WORLD,
     TAB_DISPLAY,
+    TAB_AUTOSAVE,
     TAB_SETTINGS,
     TAB_COUNT
 };
@@ -1954,7 +1975,7 @@ static const int MODERN_MAX_CARD_COUNT = 4;
 
 static const char* modern_tab_title(MainTab tab) {
     static const char* titles[TAB_COUNT] = {
-        "Player", "Battle", "Encounters", "World", "Display", "Settings"
+        "Player", "Battle", "Encounters", "World", "Display", "Autosave", "Settings"
     };
     return titles[(int)tab];
 }
@@ -1966,6 +1987,7 @@ static const char* modern_group_title(MainTab tab, int column) {
         {"Encounter Rules", "Wild Pokémon", "", ""},
         {"", "", "", ""},
         {"Zoom & FPS", "Minimap", "Environment", ""},
+        {"", "", "", ""},
         {"Interface", "", "", ""}
     };
     return titles[(int)tab][column];
@@ -2025,6 +2047,7 @@ static int modern_quick_column() {
 static int modern_card_count(MainTab tab) {
     if (tab == TAB_PLAYER) return 4;
     if (tab == TAB_WORLD) return 0;
+    if (tab == TAB_AUTOSAVE) return 0;
     if (tab == TAB_DISPLAY) return 3;
     if (tab == TAB_SETTINGS) return 1;
     return 2;
@@ -3443,6 +3466,192 @@ static void modern_draw_world(HDC dc, HFONT label_font, HFONT value_font,
     modern_draw_world_pokemon_tooltip(dc, label_font, small_font);
 }
 
+struct AutosaveDisplayRow {
+    int physical_slot;
+    OptAutosaveSlot info;
+};
+
+static int autosave_display_rows(AutosaveDisplayRow rows[10]) {
+    int count = 0;
+    for (int slot = 1; slot <= 10; ++slot) {
+        const OptAutosaveSlot info = opt_autosave_slot(slot);
+        if (!info.valid) continue;
+        rows[count].physical_slot = slot;
+        rows[count].info = info;
+        ++count;
+    }
+    for (int left = 0; left < count; ++left) {
+        for (int right = left + 1; right < count; ++right) {
+            if (rows[right].info.timestamp > rows[left].info.timestamp) {
+                const AutosaveDisplayRow temporary = rows[left];
+                rows[left] = rows[right];
+                rows[right] = temporary;
+            }
+        }
+    }
+    return count;
+}
+
+static RECT modern_autosave_card_rect() {
+    return {MODERN_MARGIN,
+            TITLE_H + MODERN_TAB_H + MODERN_PAGE_HEADER_H,
+            MENU_TOTAL_W - MODERN_MARGIN,
+            MENU_FIXED_H - MODERN_MARGIN};
+}
+
+static RECT modern_autosave_toggle_rect() {
+    RECT card = modern_autosave_card_rect();
+    return {card.left + 12, card.top + 8, card.right - 12, card.top + 64};
+}
+
+static RECT modern_autosave_row_rect(int display_index) {
+    RECT card = modern_autosave_card_rect();
+    const int top = card.top + 92 + display_index * 38;
+    return {card.left + 10, top, card.right - 10, top + 36};
+}
+
+static RECT modern_autosave_load_rect(int display_index) {
+    RECT row = modern_autosave_row_rect(display_index);
+    return {row.right - 92, row.top + 5, row.right - 8, row.bottom - 5};
+}
+
+static int modern_autosave_load_at(int x, int y) {
+    AutosaveDisplayRow rows[10] = {};
+    const int count = autosave_display_rows(rows);
+    for (int index = 0; index < count; ++index) {
+        if (ptin(modern_autosave_load_rect(index), x, y))
+            return rows[index].physical_slot;
+    }
+    return 0;
+}
+
+static void modern_draw_autosave(HDC dc, HFONT label_font,
+                                 HFONT value_font, HFONT small_font) {
+    RECT card = modern_autosave_card_rect();
+    fill_rounded_rect(dc, card, RGB(18, 25, 39), 13);
+    frame_rounded_rect(dc, card, RGB(43, 55, 75), 13);
+
+    RECT toggle = modern_autosave_toggle_rect();
+    RECT accent = {toggle.left + 2, toggle.top + 7,
+                   toggle.left + 6, toggle.top + 23};
+    fill_rounded_rect(dc, accent, COL_SLIDER, 4);
+    RECT title = {accent.right + 8, toggle.top,
+                  toggle.right - 190, toggle.top + 30};
+    SelectObject(dc, label_font); SetTextColor(dc, COL_TEXT);
+    DrawTextA(dc, trainer_ui_text("Autosave every minute", NULL), -1,
+              &title, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    modern_draw_switch(dc, toggle, g_autosave_enabled, small_font);
+
+    char status_text[192] = {};
+    COLORREF status_color = COL_DIMTEXT;
+    const LONG status = opt_autosave_status();
+    if (!g_autosave_enabled || status == OPT_AUTOSAVE_DISABLED) {
+        lstrcpynA(status_text, trainer_ui_text("Off", NULL), ARRAYSIZE(status_text));
+    } else if (status == OPT_AUTOSAVE_WAITING_SAFE) {
+        lstrcpynA(status_text,
+            trainer_ui_text("Waiting for a safe moment (battle or event in progress)", NULL),
+            ARRAYSIZE(status_text));
+        status_color = RGB(242, 190, 75);
+    } else if (status == OPT_AUTOSAVE_SAVING) {
+        lstrcpynA(status_text, trainer_ui_text("Saving state...", NULL),
+                  ARRAYSIZE(status_text));
+        status_color = COL_SLIDER;
+    } else if (status == OPT_AUTOSAVE_SAVED) {
+        lstrcpynA(status_text, trainer_ui_text("State saved", NULL),
+                  ARRAYSIZE(status_text));
+        status_color = COL_ON;
+    } else if (status == OPT_AUTOSAVE_LOADING) {
+        lstrcpynA(status_text, trainer_ui_text("Loading state...", NULL),
+                  ARRAYSIZE(status_text));
+        status_color = COL_SLIDER;
+    } else if (status == OPT_AUTOSAVE_LOADED) {
+        lstrcpynA(status_text, trainer_ui_text("State loaded", NULL),
+                  ARRAYSIZE(status_text));
+        status_color = COL_ON;
+    } else if (status == OPT_AUTOSAVE_ERROR) {
+        lstrcpynA(status_text, trainer_ui_text("Autosave error", NULL),
+                  ARRAYSIZE(status_text));
+        status_color = RGB(238, 93, 105);
+    } else if (status == OPT_AUTOSAVE_LOAD_ERROR ||
+               status == OPT_AUTOSAVE_LOAD_REFUSED) {
+        lstrcpynA(status_text,
+            trainer_ui_text("Load failed or unavailable right now", NULL),
+            ARRAYSIZE(status_text));
+        status_color = RGB(238, 93, 105);
+    } else {
+        _snprintf_s(status_text, sizeof(status_text), _TRUNCATE,
+            "%s %d s", trainer_ui_text("Next state in", NULL),
+            opt_autosave_seconds_until_next());
+    }
+    RECT status_rect = {title.left, toggle.top + 27,
+                        toggle.right - 116, toggle.bottom};
+    SelectObject(dc, small_font); SetTextColor(dc, status_color);
+    DrawTextA(dc, status_text, -1, &status_rect,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    RECT section = {card.left + 16, card.top + 66,
+                    card.right - 16, card.top + 92};
+    SelectObject(dc, value_font); SetTextColor(dc, RGB(207, 214, 230));
+    DrawTextA(dc, trainer_ui_text("Latest states", NULL), -1, &section,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    AutosaveDisplayRow rows[10] = {};
+    const int count = autosave_display_rows(rows);
+    for (int index = 0; index < 10; ++index) {
+        RECT row = modern_autosave_row_rect(index);
+        fill_rounded_rect(dc, row,
+            index < count ? RGB(23, 32, 49) : RGB(20, 28, 43), 7);
+        if (index < count)
+            frame_rounded_rect(dc, row, RGB(47, 61, 82), 7);
+
+        char state_label[48] = {};
+        _snprintf_s(state_label, sizeof(state_label), _TRUNCATE,
+                    "%s %d", trainer_ui_text("State", NULL), index + 1);
+        RECT state_rect = {row.left + 12, row.top,
+                           row.left + 104, row.bottom};
+        SelectObject(dc, label_font);
+        SetTextColor(dc, index < count ? COL_TEXT : COL_DIMTEXT);
+        DrawTextA(dc, state_label, -1, &state_rect,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+        RECT details = {row.left + 112, row.top,
+                        row.right - 108, row.bottom};
+        SelectObject(dc, small_font); SetTextColor(dc, COL_DIMTEXT);
+        if (index < count) {
+            __time64_t raw_time = (__time64_t)rows[index].info.timestamp;
+            struct tm local_time = {};
+            char timestamp[64] = {};
+            if (_localtime64_s(&local_time, &raw_time) == 0)
+                strftime(timestamp, sizeof(timestamp), "%d/%m/%Y  %H:%M:%S",
+                         &local_time);
+            char details_text[96] = {};
+            _snprintf_s(details_text, sizeof(details_text), _TRUNCATE,
+                "%s   %.1f MB", timestamp,
+                rows[index].info.size_bytes / (1024.0 * 1024.0));
+            DrawTextA(dc, details_text, -1, &details,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+            RECT button = modern_autosave_load_rect(index);
+            fill_rounded_rect(dc, button, RGB(75, 62, 151), 7);
+            frame_rounded_rect(dc, button, RGB(124, 105, 255), 7);
+            SelectObject(dc, small_font); SetTextColor(dc, RGB(250, 249, 255));
+            DrawTextA(dc, trainer_ui_text("Load", NULL), -1, &button,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        } else {
+            DrawTextA(dc, trainer_ui_text("Empty", NULL), -1, &details,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        }
+    }
+
+    RECT note = {card.left + 16, card.bottom - 24,
+                 card.right - 16, card.bottom - 5};
+    SelectObject(dc, small_font); SetTextColor(dc, COL_DIMTEXT);
+    DrawTextA(dc, trainer_ui_text(
+        "Keeps the 10 latest states in a separate folder. Native game saves are never replaced.",
+        NULL), -1, &note,
+        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+}
+
 static void paint_modern(HWND window) {
     PAINTSTRUCT ps = {};
     HDC target = BeginPaint(window, &ps);
@@ -3547,6 +3756,8 @@ static void paint_modern(HWND window) {
     }
     if (s_active_tab == TAB_WORLD)
         modern_draw_world(dc, label_font, value_font, small_font);
+    if (s_active_tab == TAB_AUTOSAVE)
+        modern_draw_autosave(dc, label_font, value_font, small_font);
 
     paint_picker(dc, label_font);
     frame_rounded_rect(dc, all, RGB(54, 66, 88), 2);
@@ -3711,6 +3922,18 @@ static bool confirm_irreversible_action() {
                  ARRAYSIZE(title));
     utf8_to_wide(trainer_ui_text(
         "This action permanently changes your game progress and cannot be undone.\n\nDo you want to continue?",
+        NULL), message, ARRAYSIZE(message));
+    return MessageBoxW(s_overlay, message, title,
+        MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_SETFOREGROUND) == IDYES;
+}
+
+static bool confirm_autosave_load() {
+    wchar_t title[96] = {};
+    wchar_t message[384] = {};
+    utf8_to_wide(trainer_ui_text("Load this state?", NULL), title,
+                 ARRAYSIZE(title));
+    utf8_to_wide(trainer_ui_text(
+        "Current unsaved progress will be lost. Your native game save will remain untouched.",
         NULL), message, ARRAYSIZE(message));
     return MessageBoxW(s_overlay, message, title,
         MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_SETFOREGROUND) == IDYES;
@@ -3987,6 +4210,28 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
                 opt_money_read(on_money_read);
             }
         }
+        {
+            static int refresh_ticks = 0;
+            static LONG last_status = 999;
+            static LONG last_revision = -1;
+            static int last_seconds = -1;
+            if (++refresh_ticks >= 10) {
+                refresh_ticks = 0;
+                if (s_open && s_active_tab == TAB_AUTOSAVE)
+                    opt_autosave_request_refresh();
+            }
+            const LONG status = opt_autosave_status();
+            const LONG revision = opt_autosave_revision();
+            const int seconds = opt_autosave_seconds_until_next();
+            if (status != last_status || revision != last_revision ||
+                seconds != last_seconds) {
+                last_status = status;
+                last_revision = revision;
+                last_seconds = seconds;
+                if (s_open && s_active_tab == TAB_AUTOSAVE)
+                    InvalidateRect(s_overlay, NULL, FALSE);
+            }
+        }
         return 0;
 
     case WM_LBUTTONDOWN: {
@@ -4081,6 +4326,26 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
                 s_world_search_active = false;
                 InterlockedExchange(&s_block_game_keyboard, 1);
                 InvalidateRect(hw, NULL, FALSE);
+            }
+        }
+
+        if (s_active_tab == TAB_AUTOSAVE) {
+            if (ptin(modern_autosave_toggle_rect(), x, y)) {
+                opt_autosave_toggle(!g_autosave_enabled);
+                InvalidateRect(hw, NULL, FALSE);
+                return 0;
+            }
+            const int autosave_slot = modern_autosave_load_at(x, y);
+            if (autosave_slot > 0) {
+                if (!confirm_autosave_load()) return 0;
+                opt_autosave_request_load(autosave_slot);
+                menu_close();
+                if (s_game) {
+                    SetForegroundWindow(s_game);
+                    SetActiveWindow(s_game);
+                    SetFocus(s_game);
+                }
+                return 0;
             }
         }
 
@@ -4839,6 +5104,7 @@ void menu_open() {
     }
 
     opt_money_read(on_money_read);
+    opt_autosave_request_refresh();
 
     InvalidateRect(s_overlay, NULL, TRUE);
     s_open = true;

@@ -82,6 +82,27 @@ Le point de passage RGSS commun est installé avant les hooks bas niveau de
 l'overlay. Leur thread entre ensuite immédiatement dans sa boucle de messages,
 ce qui évite un retrait silencieux par `LowLevelHooksTimeout`.
 
+## États automatiques du trainer
+
+L'onglet `Autosave` conserve dix états tournants, espacés d'une minute, dans le
+sous-dossier `UraniumTrainerAutosaves` du dossier de sauvegardes utilisateur.
+Ces fichiers ne passent jamais par `pbSave` et ne partagent aucun nom avec
+`Uranium.rxdata` ou `Uranium_autosave.rxdata` : les sauvegardes native et
+automatique d'Uranium restent indépendantes.
+
+Un état n'est produit que depuis `Scene_Map`, lorsque le joueur, les messages,
+les transferts, les transitions et l'interpréteur d'événements sont au repos.
+Une échéance tombant pendant un combat ou un événement est réessayée chaque
+seconde jusqu'au prochain point sûr. Le fichier temporaire est vérifié avec
+`SaveSystem.integrityCheck`, puis publié par remplacement atomique ; le plus
+ancien des dix emplacements est remplacé.
+
+Le chargement est confié à une scène Ruby transitoire. Elle lit et valide les
+quinze objets dans des variables locales avant de remplacer l'état global,
+réinitialise les objets temporaires et les rencontres, puis recrée
+`Scene_Map`. Le fichier natif n'est pas modifié : l'utilisateur peut ensuite
+effectuer lui-même une sauvegarde normale depuis l'état restauré.
+
 ## Dézoom
 
 Le dézoom ne redimensionne pas la fenêtre et ne fait pas d'étirement GDI. Il
