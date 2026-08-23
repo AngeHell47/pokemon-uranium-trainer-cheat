@@ -308,7 +308,7 @@ MenuItem g_items[] = {
     { "Wild Shiny", ITEM_TYPE_TOGGLE,
       &g_wild_shiny_enabled, opt_encounter_toggle_shiny, NULL,0,0,NULL },
     { "", ITEM_TYPE_SLIDER,
-      NULL,NULL, &g_wild_shiny_rate,1,8192,opt_encounter_set_shiny_rate },
+      NULL,NULL, &g_wild_shiny_rate,1,1024,opt_encounter_set_shiny_rate },
 
     { "Game Time", ITEM_TYPE_TIME,
       NULL,NULL, NULL,0,0,NULL },
@@ -805,7 +805,7 @@ static void save_menu_toggle_key(int virtual_key) {
     char value[16] = {};
     wsprintfA(value, "%d", virtual_key);
     WritePrivateProfileStringA("Settings", "MenuToggleKey", value,
-                               "trainer.ini");
+                               opt_startup_config_path());
 }
 
 static RECT hold_key_rect(int index) {
@@ -3099,7 +3099,8 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
                     s_ui_language = (UiLanguage)language;
                     const char* code = language == UI_FRENCH ? "fr" :
                         (language == UI_SPANISH ? "es" : "en");
-                    WritePrivateProfileStringA("Settings", "UiLanguage", code, "trainer.ini");
+                    WritePrivateProfileStringA("Settings", "UiLanguage", code,
+                                               opt_startup_config_path());
                     InvalidateRect(hw, NULL, FALSE);
                     return 0;
                 }
@@ -3155,6 +3156,9 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
                 // be installed (for example, another DLL already occupies it).
                 if (opt_startup_set_auto_trainer(requested))
                     s_auto_start_trainer = requested;
+                else if (requested)
+                    MessageBoxA(hw, opt_startup_last_error(),
+                                "Uranium Trainer", MB_OK | MB_ICONWARNING);
                 if (!s_auto_start_trainer && s_fast_boot) {
                     s_fast_boot = false;
                     opt_startup_set_fast_boot(false);
@@ -3818,7 +3822,7 @@ bool menu_init(HINSTANCE hinst, HWND game_hwnd) {
     s_hold_key_capture_item = -1;
     s_menu_hotkey_capture = false;
     s_menu_toggle_key = GetPrivateProfileIntA(
-        "Settings", "MenuToggleKey", VK_INSERT, "trainer.ini");
+        "Settings", "MenuToggleKey", VK_INSERT, opt_startup_config_path());
     if (s_menu_toggle_key <= 0 || s_menu_toggle_key > 254)
         s_menu_toggle_key = VK_INSERT;
     // opt_startup owns the absolute game-folder ini path.  Using it here is
@@ -3827,7 +3831,7 @@ bool menu_init(HINSTANCE hinst, HWND game_hwnd) {
     s_fast_boot = s_auto_start_trainer && opt_startup_fast_boot_enabled();
     char language[8] = {};
     GetPrivateProfileStringA("Settings", "UiLanguage", "en", language,
-                             sizeof(language), "trainer.ini");
+                             sizeof(language), opt_startup_config_path());
     s_ui_language = _stricmp(language, "fr") == 0 ? UI_FRENCH :
         (_stricmp(language, "es") == 0 ? UI_SPANISH : UI_ENGLISH);
 
@@ -3852,7 +3856,7 @@ bool menu_init(HINSTANCE hinst, HWND game_hwnd) {
 
     if (!s_overlay) return false;
 
-    if (!trainer_editors_init(hinst, game_hwnd, "trainer.ini")) {
+    if (!trainer_editors_init(hinst, game_hwnd, opt_startup_config_path())) {
         DestroyWindow(s_overlay);
         s_overlay = NULL;
         movesdb_free();

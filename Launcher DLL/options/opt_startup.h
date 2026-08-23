@@ -11,5 +11,8 @@ bool opt_startup_set_auto_trainer(bool enabled);
 void opt_startup_set_fast_boot(bool enabled);
 bool opt_startup_auto_trainer_enabled();
 bool opt_startup_fast_boot_enabled();
+// Absolute trainer.ini path owned by the game process directory.
+const char* opt_startup_config_path();
+const char* opt_startup_last_error();
 void opt_startup_set_hwnd_and_start(HWND hwnd);
 bool opt_startup_wait_for_game(DWORD timeout_ms);

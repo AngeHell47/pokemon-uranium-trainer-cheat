@@ -191,7 +191,7 @@ void opt_encounter_init(const char* ini_path) {
     g_wild_level_enabled = GetPrivateProfileIntA("Settings", "WildLevelEnabled", 0, s_ini) != 0;
     g_wild_level = clamp(GetPrivateProfileIntA("Settings", "WildLevel", 1, s_ini), 1, 100);
     g_wild_shiny_enabled = GetPrivateProfileIntA("Settings", "WildShinyEnabled", 0, s_ini) != 0;
-    g_wild_shiny_rate = clamp(GetPrivateProfileIntA("Settings", "WildShinyRate", kNativeShinyDenominator, s_ini), 1, 8192);
+    g_wild_shiny_rate = clamp(GetPrivateProfileIntA("Settings", "WildShinyRate", kNativeShinyDenominator, s_ini), 1, kNativeShinyDenominator);
     if (!g_wild_shiny_enabled) g_wild_shiny_rate = kNativeShinyDenominator;
     InterlockedExchange(&s_force_next, g_force_next_wild ? 1 : 0);
     InterlockedExchange(&s_species, g_forced_wild_species);
@@ -253,7 +253,7 @@ void opt_encounter_toggle_shiny(bool enabled) {
 }
 
 void opt_encounter_set_shiny_rate(int denominator) {
-    g_wild_shiny_rate = clamp(denominator, 1, 8192);
+    g_wild_shiny_rate = clamp(denominator, 1, kNativeShinyDenominator);
     InterlockedExchange(&s_shiny_rate, g_wild_shiny_rate);
     write_int("WildShinyRate", g_wild_shiny_rate);
     if (g_wild_shiny_enabled) queue_apply();

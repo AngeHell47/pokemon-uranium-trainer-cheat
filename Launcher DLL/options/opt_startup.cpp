@@ -15,6 +15,7 @@ static volatile LONG s_auto_load = 0;
 static char s_ruby[12288];
 static char s_ready_probe[1024];
 static char s_ini[MAX_PATH] = {};
+static char s_last_error[512] = {};
 
 // Kept in the external payload so it can install the exact proxy DLL that was
 // built with it.  A separately installed proxy simply needs the preference.
@@ -29,6 +30,15 @@ static bool get_game_version_path(char* path, size_t capacity) {
     if (lstrlenA(path) + lstrlenA("version.dll") >= (int)capacity) return false;
     lstrcatA(path, "version.dll");
     return true;
+}
+
+static bool startup_error(const char* reason, const char* path) {
+    if (!reason) reason = "opération impossible";
+    if (!path) path = "";
+    _snprintf_s(s_last_error, sizeof(s_last_error), _TRUNCATE,
+                "Impossible d'activer le démarrage automatique.\n\n%s\n\nFichier ciblé : %s\n\nSi le jeu est installé dans Program Files, relance UraniumTrainer.exe en tant qu'administrateur.",
+                reason, path);
+    return false;
 }
 
 static bool is_trainer_version_proxy(const char* path) {
@@ -93,7 +103,8 @@ static bool remove_version_proxy() {
 
 static bool install_version_proxy() {
     char game_path[MAX_PATH] = {};
-    if (!get_game_version_path(game_path, sizeof(game_path))) return false;
+    if (!get_game_version_path(game_path, sizeof(game_path)))
+        return startup_error("Le chemin de l'exécutable du jeu est introuvable.", NULL);
 
     char module_path[MAX_PATH] = {};
     GetModuleFileNameA(g_trainer_module, module_path, sizeof(module_path));
@@ -101,28 +112,46 @@ static bool install_version_proxy() {
     if (_stricmp(game_path, module_path) == 0) return true;
     // A previous session may have disabled the proxy while Windows still had
     // it mapped.  Re-adopt our own file, but never replace an unrelated DLL.
-    if (GetFileAttributesA(game_path) != INVALID_FILE_ATTRIBUTES)
-        return is_trainer_version_proxy(game_path);
+    if (GetFileAttributesA(game_path) != INVALID_FILE_ATTRIBUTES) {
+        if (is_trainer_version_proxy(game_path)) return true;
+        return startup_error(
+            "Un autre version.dll existe déjà à côté du jeu et n'a pas été remplacé.",
+            game_path);
+    }
 
     HRSRC resource = FindResourceA(g_trainer_module,
         MAKEINTRESOURCEA(IDR_AUTOSTART_VERSION_PROXY), RT_RCDATA);
-    if (!resource) return false;
+    if (!resource)
+        return startup_error("Le proxy version.dll n'est pas inclus dans ce build.", game_path);
     HGLOBAL loaded = LoadResource(g_trainer_module, resource);
     const DWORD size = SizeofResource(g_trainer_module, resource);
     const void* bytes = loaded ? LockResource(loaded) : NULL;
-    if (!bytes || !size) return false;
+    if (!bytes || !size)
+        return startup_error("Le proxy version.dll inclus est invalide.", game_path);
 
     char temporary[MAX_PATH] = {};
     _snprintf_s(temporary, sizeof(temporary), _TRUNCATE, "%s.new", game_path);
     HANDLE file = CreateFileA(temporary, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
                               FILE_ATTRIBUTE_NORMAL, NULL);
-    if (file == INVALID_HANDLE_VALUE) return false;
+    if (file == INVALID_HANDLE_VALUE) {
+        char reason[160] = {};
+        wsprintfA(reason, "Windows refuse l'écriture (erreur %lu).",
+                  (unsigned long)GetLastError());
+        return startup_error(reason, game_path);
+    }
     DWORD written = 0;
     const bool ok = WriteFile(file, bytes, size, &written, NULL) && written == size;
     CloseHandle(file);
-    if (!ok || !MoveFileExA(temporary, game_path, MOVEFILE_WRITE_THROUGH)) {
+    if (!ok) {
         DeleteFileA(temporary);
-        return false;
+        return startup_error("La copie de version.dll n'a pas pu être écrite.", game_path);
+    }
+    if (!MoveFileExA(temporary, game_path, MOVEFILE_WRITE_THROUGH)) {
+        char reason[160] = {};
+        wsprintfA(reason, "Windows refuse l'installation (erreur %lu).",
+                  (unsigned long)GetLastError());
+        DeleteFileA(temporary);
+        return startup_error(reason, game_path);
     }
     return true;
 }
@@ -337,6 +366,7 @@ static void start_retry_thread() {
 
 void opt_startup_init(const char* ini_path) {
     lstrcpynA(s_ini, ini_path ? ini_path : "trainer.ini", sizeof(s_ini));
+    s_last_error[0] = '\0';
     const bool auto_trainer =
         GetPrivateProfileIntA("Settings", "AutoStartTrainer", 0, s_ini) != 0;
     g_fast_boot = auto_trainer &&
@@ -361,8 +391,10 @@ void opt_startup_init(const char* ini_path) {
 }
 
 bool opt_startup_set_auto_trainer(bool enabled) {
+    s_last_error[0] = '\0';
     if (!enabled) {
-        if (!remove_version_proxy()) return false;
+        if (!remove_version_proxy())
+            return startup_error("Le version.dll du trainer n'a pas pu être retiré.", NULL);
         g_fast_boot = false;
         WritePrivateProfileStringA("Settings", "FastBoot", "0", s_ini);
         WritePrivateProfileStringA("Settings", "AutoStartTrainer", "0", s_ini);
@@ -389,6 +421,14 @@ bool opt_startup_auto_trainer_enabled() {
 
 bool opt_startup_fast_boot_enabled() {
     return GetPrivateProfileIntA("Settings", "FastBoot", 0, s_ini) != 0;
+}
+
+const char* opt_startup_config_path() {
+    return s_ini[0] ? s_ini : "trainer.ini";
+}
+
+const char* opt_startup_last_error() {
+    return s_last_error[0] ? s_last_error : "L'opération a échoué.";
 }
 
 void opt_startup_set_hwnd_and_start(HWND hwnd) {
