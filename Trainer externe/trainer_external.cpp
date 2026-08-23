@@ -23,7 +23,21 @@ constexpr int kProcessCombo = 1001;
 constexpr int kRefreshButton = 1002;
 constexpr int kAttachButton = 1003;
 constexpr int kStatusText = 1004;
-constexpr int kLaunchButton = 1005;
+constexpr int kProcessMenuBase = 3000;
+
+constexpr COLORREF kWindowBackground = RGB(14, 23, 38);
+constexpr COLORREF kCardBackground = RGB(25, 38, 58);
+constexpr COLORREF kCardBorder = RGB(48, 67, 94);
+constexpr COLORREF kPrimary = RGB(48, 121, 255);
+constexpr COLORREF kPrimaryPressed = RGB(37, 99, 235);
+constexpr COLORREF kSecondary = RGB(45, 62, 86);
+constexpr COLORREF kSecondaryPressed = RGB(61, 81, 109);
+constexpr COLORREF kTextPrimary = RGB(241, 245, 249);
+constexpr COLORREF kTextMuted = RGB(164, 180, 203);
+constexpr COLORREF kStatusNeutral = RGB(174, 196, 226);
+constexpr COLORREF kStatusSuccess = RGB(110, 231, 167);
+constexpr COLORREF kStatusError = RGB(252, 165, 165);
+constexpr COLORREF kStatusProgress = RGB(147, 197, 253);
 
 struct ProcessEntry {
     DWORD pid;
@@ -34,13 +48,17 @@ struct ProcessEntry {
 HINSTANCE g_instance = nullptr;
 HWND g_process_combo = nullptr;
 HWND g_attach_button = nullptr;
-HWND g_launch_button = nullptr;
 HWND g_status_text = nullptr;
 HFONT g_font = nullptr;
+HFONT g_title_font = nullptr;
+HFONT g_small_font = nullptr;
 HICON g_logo_icon = nullptr;
 HICON g_logo_icon_small = nullptr;
 std::vector<ProcessEntry> g_processes;
-COLORREF g_status_color = RGB(75, 85, 99);
+DWORD g_selected_pid = 0;
+COLORREF g_status_color = kStatusNeutral;
+HBRUSH g_window_brush = nullptr;
+HBRUSH g_card_brush = nullptr;
 
 std::wstring win32_error(DWORD code) {
     wchar_t* message = nullptr;
@@ -71,36 +89,6 @@ bool contains_case_insensitive(const std::wstring& value, const wchar_t* needle)
     std::transform(left.begin(), left.end(), left.begin(), towlower);
     std::transform(right.begin(), right.end(), right.begin(), towlower);
     return left.find(right) != std::wstring::npos;
-}
-
-std::wstring parent_directory(const std::wstring& path) {
-    const size_t slash = path.find_last_of(L"\\/");
-    return slash == std::wstring::npos ? std::wstring() : path.substr(0, slash);
-}
-
-bool regular_file_exists(const std::wstring& path) {
-    const DWORD attributes = GetFileAttributesW(path.c_str());
-    return attributes != INVALID_FILE_ATTRIBUTES &&
-           (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
-}
-
-std::wstring locate_game_executable() {
-    wchar_t module_path[MAX_PATH] = {};
-    if (!GetModuleFileNameW(nullptr, module_path, ARRAYSIZE(module_path)))
-        return std::wstring();
-
-    const std::wstring trainer_directory = parent_directory(module_path);
-    const std::wstring parent = parent_directory(trainer_directory);
-    const std::wstring grandparent = parent_directory(parent);
-    const std::wstring candidates[] = {
-        trainer_directory + L"\\Uranium.exe",
-        parent + L"\\Uranium.exe",
-        grandparent + L"\\Uranium.exe"
-    };
-    for (const std::wstring& candidate : candidates) {
-        if (regular_file_exists(candidate)) return candidate;
-    }
-    return std::wstring();
 }
 
 bool is_process_32_bit(HANDLE process) {
@@ -202,18 +190,34 @@ bool process_has_rgss(DWORD pid) {
     return remote_module_base(pid, L"RGSS102E.dll") != 0;
 }
 
-void refresh_processes() {
-    DWORD previous_pid = 0;
-    const int previous_index = static_cast<int>(SendMessageW(g_process_combo, CB_GETCURSEL, 0, 0));
-    if (previous_index >= 0 && previous_index < static_cast<int>(g_processes.size())) {
-        previous_pid = g_processes[previous_index].pid;
-    }
+std::wstring process_label(const ProcessEntry& entry) {
+    wchar_t label[320] = {};
+    swprintf_s(label, L"%s  ·  PID %lu", entry.name.c_str(), entry.pid);
+    return label;
+}
 
+bool select_process_by_pid(DWORD pid) {
+    for (const ProcessEntry& entry : g_processes) {
+        if (entry.pid == pid) {
+            g_selected_pid = pid;
+            SetWindowTextW(g_process_combo, process_label(entry).c_str());
+            EnableWindow(g_attach_button, TRUE);
+            return true;
+        }
+    }
+    return false;
+}
+
+void refresh_processes() {
     g_processes.clear();
-    SendMessageW(g_process_combo, CB_RESETCONTENT, 0, 0);
 
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snapshot == INVALID_HANDLE_VALUE) return;
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        g_selected_pid = 0;
+        SetWindowTextW(g_process_combo, L"Aucun processus détecté");
+        EnableWindow(g_attach_button, FALSE);
+        return;
+    }
 
     PROCESSENTRY32W process = {};
     process.dwSize = sizeof(process);
@@ -244,21 +248,23 @@ void refresh_processes() {
         return a.pid < b.pid;
     });
 
-    int selected = -1;
-    for (size_t i = 0; i < g_processes.size(); ++i) {
-        const ProcessEntry& entry = g_processes[i];
-        wchar_t label[320] = {};
-        swprintf_s(label, L"%s%s  (PID %lu)",
-            entry.looks_like_game ? L"[Game]  " : L"",
-            entry.name.c_str(), entry.pid);
-        SendMessageW(g_process_combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
-        if (entry.pid == previous_pid) selected = static_cast<int>(i);
-        if (selected < 0 && entry.looks_like_game) selected = static_cast<int>(i);
+    if (select_process_by_pid(g_selected_pid)) return;
+
+    for (const ProcessEntry& entry : g_processes) {
+        if (entry.looks_like_game) {
+            select_process_by_pid(entry.pid);
+            return;
+        }
     }
 
-    if (selected < 0 && !g_processes.empty()) selected = 0;
-    if (selected >= 0) SendMessageW(g_process_combo, CB_SETCURSEL, selected, 0);
-    EnableWindow(g_attach_button, selected >= 0);
+    if (!g_processes.empty()) {
+        select_process_by_pid(g_processes.front().pid);
+        return;
+    }
+
+    g_selected_pid = 0;
+    SetWindowTextW(g_process_combo, L"Aucun processus détecté");
+    EnableWindow(g_attach_button, FALSE);
 }
 
 uint32_t fnv1a(const BYTE* data, size_t size) {
@@ -466,124 +472,188 @@ bool inject_payload(DWORD pid, const std::wstring& payload_path, std::wstring& e
     return true;
 }
 
-void select_process(DWORD pid) {
-    refresh_processes();
-    for (size_t i = 0; i < g_processes.size(); ++i) {
-        if (g_processes[i].pid == pid) {
-            SendMessageW(g_process_combo, CB_SETCURSEL, i, 0);
-            break;
-        }
-    }
-}
-
-void launch_game_and_load(HWND window) {
-    const std::wstring game_path = locate_game_executable();
-    if (game_path.empty()) {
-        set_status(window,
-            L"Uranium.exe was not found. Put the trainer in the game folder or its Launcher folder.",
-            RGB(185, 28, 28));
-        return;
-    }
-
-    std::wstring payload_path;
-    std::wstring error;
-    if (!extract_payload(payload_path, error)) {
-        set_status(window, error, RGB(185, 28, 28));
-        return;
-    }
-
-    const std::wstring game_directory = parent_directory(game_path);
-
-    std::wstring command_line =
-        L"\"" + game_path + L"\" --trainer-direct-load";
-    std::vector<wchar_t> mutable_command(command_line.begin(), command_line.end());
-    mutable_command.push_back(L'\0');
-
-    STARTUPINFOW startup = {};
-    startup.cb = sizeof(startup);
-    PROCESS_INFORMATION process = {};
-    EnableWindow(g_launch_button, FALSE);
-    EnableWindow(g_attach_button, FALSE);
-    set_status(window, L"Launching the game and loading the save...", RGB(37, 99, 235));
-
-    if (!CreateProcessW(game_path.c_str(), mutable_command.data(), nullptr, nullptr,
-                        FALSE, 0, nullptr, game_directory.c_str(), &startup, &process)) {
-        error = L"Unable to launch Uranium.exe: " + win32_error(GetLastError());
-        set_status(window, error, RGB(185, 28, 28));
-        EnableWindow(g_launch_button, TRUE);
-        EnableWindow(g_attach_button, TRUE);
-        return;
-    }
-    CloseHandle(process.hThread);
-
-    const DWORD started = GetTickCount();
-    bool rgss_ready = false;
-    while (GetTickCount() - started < 15000) {
-        if (WaitForSingleObject(process.hProcess, 0) == WAIT_OBJECT_0) break;
-        if (process_has_rgss(process.dwProcessId)) {
-            rgss_ready = true;
-            break;
-        }
-        responsive_wait(20);
-    }
-
-    bool connected = false;
-    if (!rgss_ready) {
-        error = L"The game's RGSS engine did not initialize in time.";
-    } else {
-        connected = inject_payload(process.dwProcessId, payload_path, error);
-    }
-    CloseHandle(process.hProcess);
-    select_process(process.dwProcessId);
-
-    if (!connected) {
-        set_status(window, error, RGB(185, 28, 28));
-        EnableWindow(g_launch_button, TRUE);
-        EnableWindow(g_attach_button, TRUE);
-        return;
-    }
-
-    SetWindowTextW(g_attach_button, L"Connected");
-    SetWindowTextW(g_launch_button, L"Game launched");
-    set_status(window,
-        L"Game launched: intro skipped and the default save loaded directly.",
-        RGB(21, 128, 61));
-
-    // inject_payload ne reussit qu'une fois l'overlay initialise et detecte.
-    // Le launcher n'est alors plus necessaire : le trainer vit dans le jeu.
-    PostMessageW(window, WM_CLOSE, 0, 0);
-}
-
 void attach_selected_process(HWND window) {
-    const int index = static_cast<int>(SendMessageW(g_process_combo, CB_GETCURSEL, 0, 0));
-    if (index < 0 || index >= static_cast<int>(g_processes.size())) {
-        set_status(window, L"Select the game process first.", RGB(185, 28, 28));
+    const auto found = std::find_if(g_processes.begin(), g_processes.end(), [](const ProcessEntry& entry) {
+        return entry.pid == g_selected_pid;
+    });
+    if (found == g_processes.end()) {
+        set_status(window, L"Sélectionne d'abord le processus du jeu.", kStatusError);
         return;
     }
 
-    const ProcessEntry entry = g_processes[index];
+    const ProcessEntry entry = *found;
     EnableWindow(g_attach_button, FALSE);
-    set_status(window, L"Connecting to " + entry.name + L"...", RGB(37, 99, 235));
+    set_status(window, L"Connexion à " + entry.name + L"…", kStatusProgress);
 
     std::wstring payload_path;
     std::wstring error;
     if (!extract_payload(payload_path, error) || !inject_payload(entry.pid, payload_path, error)) {
-        set_status(window, error, RGB(185, 28, 28));
+        set_status(window, error, kStatusError);
         EnableWindow(g_attach_button, TRUE);
         return;
     }
 
     set_status(window,
-        L"Connected. The menu opens automatically; Insert hides or shows it.",
-        RGB(21, 128, 61));
-    SetWindowTextW(g_attach_button, L"Connected");
+        L"Trainer attaché. Le menu est prêt dans le jeu.",
+        kStatusSuccess);
+    SetWindowTextW(g_attach_button, L"Attaché");
 
     // Fermer seulement apres confirmation que le trainer est entierement pret.
     PostMessageW(window, WM_CLOSE, 0, 0);
 }
 
-void set_control_font(HWND control) {
-    SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
+void set_control_font(HWND control, HFONT font = g_font) {
+    SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+}
+
+void draw_rounded_rectangle(HDC dc, const RECT& rect, COLORREF fill, COLORREF border, int radius) {
+    HBRUSH brush = CreateSolidBrush(fill);
+    HPEN pen = CreatePen(PS_SOLID, 1, border);
+    HGDIOBJ previous_brush = SelectObject(dc, brush);
+    HGDIOBJ previous_pen = SelectObject(dc, pen);
+    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
+    SelectObject(dc, previous_pen);
+    SelectObject(dc, previous_brush);
+    DeleteObject(pen);
+    DeleteObject(brush);
+}
+
+void draw_launcher_chrome(HWND window) {
+    PAINTSTRUCT paint = {};
+    HDC dc = BeginPaint(window, &paint);
+    RECT client = {};
+    GetClientRect(window, &client);
+    FillRect(dc, &client, g_window_brush);
+
+    DrawIconEx(dc, 24, 19, g_logo_icon, 42, 42, 0, nullptr, DI_NORMAL);
+
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, kTextPrimary);
+    HGDIOBJ previous_font = SelectObject(dc, g_title_font);
+    RECT title = {80, 20, client.right - 20, 47};
+    DrawTextW(dc, L"Uranium Trainer", -1, &title, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+
+    SetTextColor(dc, kTextMuted);
+    SelectObject(dc, g_font);
+    RECT subtitle = {80, 47, client.right - 20, 67};
+    DrawTextW(dc, L"Attacher le menu à une partie déjà lancée", -1, &subtitle,
+        DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+    SelectObject(dc, previous_font);
+
+    RECT card = {16, 88, client.right - 16, 260};
+    draw_rounded_rectangle(dc, card, kCardBackground, kCardBorder, 14);
+
+    SetTextColor(dc, kTextMuted);
+    previous_font = SelectObject(dc, g_small_font);
+    RECT label = {28, 101, client.right - 28, 117};
+    DrawTextW(dc, L"PROCESSUS EN COURS", -1, &label, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+    SelectObject(dc, previous_font);
+
+    EndPaint(window, &paint);
+}
+
+void draw_button(const DRAWITEMSTRUCT& item) {
+    const bool disabled = (item.itemState & ODS_DISABLED) != 0;
+    const bool pressed = (item.itemState & ODS_SELECTED) != 0;
+    const bool primary = item.CtlID == kAttachButton;
+    COLORREF fill = primary ? kPrimary : kSecondary;
+    COLORREF border = fill;
+    COLORREF text = kTextPrimary;
+    if (disabled) {
+        fill = RGB(39, 52, 72);
+        border = RGB(51, 67, 90);
+        text = RGB(120, 138, 163);
+    } else if (pressed) {
+        fill = primary ? kPrimaryPressed : kSecondaryPressed;
+    }
+
+    draw_rounded_rectangle(item.hDC, item.rcItem, fill, border, 10);
+    SetBkMode(item.hDC, TRANSPARENT);
+    SetTextColor(item.hDC, text);
+    HGDIOBJ previous_font = SelectObject(item.hDC, g_font);
+    wchar_t caption[128] = {};
+    GetWindowTextW(item.hwndItem, caption, ARRAYSIZE(caption));
+    RECT text_rect = item.rcItem;
+    DrawTextW(item.hDC, caption, -1, &text_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(item.hDC, previous_font);
+    if ((item.itemState & ODS_FOCUS) != 0 && !disabled) {
+        RECT focus = item.rcItem;
+        InflateRect(&focus, -5, -5);
+        DrawFocusRect(item.hDC, &focus);
+    }
+}
+
+void draw_process_picker(const DRAWITEMSTRUCT& item) {
+    const bool disabled = (item.itemState & ODS_DISABLED) != 0;
+    const bool pressed = (item.itemState & ODS_SELECTED) != 0;
+    const COLORREF fill = disabled
+        ? RGB(39, 52, 72)
+        : (pressed ? kSecondaryPressed : RGB(31, 48, 71));
+    const COLORREF text = disabled ? RGB(120, 138, 163) : kTextPrimary;
+    draw_rounded_rectangle(item.hDC, item.rcItem, fill, kCardBorder, 9);
+
+    SetBkMode(item.hDC, TRANSPARENT);
+    SetTextColor(item.hDC, text);
+    HGDIOBJ previous_font = SelectObject(item.hDC, g_font);
+    wchar_t caption[320] = {};
+    GetWindowTextW(item.hwndItem, caption, ARRAYSIZE(caption));
+    RECT text_rect = item.rcItem;
+    text_rect.left += 12;
+    text_rect.right -= 34;
+    DrawTextW(item.hDC, caption, -1, &text_rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    SelectObject(item.hDC, previous_font);
+
+    const int center_x = item.rcItem.right - 17;
+    const int center_y = (item.rcItem.top + item.rcItem.bottom) / 2;
+    POINT arrow[] = {{center_x - 5, center_y - 2}, {center_x + 5, center_y - 2}, {center_x, center_y + 4}};
+    HBRUSH arrow_brush = CreateSolidBrush(disabled ? kTextMuted : kTextPrimary);
+    HGDIOBJ previous_brush = SelectObject(item.hDC, arrow_brush);
+    Polygon(item.hDC, arrow, ARRAYSIZE(arrow));
+    SelectObject(item.hDC, previous_brush);
+    DeleteObject(arrow_brush);
+}
+
+void show_process_menu(HWND window) {
+    if (g_processes.empty()) return;
+
+    HMENU menu = CreatePopupMenu();
+    for (size_t i = 0; i < g_processes.size(); ++i) {
+        const ProcessEntry& entry = g_processes[i];
+        AppendMenuW(menu, MF_STRING | (entry.pid == g_selected_pid ? MF_CHECKED : 0),
+            kProcessMenuBase + static_cast<UINT>(i), process_label(entry).c_str());
+    }
+
+    RECT picker = {};
+    GetWindowRect(g_process_combo, &picker);
+    SetForegroundWindow(window);
+    const UINT command = TrackPopupMenu(menu,
+        TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RETURNCMD | TPM_NONOTIFY,
+        picker.left, picker.bottom, 0, window, nullptr);
+    DestroyMenu(menu);
+
+    if (command >= kProcessMenuBase &&
+        command < kProcessMenuBase + g_processes.size()) {
+        select_process_by_pid(g_processes[command - kProcessMenuBase].pid);
+        set_status(window, L"Processus sélectionné. Tu peux maintenant attacher le trainer.", kStatusNeutral);
+    }
+}
+
+void enable_dark_title_bar(HWND window) {
+    using DwmSetWindowAttributeFn = HRESULT (WINAPI *)(HWND, DWORD, LPCVOID, DWORD);
+    HMODULE dwmapi = LoadLibraryW(L"dwmapi.dll");
+    if (!dwmapi) return;
+
+    DwmSetWindowAttributeFn set_attribute = reinterpret_cast<DwmSetWindowAttributeFn>(
+        GetProcAddress(dwmapi, "DwmSetWindowAttribute"));
+    const BOOL enabled = TRUE;
+    if (set_attribute) {
+        constexpr DWORD kDwmwaUseImmersiveDarkMode = 20;
+        constexpr DWORD kDwmwaUseImmersiveDarkModeBefore20H1 = 19;
+        if (FAILED(set_attribute(window, kDwmwaUseImmersiveDarkMode, &enabled, sizeof(enabled)))) {
+            set_attribute(window, kDwmwaUseImmersiveDarkModeBefore20H1, &enabled, sizeof(enabled));
+        }
+    }
+    FreeLibrary(dwmapi);
 }
 
 DWORD requested_pid_from_command_line() {
@@ -594,99 +664,106 @@ DWORD requested_pid_from_command_line() {
     return marker ? wcstoul(marker + 6, nullptr, 10) : 0;
 }
 
-bool launch_requested_from_command_line() {
-    return wcsstr(GetCommandLineW(), L"--launch") != nullptr;
-}
-
 LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
     case WM_CREATE: {
         g_font = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        g_title_font = CreateFontW(-22, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        g_small_font = CreateFontW(-12, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        g_window_brush = CreateSolidBrush(kWindowBackground);
+        g_card_brush = CreateSolidBrush(kCardBackground);
 
-        HWND logo = CreateWindowExW(0, WC_STATICW, L"",
-            WS_CHILD | WS_VISIBLE | SS_ICON, 20, 12, 44, 44,
-            window, nullptr, g_instance, nullptr);
-        SendMessageW(logo, STM_SETIMAGE, IMAGE_ICON,
-            reinterpret_cast<LPARAM>(g_logo_icon));
-
-        HWND title = CreateWindowExW(0, L"STATIC", L"Pokemon Uranium External Trainer",
-            WS_CHILD | WS_VISIBLE, 76, 18, 456, 28, window, nullptr, g_instance, nullptr);
-        set_control_font(title);
-
-        HWND help = CreateWindowExW(0, L"STATIC",
-            L"Recommended: launch the game directly, or connect to a game already running.",
-            WS_CHILD | WS_VISIBLE, 76, 50, 456, 22, window, nullptr, g_instance, nullptr);
-        set_control_font(help);
-
-        g_process_combo = CreateWindowExW(WS_EX_CLIENTEDGE, WC_COMBOBOXW, L"",
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
-            22, 83, 390, 250, window, reinterpret_cast<HMENU>(kProcessCombo), g_instance, nullptr);
+        g_process_combo = CreateWindowExW(0, WC_BUTTONW, L"",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+            28, 121, 338, 32, window, reinterpret_cast<HMENU>(kProcessCombo), g_instance, nullptr);
         set_control_font(g_process_combo);
 
-        HWND refresh = CreateWindowExW(0, WC_BUTTONW, L"Refresh",
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            422, 82, 110, 30, window, reinterpret_cast<HMENU>(kRefreshButton), g_instance, nullptr);
+        HWND refresh = CreateWindowExW(0, WC_BUTTONW, L"Actualiser",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+            378, 121, 106, 32, window, reinterpret_cast<HMENU>(kRefreshButton), g_instance, nullptr);
         set_control_font(refresh);
 
-        g_launch_button = CreateWindowExW(0, WC_BUTTONW,
-            L"Launch game + load save directly",
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
-            22, 126, 510, 38, window, reinterpret_cast<HMENU>(kLaunchButton), g_instance, nullptr);
-        set_control_font(g_launch_button);
-
-        g_attach_button = CreateWindowExW(0, WC_BUTTONW, L"Connect to selected game",
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            22, 174, 510, 38, window, reinterpret_cast<HMENU>(kAttachButton), g_instance, nullptr);
+        g_attach_button = CreateWindowExW(0, WC_BUTTONW, L"Attacher au processus",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+            28, 168, 456, 42, window, reinterpret_cast<HMENU>(kAttachButton), g_instance, nullptr);
         set_control_font(g_attach_button);
 
-        g_status_text = CreateWindowExW(0, L"STATIC", L"Searching for 32-bit processes...",
-            WS_CHILD | WS_VISIBLE | SS_LEFT, 22, 227, 510, 54,
+        g_status_text = CreateWindowExW(0, L"STATIC", L"Recherche des processus compatibles…",
+            WS_CHILD | WS_VISIBLE | SS_LEFT | SS_ENDELLIPSIS, 28, 225, 456, 20,
             window, reinterpret_cast<HMENU>(kStatusText), g_instance, nullptr);
         set_control_font(g_status_text);
 
         refresh_processes();
         if (g_processes.empty()) {
-            set_status(window, L"No accessible 32-bit process. Launch the game first.", RGB(185, 28, 28));
+            set_status(window, L"Aucun jeu compatible trouvé. Lance Uranium puis actualise.", kStatusError);
         } else {
-            set_status(window, L"Processes detected. Game candidates are listed first.", RGB(75, 85, 99));
+            set_status(window, L"Sélectionne Uranium.exe puis attache le trainer.", kStatusNeutral);
         }
         return 0;
     }
 
     case WM_COMMAND:
         switch (LOWORD(wparam)) {
+        case kProcessCombo:
+            if (HIWORD(wparam) == BN_CLICKED) show_process_menu(window);
+            return 0;
         case kRefreshButton:
-            SetWindowTextW(g_attach_button, L"Connect");
+            SetWindowTextW(g_attach_button, L"Attacher au processus");
             refresh_processes();
             set_status(window, g_processes.empty()
-                ? L"No compatible process. Launch the game first."
-                : L"List refreshed.",
-                g_processes.empty() ? RGB(185, 28, 28) : RGB(75, 85, 99));
+                ? L"Aucun jeu compatible trouvé. Lance Uranium puis actualise."
+                : L"Liste des processus mise à jour.",
+                g_processes.empty() ? kStatusError : kStatusNeutral);
             return 0;
         case kAttachButton:
             if (HIWORD(wparam) == BN_CLICKED) attach_selected_process(window);
-            return 0;
-        case kLaunchButton:
-            if (HIWORD(wparam) == BN_CLICKED) launch_game_and_load(window);
             return 0;
         default:
             break;
         }
         break;
 
+    case WM_DRAWITEM: {
+        const DRAWITEMSTRUCT* item = reinterpret_cast<const DRAWITEMSTRUCT*>(lparam);
+        if (item->CtlID == kAttachButton || item->CtlID == kRefreshButton) {
+            draw_button(*item);
+            return TRUE;
+        }
+        if (item->CtlID == kProcessCombo) {
+            draw_process_picker(*item);
+            return TRUE;
+        }
+        break;
+    }
+
     case WM_CTLCOLORSTATIC:
         if (reinterpret_cast<HWND>(lparam) == g_status_text) {
             HDC dc = reinterpret_cast<HDC>(wparam);
             SetTextColor(dc, g_status_color);
-            SetBkColor(dc, GetSysColor(COLOR_WINDOW));
-            return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
+            SetBkColor(dc, kCardBackground);
+            return reinterpret_cast<LRESULT>(g_card_brush);
         }
         break;
 
+    case WM_ERASEBKGND:
+        return TRUE;
+
+    case WM_PAINT:
+        draw_launcher_chrome(window);
+        return 0;
+
     case WM_DESTROY:
         if (g_font) DeleteObject(g_font);
+        if (g_title_font) DeleteObject(g_title_font);
+        if (g_small_font) DeleteObject(g_small_font);
+        if (g_window_brush) DeleteObject(g_window_brush);
+        if (g_card_brush) DeleteObject(g_card_brush);
         PostQuitMessage(0);
         return 0;
     default:
@@ -718,45 +795,33 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
     window_class.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
     window_class.hIcon = g_logo_icon;
     window_class.hIconSm = g_logo_icon_small;
-    window_class.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
+    window_class.hbrBackground = nullptr;
     window_class.lpszClassName = kWindowClass;
     if (!RegisterClassExW(&window_class)) return 1;
 
-    constexpr int width = 572;
-    constexpr int height = 334;
+    constexpr int width = 520;
+    constexpr int height = 310;
     RECT desktop = {};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &desktop, 0);
     const int x = desktop.left + ((desktop.right - desktop.left) - width) / 2;
     const int y = desktop.top + ((desktop.bottom - desktop.top) - height) / 2;
 
-    HWND window = CreateWindowExW(0, kWindowClass, L"Pokemon Uranium External Trainer",
+    HWND window = CreateWindowExW(0, kWindowClass, L"Uranium Trainer",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
         x, y, width, height, nullptr, nullptr, instance, nullptr);
     if (!window) return 1;
+    enable_dark_title_bar(window);
 
     ShowWindow(window, show_command);
     UpdateWindow(window);
 
-    if (launch_requested_from_command_line()) {
-        PostMessageW(window, WM_COMMAND, MAKEWPARAM(kLaunchButton, BN_CLICKED),
-            reinterpret_cast<LPARAM>(g_launch_button));
-    }
-
     const DWORD requested_pid = requested_pid_from_command_line();
     if (requested_pid) {
-        int selected = -1;
-        for (size_t i = 0; i < g_processes.size(); ++i) {
-            if (g_processes[i].pid == requested_pid) {
-                selected = static_cast<int>(i);
-                break;
-            }
-        }
-        if (selected >= 0) {
-            SendMessageW(g_process_combo, CB_SETCURSEL, selected, 0);
+        if (select_process_by_pid(requested_pid)) {
             PostMessageW(window, WM_COMMAND, MAKEWPARAM(kAttachButton, BN_CLICKED),
                 reinterpret_cast<LPARAM>(g_attach_button));
         } else {
-            set_status(window, L"The requested PID is not an accessible 32-bit process.", RGB(185, 28, 28));
+            set_status(window, L"Le PID demandé n'est pas un processus 32 bits accessible.", kStatusError);
         }
     }
 

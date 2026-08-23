@@ -1,57 +1,40 @@
 # Pokémon Uranium External Trainer
 
-A standalone 32-bit Windows trainer for the RGSS1 version of Pokémon Uranium.
-It lets you launch the game directly or attach to an existing game process,
-then injects its embedded overlay safely into the game's RGSS thread.
+Un trainer externe pour Pokémon Uranium. Il s’attache à une partie déjà lancée et ouvre son menu directement dans le jeu.
 
-## Using the trainer
+## Aperçu
 
-1. Run `UraniumTrainer.exe`.
-2. Click **Launch game + load save directly** to skip the intro and open the default save.
-3. To attach to a game already running, select the process labelled `[Game]` and click **Connect to selected game**.
-4. Press `Insert` to hide or show the overlay, or click the close button in its title bar.
+![Aperçu du trainer](Trainer%20externe/preview.png)
 
-The launcher closes after a successful injection and initialized overlay. It stays open and displays the error if anything fails.
+## Lancer le trainer
 
-Run the trainer at the same privilege level as the game. If the game runs as administrator, run the trainer as administrator too.
+1. Lance Pokémon Uranium normalement.
+2. Ouvre `UraniumTrainer.exe`.
+3. Sélectionne le processus `Uranium.exe`.
+4. Clique sur **Attacher au processus**.
 
-## Overlay and language
+Le menu apparaît automatiquement dans le jeu. Utilise la touche `Insert` pour l’afficher ou le masquer.
 
-The trainer opens in English by default. Use the United States, French or Spanish flag in the top-right of the **Uranium Trainer** title bar to switch the overlay language. The selected language is saved in `trainer.ini`.
+> Si le jeu est exécuté en administrateur, lance aussi le trainer en administrateur.
 
-The compact main window is organized into five tabs: **Player**, **Battle**, **Encounters**, **Display** and **Settings**. Each page uses short cards instead of one continuous feature list. **Player** separates features, actions, movement and editors; **Display** separates zoom/FPS, minimap options and the time/weather environment controls. Irreversible progress actions display a translated confirmation dialog before they are applied. **Settings** includes **No pause when window is inactive**, two startup switches (**Start trainer with game** installs the embedded `version.dll` alongside `Uranium.exe` and enables automatic loading; **Fast boot** skips the intro and loads the default save on the next launch), the global `Insert` show/hide shortcut and **Stop Trainer**. The installed proxy remains harmless when automatic loading is disabled, so the external trainer can still be used normally. The overlay and its Pokémon, inventory and trainer editors remain visible and interactive when Uranium loses focus or is minimized. After its initial placement, the overlay keeps the position chosen by the user.
+## Fonctionnalités
 
-The **Global speed** control keeps its x1–x5 slider; the separate duplicate multiplier row has been removed. The **Pokemon ID** control displays the selected value followed by the corresponding Pokémon name; the name is read from the game data.
+- God mode, PP et objets infinis, capture garantie et one-hit KO.
+- Modification de l’argent, de l’inventaire, de l’équipe, des boîtes PC et du profil du dresseur.
+- Contrôle de la vitesse, du déplacement, des rencontres, de l’heure, de la météo et de la mini-carte.
+- Éditeurs de Pokémon, d’inventaire et de dresseur directement depuis le menu.
 
-## Features
+## Langues
 
-- Direct game launch and save loading without simulated input.
-- God mode that preserves real HP, infinite PP, one-hit KOs, damage multiplier, guaranteed catches, trainer catches, instant egg hatching, removable HMs and infinite items.
-- Configurable noclip, wild-encounter controls, wild level and shiny chance.
-- Forced time and weather that can be disabled without altering saved state.
-- Global speed x1–x5, plus configurable walking, running, surfing and cycling speeds.
-- One-click restoration of the default walking, running, surfing and cycling speeds.
-- Party and PC Pokémon editor, full inventory editor and trainer-profile editor.
-- Money, map zoom-out, mouse-wheel zoom and a configurable minimap.
+L’interface du trainer est disponible en anglais, français et espagnol. Utilise les drapeaux en haut à droite du menu pour changer de langue.
 
-Overlay clicks are intercepted before they reach the game.
+## Compiler
 
-## Building
-
-Requirements: Visual Studio 2022 with the Desktop C++ x86 tools.
+Visual Studio 2022 avec les outils **Desktop C++ x86** est nécessaire.
 
 ```bat
 cd "Trainer externe"
 build.bat
 ```
 
-The resulting executable is `Trainer externe/UraniumTrainer.exe`. It embeds the payload and the move database, so neither `moves.txt` nor an auxiliary DLL is required when using it.
-
-## Project layout
-
-- `Trainer externe/` — process picker, injector and packaging.
-- `Launcher DLL/` — injected payload, overlay and trainer options.
-- `tools/` — God mode patch generator without game data.
-- `docs/` — [architecture](docs/ARCHITECTURE.md), stability audit, roadmap and [Ruby hook notes](docs/GAME_SCRIPT_HOOKS.md).
-
-This repository does not include the game, proprietary game data or build artifacts.
+L’exécutable compilé est disponible dans `Trainer externe/UraniumTrainer.exe`.
