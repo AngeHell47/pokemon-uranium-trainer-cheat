@@ -95,11 +95,8 @@ chaque pixel parcouru par la souris. Les écrans synchrones (menu et combat) son
 temporairement rendus à 100 %, puis le dézoom est réappliqué au retour sur la
 carte.
 
-Lorsque le pointeur se trouve dans la zone cliente du jeu, chaque cran de
-molette change le dézoom de 30 points, dans les mêmes bornes que le slider
-(haut pour zoomer, bas pour dézoomer). Le hook souris met seulement la demande
-en file ; l'overlay applique ensuite le réglage afin de garder le hook bas
-niveau non bloquant.
+Le dézoom se règle uniquement via le slider dédié du trainer. La molette ne
+modifie pas le niveau de zoom de la caméra.
 
 Le bootstrap Ruby du zoom n'est pas exécuté depuis la pompe de messages. Un
 répartiteur commun pose un détour persistant sur la méthode native
