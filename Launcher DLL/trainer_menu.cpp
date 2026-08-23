@@ -23,6 +23,7 @@
 #include "options/opt_zoom.h"
 #include "options/opt_minimap.h"
 #include "options/opt_startup.h"
+#include "gamepad_input.h"
 #include "moves_db.h"
 #include "rgss_safe_dispatch.h"
 #include "trainer_editors.h"
@@ -746,6 +747,13 @@ static void set_hold_key(int index, int virtual_key) {
         opt_gamespeed_set_hold_key(virtual_key);
     else if (is_noclip_item(index))
         opt_noclip_set_hold_key(virtual_key);
+}
+
+static void set_hold_gamepad(int index, int binding) {
+    if (is_gamespeed_item(index))
+        opt_gamespeed_set_hold_gamepad(binding);
+    else if (is_noclip_item(index))
+        opt_noclip_set_hold_gamepad(binding);
 }
 
 static void get_virtual_key_name(int virtual_key, char* buffer, int capacity) {
@@ -3021,6 +3029,21 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
         return 1;
 
     case WM_TIMER:
+        if (wp == 2) {
+            if (!s_open || s_hold_key_capture_item < 0) {
+                KillTimer(hw, 2);
+                return 0;
+            }
+            const int binding = gamepad_input_capture_poll();
+            if (binding != GAMEPAD_BINDING_NONE) {
+                set_hold_gamepad(s_hold_key_capture_item, binding);
+                s_hold_key_capture_item = -1;
+                InterlockedExchange(&s_block_game_keyboard, 1);
+                InvalidateRect(s_overlay, NULL, FALSE);
+                KillTimer(hw, 2);
+            }
+            return 0;
+        }
         sync_overlay_to_game();
         opt_time_refresh_now();
         opt_weather_refresh_now();
@@ -3172,6 +3195,8 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
                 ptin(modern_slider_track_rect(7), x, y);
             if (hold_key) {
                 s_hold_key_capture_item = control;
+                gamepad_input_capture_begin();
+                SetTimer(hw, 2, 16, NULL);
                 InterlockedExchange(&s_block_game_keyboard, 2);
                 InvalidateRect(hw, NULL, FALSE);
             } else if (game_speed_track) {
@@ -3894,6 +3919,7 @@ void menu_start_loop() {
         KillTimer(s_overlay, 1);
         s_watch_timer = 0;
     }
+    KillTimer(s_overlay, 2);
 
     trainer_editors_shutdown();
     if (s_logo_icon) {

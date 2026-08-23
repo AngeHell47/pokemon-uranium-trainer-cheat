@@ -1,4 +1,5 @@
 #include "opt_noclip.h"
+#include "../gamepad_input.h"
 #include "../rgss_safe_dispatch.h"
 
 #include <stdio.h>
@@ -8,6 +9,7 @@ bool g_noclip = false;
 static char          s_ini[MAX_PATH];
 static volatile LONG s_enabled = 0;
 static volatile LONG s_hold_key = VK_CONTROL;
+static volatile LONG s_hold_gamepad = GAMEPAD_BINDING_NONE;
 static volatile LONG s_pending = 0;
 static volatile LONG s_installed = 0;
 static volatile LONG s_retry_started = 0;
@@ -20,20 +22,31 @@ static void post_to_game() {
 static void build_ruby() {
     const char* enabled = InterlockedExchangeAdd(&s_enabled, 0) ? "true" : "false";
     const int hold_key = (int)InterlockedExchangeAdd(&s_hold_key, 0);
+    const int hold_gamepad = (int)InterlockedExchangeAdd(&s_hold_gamepad, 0);
+    const volatile LONG* gamepad_state =
+        gamepad_input_binding_state_ptr(hold_gamepad);
     _snprintf(
         s_ruby, sizeof(s_ruby) - 1,
         "installed=0\n"
         "begin\n"
         "  $__uranium_trainer_noclip=%s\n"
         "  $__uranium_trainer_noclip_key=%d\n"
+        "  $__uranium_trainer_noclip_gamepad_state=%lu\n"
         "  $__uranium_trainer_key_down ||= Win32API.new(\"user32\",\"GetAsyncKeyState\",[\"i\"],\"i\")\n"
+        "  $__uranium_trainer_read_gamepad_state ||= Win32API.new(\"kernel32\",\"RtlMoveMemory\",[\"p\",\"l\",\"l\"],\"v\")\n"
         "  if ::Object.const_defined?(\"Game_Player\") && ::Game_Player.method_defined?(:passable?)\n"
         "    class ::Game_Player\n"
         "      unless method_defined?(:__uranium_trainer_original_passable)\n"
         "        alias_method :__uranium_trainer_original_passable, :passable?\n"
         "        def passable?(x,y,d)\n"
-        "          held=($__uranium_trainer_noclip_key==0 || "
-        "(($__uranium_trainer_key_down.call($__uranium_trainer_noclip_key).to_i & 0x8000)!=0 rescue false))\n"
+        "          key_held=((($__uranium_trainer_key_down.call($__uranium_trainer_noclip_key).to_i & 0x8000)!=0) rescue false)\n"
+        "          gamepad_held=false\n"
+        "          if $__uranium_trainer_noclip_gamepad_state!=0\n"
+        "            state=[0].pack(\"l\")\n"
+        "            $__uranium_trainer_read_gamepad_state.call(state,$__uranium_trainer_noclip_gamepad_state,4)\n"
+        "            gamepad_held=(state.unpack(\"l\")[0]!=0 rescue false)\n"
+        "          end\n"
+        "          held=(($__uranium_trainer_noclip_key==0 && $__uranium_trainer_noclip_gamepad_state==0) || key_held || gamepad_held)\n"
         "          if $__uranium_trainer_noclip && held\n"
         "            previous=@through\n"
         "            begin\n"
@@ -55,7 +68,7 @@ static void build_ruby() {
         "  Win32API.new(\"kernel32\",\"RtlMoveMemory\",[\"l\",\"p\",\"l\"],\"v\").call(%lu,[installed].pack(\"l\"),4)\n"
         "rescue Exception\n"
         "end\n",
-        enabled, hold_key,
+        enabled, hold_key, (unsigned long)(ULONG_PTR)gamepad_state,
         (unsigned long)(ULONG_PTR)&s_installed);
     s_ruby[sizeof(s_ruby) - 1] = '\0';
 }
@@ -92,7 +105,12 @@ void opt_noclip_init(const char* ini_path) {
     int hold_key = GetPrivateProfileIntA(
         "Settings", "NoClipHoldKey", VK_CONTROL, s_ini);
     if (hold_key < 0 || hold_key > 254) hold_key = VK_CONTROL;
+    int hold_gamepad = GetPrivateProfileIntA(
+        "Settings", "NoClipHoldGamepad", GAMEPAD_BINDING_NONE, s_ini);
+    if (!gamepad_input_is_valid_binding(hold_gamepad))
+        hold_gamepad = GAMEPAD_BINDING_NONE;
     InterlockedExchange(&s_hold_key, hold_key);
+    InterlockedExchange(&s_hold_gamepad, hold_gamepad);
     InterlockedExchange(&s_enabled, g_noclip ? 1 : 0);
     InterlockedExchange(&s_pending, 1);
     InterlockedExchange(&s_installed, 0);
@@ -128,10 +146,32 @@ void opt_noclip_set_hold_key(int virtual_key) {
     if (virtual_key < 0 || virtual_key > 254) return;
 
     InterlockedExchange(&s_hold_key, virtual_key);
+    InterlockedExchange(&s_hold_gamepad, GAMEPAD_BINDING_NONE);
     char value[16];
     wsprintfA(value, "%d", virtual_key);
     WritePrivateProfileStringA(
         "Settings", "NoClipHoldKey", value, s_ini);
+    WritePrivateProfileStringA(
+        "Settings", "NoClipHoldGamepad", "0", s_ini);
+    InterlockedExchange(&s_pending, 1);
+    post_to_game();
+    ensure_retry_thread();
+}
+
+int opt_noclip_get_hold_gamepad() {
+    return (int)InterlockedExchangeAdd(&s_hold_gamepad, 0);
+}
+
+void opt_noclip_set_hold_gamepad(int binding) {
+    if (!gamepad_input_is_valid_binding(binding)) return;
+
+    InterlockedExchange(&s_hold_key, 0);
+    InterlockedExchange(&s_hold_gamepad, binding);
+    char value[16];
+    wsprintfA(value, "%d", binding);
+    WritePrivateProfileStringA("Settings", "NoClipHoldKey", "0", s_ini);
+    WritePrivateProfileStringA(
+        "Settings", "NoClipHoldGamepad", value, s_ini);
     InterlockedExchange(&s_pending, 1);
     post_to_game();
     ensure_retry_thread();
@@ -142,6 +182,11 @@ void opt_noclip_get_hold_key_name(char* buffer, int capacity) {
     buffer[0] = '\0';
 
     const char* fixed = NULL;
+    const int hold_gamepad = opt_noclip_get_hold_gamepad();
+    if (hold_gamepad != GAMEPAD_BINDING_NONE) {
+        gamepad_input_get_binding_name(hold_gamepad, buffer, capacity);
+        return;
+    }
     const int hold_key = opt_noclip_get_hold_key();
     switch (hold_key) {
     case 0:          fixed = "none"; break;

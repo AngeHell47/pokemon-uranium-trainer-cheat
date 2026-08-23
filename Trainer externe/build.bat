@@ -24,6 +24,7 @@ if errorlevel 1 exit /b 1
 cl /nologo /O1 /GS- /MT /LD /W4 /utf-8 ^
   "%DLLSRC%\version_proxy.cpp" ^
   "%DLLSRC%\rgss_safe_dispatch.cpp" ^
+  "%DLLSRC%\gamepad_input.cpp" ^
   "%DLLSRC%\trainer_menu.cpp" ^
   "%DLLSRC%\trainer_editors.cpp" ^
   "%DLLSRC%\moves_db.cpp" ^
@@ -65,6 +66,7 @@ if errorlevel 1 exit /b 1
 cl /nologo /O1 /GS- /MT /LD /W4 /utf-8 /DTRAINER_EXTERNAL_PAYLOAD ^
   "%DLLSRC%\version_proxy.cpp" ^
   "%DLLSRC%\rgss_safe_dispatch.cpp" ^
+  "%DLLSRC%\gamepad_input.cpp" ^
   "%DLLSRC%\trainer_menu.cpp" ^
   "%DLLSRC%\trainer_editors.cpp" ^
   "%DLLSRC%\moves_db.cpp" ^

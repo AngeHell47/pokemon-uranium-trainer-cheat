@@ -1,4 +1,5 @@
 #include "opt_gamespeed.h"
+#include "../gamepad_input.h"
 #include "../rgss_safe_dispatch.h"
 
 #include <stdio.h>
@@ -10,6 +11,7 @@ static char          s_ini[MAX_PATH];
 static volatile LONG s_enabled = 0;
 static volatile LONG s_factor = 2;
 static volatile LONG s_hold_key = 0;
+static volatile LONG s_hold_gamepad = GAMEPAD_BINDING_NONE;
 static volatile LONG s_pending = 0;
 static volatile LONG s_installed = 0;
 static volatile LONG s_retry_started = 0;
@@ -29,6 +31,9 @@ static void build_ruby() {
     const char* enabled = InterlockedExchangeAdd(&s_enabled, 0) ? "true" : "false";
     const int factor = (int)InterlockedExchangeAdd(&s_factor, 0);
     const int hold_key = (int)InterlockedExchangeAdd(&s_hold_key, 0);
+    const int hold_gamepad = (int)InterlockedExchangeAdd(&s_hold_gamepad, 0);
+    const volatile LONG* gamepad_state =
+        gamepad_input_binding_state_ptr(hold_gamepad);
     _snprintf(
         s_ruby, sizeof(s_ruby) - 1,
         "installed=0\n"
@@ -36,7 +41,9 @@ static void build_ruby() {
         "  $__uranium_trainer_game_speed_enabled=%s\n"
         "  $__uranium_trainer_game_speed_factor=%d\n"
         "  $__uranium_trainer_game_speed_key=%d\n"
+        "  $__uranium_trainer_game_speed_gamepad_state=%lu\n"
         "  $__uranium_trainer_key_down ||= Win32API.new(\"user32\",\"GetAsyncKeyState\",[\"i\"],\"i\")\n"
+        "  $__uranium_trainer_read_gamepad_state ||= Win32API.new(\"kernel32\",\"RtlMoveMemory\",[\"p\",\"l\",\"l\"],\"v\")\n"
         "  if defined?(Graphics) && Graphics.respond_to?(:update)\n"
         "    class << Graphics\n"
         "      unless method_defined?(:__uranium_trainer_original_frame_count)\n"
@@ -75,8 +82,14 @@ static void build_ruby() {
         "    $__uranium_trainer_render_phase ||= 0\n"
         "    $__uranium_trainer_game_speed_tick ||= proc do\n"
         "      $__uranium_trainer_logical_frame_count += 1\n"
-        "      held=($__uranium_trainer_game_speed_key==0 || "
-        "((($__uranium_trainer_key_down.call($__uranium_trainer_game_speed_key).to_i & 0x8000)!=0) rescue false))\n"
+        "      key_held=((($__uranium_trainer_key_down.call($__uranium_trainer_game_speed_key).to_i & 0x8000)!=0) rescue false)\n"
+        "      gamepad_held=false\n"
+        "      if $__uranium_trainer_game_speed_gamepad_state!=0\n"
+        "        state=[0].pack(\"l\")\n"
+        "        $__uranium_trainer_read_gamepad_state.call(state,$__uranium_trainer_game_speed_gamepad_state,4)\n"
+        "        gamepad_held=(state.unpack(\"l\")[0]!=0 rescue false)\n"
+        "      end\n"
+        "      held=(($__uranium_trainer_game_speed_key==0 && $__uranium_trainer_game_speed_gamepad_state==0) || key_held || gamepad_held)\n"
         "      factor=($__uranium_trainer_game_speed_enabled && held) ? $__uranium_trainer_game_speed_factor.to_i : 1\n"
         "      factor=1 if factor<1\n"
         "      factor=5 if factor>5\n"
@@ -102,7 +115,7 @@ static void build_ruby() {
         "  Win32API.new(\"kernel32\",\"RtlMoveMemory\",[\"l\",\"p\",\"l\"],\"v\").call(%lu,[installed].pack(\"l\"),4)\n"
         "rescue Exception\n"
         "end\n",
-        enabled, factor, hold_key,
+        enabled, factor, hold_key, (unsigned long)(ULONG_PTR)gamepad_state,
         (unsigned long)(ULONG_PTR)&s_installed);
     s_ruby[sizeof(s_ruby) - 1] = '\0';
 }
@@ -150,9 +163,14 @@ void opt_gamespeed_init(const char* ini_path) {
     int hold_key = GetPrivateProfileIntA(
         "Settings", "GameSpeedHoldKey", 0, s_ini);
     if (hold_key < 0 || hold_key > 254) hold_key = 0;
+    int hold_gamepad = GetPrivateProfileIntA(
+        "Settings", "GameSpeedHoldGamepad", GAMEPAD_BINDING_NONE, s_ini);
+    if (!gamepad_input_is_valid_binding(hold_gamepad))
+        hold_gamepad = GAMEPAD_BINDING_NONE;
     InterlockedExchange(&s_enabled, g_game_speed_enabled ? 1 : 0);
     InterlockedExchange(&s_factor, g_game_speed_factor);
     InterlockedExchange(&s_hold_key, hold_key);
+    InterlockedExchange(&s_hold_gamepad, hold_gamepad);
     InterlockedExchange(&s_pending, 1);
     InterlockedExchange(&s_installed, 0);
 }
@@ -191,13 +209,33 @@ void opt_gamespeed_set_hold_key(int virtual_key) {
     }
     if (virtual_key < 0 || virtual_key > 254) return;
     InterlockedExchange(&s_hold_key, virtual_key);
+    InterlockedExchange(&s_hold_gamepad, GAMEPAD_BINDING_NONE);
     save_int("GameSpeedHoldKey", virtual_key);
+    save_int("GameSpeedHoldGamepad", GAMEPAD_BINDING_NONE);
+    apply_state();
+}
+
+int opt_gamespeed_get_hold_gamepad() {
+    return (int)InterlockedExchangeAdd(&s_hold_gamepad, 0);
+}
+
+void opt_gamespeed_set_hold_gamepad(int binding) {
+    if (!gamepad_input_is_valid_binding(binding)) return;
+    InterlockedExchange(&s_hold_key, 0);
+    InterlockedExchange(&s_hold_gamepad, binding);
+    save_int("GameSpeedHoldKey", 0);
+    save_int("GameSpeedHoldGamepad", binding);
     apply_state();
 }
 
 void opt_gamespeed_get_hold_key_name(char* buffer, int capacity) {
     if (!buffer || capacity <= 0) return;
     buffer[0] = '\0';
+    const int hold_gamepad = opt_gamespeed_get_hold_gamepad();
+    if (hold_gamepad != GAMEPAD_BINDING_NONE) {
+        gamepad_input_get_binding_name(hold_gamepad, buffer, capacity);
+        return;
+    }
     const int key = opt_gamespeed_get_hold_key();
     const char* fixed = NULL;
     switch (key) {

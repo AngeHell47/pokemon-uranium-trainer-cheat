@@ -8,4 +8,6 @@ void opt_noclip_set_hwnd_and_start(HWND hwnd);
 void opt_noclip_toggle(bool enabled);
 int opt_noclip_get_hold_key();
 void opt_noclip_set_hold_key(int virtual_key);
+int opt_noclip_get_hold_gamepad();
+void opt_noclip_set_hold_gamepad(int binding);
 void opt_noclip_get_hold_key_name(char* buffer, int capacity);

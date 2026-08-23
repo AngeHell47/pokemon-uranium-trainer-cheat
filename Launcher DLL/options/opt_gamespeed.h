@@ -11,4 +11,6 @@ void opt_gamespeed_toggle(bool enabled);
 void opt_gamespeed_apply(int factor);
 int  opt_gamespeed_get_hold_key();
 void opt_gamespeed_set_hold_key(int virtual_key);
+int  opt_gamespeed_get_hold_gamepad();
+void opt_gamespeed_set_hold_gamepad(int binding);
 void opt_gamespeed_get_hold_key_name(char* buffer, int capacity);

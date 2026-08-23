@@ -3,6 +3,7 @@
 #include <psapi.h>
 #include "trainer_menu.h"
 #include "trainer_runtime.h"
+#include "gamepad_input.h"
 #include "rgss_safe_dispatch.h"
 #include "options/opt_pause.h"
 #include "options/opt_startup.h"
@@ -121,6 +122,8 @@ static DWORD WINAPI main_thread(LPVOID) {
         return 0;
     }
 
+    gamepad_input_init();
+
     opt_pause_init(g_ini_path);
     opt_hp_init(g_ini_path);
     opt_pp_init(g_ini_path);
@@ -185,6 +188,7 @@ static DWORD WINAPI main_thread(LPVOID) {
     opt_godmode_repair_shutdown();
     opt_extras_shutdown();
     rgss_safe_dispatch_shutdown();
+    gamepad_input_shutdown();
     release_trainer_singleton();
     // The Ruby extensions installed by the trainer can retain addresses into
     // this module. Keep that dormant module mapped until Uranium itself exits:
