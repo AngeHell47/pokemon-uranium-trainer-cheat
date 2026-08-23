@@ -1,6 +1,8 @@
 #include "opt_extras.h"
 #include "../rgss_safe_dispatch.h"
 
+#include <stdio.h>
+
 namespace {
 
 enum PendingAction {
@@ -8,10 +10,13 @@ enum PendingAction {
     ACTION_UNLOCK_FLY = 1,
     ACTION_OPEN_PC = 2,
     ACTION_COMPLETE_DEX = 3,
-    ACTION_FLY_ANYWHERE = 4
+    ACTION_FLY_ANYWHERE = 4,
+    ACTION_QUICK_SAVE = 5
 };
 
 static volatile LONG s_pending_action = ACTION_NONE;
+static volatile LONG s_quick_save_status = 0;
+static char s_quick_save_ruby[1536] = {};
 
 static void post_to_game() { rgss_safe_dispatch_notify(); }
 
@@ -106,13 +111,35 @@ static const char kFlyAnywhereRuby[] =
     "rescue Exception\n"
     "end\n";
 
+static void build_quick_save_ruby() {
+    _snprintf_s(s_quick_save_ruby, sizeof(s_quick_save_ruby), _TRUNCATE,
+        "status=-1\n"
+        "begin\n"
+        "  if defined?(Scene_Map) && $scene && $scene.is_a?(Scene_Map) && defined?($Trainer) && $Trainer && defined?($game_map) && $game_map\n"
+        "    $PokemonTemp.begunNewGame=false if defined?($PokemonTemp) && $PokemonTemp\n"
+        "    status=pbSave(false,false) ? 2 : -1\n"
+        "    pbSEPlay('save') if status==2\n"
+        "  end\n"
+        "rescue Exception\n"
+        "  status=-1\n"
+        "ensure\n"
+        "  begin\n"
+        "    writer=Win32API.new('kernel32','RtlMoveMemory',['l','p','l'],'v')\n"
+        "    writer.call(%lu,[status].pack('l'),4)\n"
+        "  rescue Exception\n"
+        "  end\n"
+        "end\n",
+        (unsigned long)(ULONG_PTR)&s_quick_save_status);
+}
+
 static void __cdecl on_game_thread_tick(void*) {
     const LONG action = InterlockedExchange(&s_pending_action, ACTION_NONE);
     if (action == ACTION_NONE) return;
     const char* ruby = action == ACTION_UNLOCK_FLY ? kUnlockFlyRuby :
                        action == ACTION_OPEN_PC ? kOpenPcRuby :
                        action == ACTION_COMPLETE_DEX ? kCompleteDexRuby :
-                       kFlyAnywhereRuby;
+                       action == ACTION_FLY_ANYWHERE ? kFlyAnywhereRuby :
+                       s_quick_save_ruby;
     if (rgss_safe_eval(ruby) != 0)
         InterlockedCompareExchange(&s_pending_action, action, ACTION_NONE);
 }
@@ -126,15 +153,26 @@ static void trigger(PendingAction action) {
 
 bool opt_extras_init(const char* ini_path) {
     (void)ini_path;
+    build_quick_save_ruby();
+    InterlockedExchange(&s_quick_save_status, 0);
     return rgss_safe_dispatch_register(on_game_thread_tick, NULL);
 }
 
 void opt_extras_shutdown() {
     InterlockedExchange(&s_pending_action, ACTION_NONE);
     rgss_safe_dispatch_unregister(on_game_thread_tick, NULL);
+    InterlockedExchange(&s_quick_save_status, 0);
 }
 
 void opt_extras_unlock_fly_trigger() { trigger(ACTION_UNLOCK_FLY); }
 void opt_extras_open_pc_trigger() { trigger(ACTION_OPEN_PC); }
 void opt_extras_complete_dex_trigger() { trigger(ACTION_COMPLETE_DEX); }
 void opt_extras_fly_anywhere_trigger() { trigger(ACTION_FLY_ANYWHERE); }
+void opt_extras_quick_save_trigger() {
+    InterlockedExchange(&s_quick_save_status, 1);
+    trigger(ACTION_QUICK_SAVE);
+}
+
+LONG opt_extras_quick_save_status() {
+    return InterlockedExchangeAdd(&s_quick_save_status, 0);
+}

@@ -29,11 +29,14 @@
 #include "trainer_editors.h"
 #include "trainer_logo.h"
 
+#include <objidl.h>
+#include <gdiplus.h>
 #include <string.h>
 #include <stdio.h>
 
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "gdiplus.lib")
 
 // RGSS returns names as UTF-8. DrawTextA interprets those bytes using the
 // Windows ANSI code page, which produces mojibake for accented characters.
@@ -75,6 +78,7 @@ static const Translation kTranslations[] = {
     { "Wild level", "Niveau sauvage", "Nivel salvaje" }, { "Wild shiny", "Shiny sauvage", "Shiny salvaje" },
     { "Game time", "Heure du jeu", "Hora del juego" },
     { "Weather", "Météo", "Clima" }, { "Heal party", "Soigner équipe", "Curar equipo" },
+    { "Quick Save", "Sauvegarde rapide", "Guardado rápido" },
     { "Unlock all Fly locations", "Débloquer toutes les zones de vol", "Desbloquear todos los destinos Vuelo" },
     { "Fly from anywhere", "Voler depuis n'importe où", "Volar desde cualquier lugar" }, { "Open PC here", "Ouvrir le PC ici", "Abrir PC aquí" },
     { "Complete the Pokedex", "Compléter le Pokédex", "Completar la Pokédex" }, { "Money ($)", "Argent ($)", "Dinero ($)" },
@@ -117,6 +121,31 @@ static const Translation kTranslations[] = {
     { "Capture", "Capture", "Captura" },
     { "Encounter Rules", "Règles des rencontres", "Reglas de encuentros" },
     { "Wild Pokémon", "Pokémon sauvages", "Pokémon salvajes" },
+    { "Current Zone", "Zone actuelle", "Zona actual" },
+    { "Search Results", "Résultats de recherche", "Resultados de búsqueda" },
+    { "Zone", "Zone", "Zona" },
+    { "Method", "Méthode", "Método" },
+    { "Pokémon", "Pokémon", "Pokémon" },
+    { "Levels", "Niveaux", "Niveles" },
+    { "Rate", "Taux", "Prob." },
+    { "entries", "entrées", "entradas" },
+    { "Waiting for the current map...", "En attente de la carte actuelle...", "Esperando el mapa actual..." },
+    { "No wild encounter data for this zone.", "Aucune rencontre sauvage dans cette zone.", "No hay encuentros salvajes en esta zona." },
+    { "No location found for this Pokémon.", "Aucune zone trouvée pour ce Pokémon.", "No se encontró ninguna zona para este Pokémon." },
+    { "Grass", "Herbe", "Hierba" },
+    { "Cave", "Grotte", "Cueva" },
+    { "Surfing", "Surf", "Surf" },
+    { "Rock Smash", "Éclate-Roc", "Golpe Roca" },
+    { "Old Rod", "Vieille Canne", "Caña Vieja" },
+    { "Good Rod", "Super Canne", "Caña Buena" },
+    { "Super Rod", "Méga Canne", "Supercaña" },
+    { "Headbutt (low)", "Coup d'Boule (commun)", "Golpe Cabeza (común)" },
+    { "Headbutt (high)", "Coup d'Boule (rare)", "Golpe Cabeza (raro)" },
+    { "Grass (morning)", "Herbe (matin)", "Hierba (mañana)" },
+    { "Grass (day)", "Herbe (jour)", "Hierba (día)" },
+    { "Grass (night)", "Herbe (nuit)", "Hierba (noche)" },
+    { "Bug Contest", "Concours d'insectes", "Concurso de Bichos" },
+    { "Poké Radar", "Poké Radar", "Poké Radar" },
     { "Environment", "Environnement", "Entorno" },
     { "World Actions", "Actions dans le monde", "Acciones del mundo" },
     { "Movement", "Déplacement", "Movimiento" },
@@ -253,6 +282,7 @@ enum MainTab {
     TAB_PLAYER = 0,
     TAB_BATTLE,
     TAB_ENCOUNTERS,
+    TAB_WORLD,
     TAB_DISPLAY,
     TAB_SETTINGS,
     TAB_COUNT
@@ -375,6 +405,9 @@ MenuItem g_items[] = {
       &g_egg_hatch_instant, opt_egghatch_toggle, NULL,0,0,NULL },
     { "Removable HMs", ITEM_TYPE_TOGGLE,
       &g_hm_forget_enabled, opt_hmforget_toggle, NULL,0,0,NULL },
+
+    { "Quick Save", ITEM_TYPE_ACTION,
+      NULL,NULL, NULL,0,0,NULL,opt_extras_quick_save_trigger },
 	  
 };
 
@@ -398,7 +431,7 @@ static const int kBattleQuickToggles[] = {0, 1};
 
 static const int kPlayerFeatures[] = {5, 36, 38, 37, 22};
 static const int kPlayerMovement[] = {6, 27, 28, 29, 30};
-static const int kPlayerActions[] = {17, 18, 19, 21};
+static const int kPlayerActions[] = {17, 18, 19, 21, 39};
 static const int kPlayerEditors[] = {23, 24, 25};
 static const int kBattleLeft[] = {1, 2, 3, 4};
 static const int kEncountersLeft[] = {8, 9, 10};
@@ -574,6 +607,30 @@ static bool  s_slider_in_quick_column = false;
 static int   s_hold_key_capture_item = -1;
 static UINT_PTR s_watch_timer = 0;
 static DWORD s_heal_flash_until = 0;  // GetTickCount() until which to show flash
+static DWORD s_quick_save_feedback_until = 0;
+static LONG s_quick_save_last_status = 0;
+static int s_world_scroll = 0;
+static LONG s_world_revision = -1;
+static bool s_world_search_active = false;
+static char s_world_search[128] = {};
+static int s_world_hover_result = -1;
+static int s_world_hover_pokemon_result = -1;
+static POINT s_world_mouse = {};
+static ULONG_PTR s_world_gdiplus_token = 0;
+static wchar_t s_world_game_folder[MAX_PATH] = {};
+static wchar_t s_world_icon_folder[MAX_PATH] = {};
+static Gdiplus::Image* s_world_icons[202] = {};
+static bool s_world_icon_attempted[202] = {};
+static Gdiplus::Image* s_world_missing_icon = NULL;
+static Gdiplus::Image* s_world_battlers[202] = {};
+static bool s_world_battler_attempted[202] = {};
+static Gdiplus::Image* s_world_missing_battler = NULL;
+struct WorldMapImage {
+    char graphic[64];
+    Gdiplus::Image* image;
+    bool attempted;
+};
+static WorldMapImage s_world_maps[8] = {};
 
 static RECT close_button_rect() {
     return {MENU_TOTAL_W - 36, 7, MENU_TOTAL_W - 8, TITLE_H - 7};
@@ -882,7 +939,8 @@ static void post_input_guard_tick() {
 }
 
 static bool menu_has_keyboard_editor() {
-    return s_hold_key_capture_item >= 0 || trainer_editors_any_open();
+    return s_hold_key_capture_item >= 0 || s_world_search_active ||
+           trainer_editors_any_open();
 }
 
 static bool ptin(const RECT& r, int x, int y) {
@@ -918,6 +976,7 @@ static void picker_close() {
     s_picker_scroll = 0;
     s_picker_scroll_drag = false;
     s_picker_scroll_drag_dy = 0;
+    s_world_search_active = false;
     SetRectEmpty(&s_picker_rc);
 }
 
@@ -968,9 +1027,18 @@ static void picker_open_weather(const RECT& anchor) {
     s_picker_rc.left   = anchor.left;
     if (s_picker_rc.left + width > MENU_TOTAL_W - 4)
         s_picker_rc.left = MENU_TOTAL_W - 4 - width;
-    s_picker_rc.top    = anchor.bottom + 2;
+    const int visible_rows = 8;
+    const int picker_height = visible_rows * 20 + 4;
+    // La météo se trouve dans la carte basse de l'onglet Affichage. Ouvrir
+    // vers le haut lorsqu'il n'y a pas assez de place évite tout rognage,
+    // tout en conservant exactement le sélecteur défilant de l'heure.
+    s_picker_rc.top = anchor.bottom + 2;
+    if (s_picker_rc.top + picker_height > MENU_FIXED_H - 4)
+        s_picker_rc.top = anchor.top - picker_height - 2;
+    if (s_picker_rc.top < TITLE_H + 4)
+        s_picker_rc.top = TITLE_H + 4;
     s_picker_rc.right  = s_picker_rc.left + width;
-    s_picker_rc.bottom = s_picker_rc.top + 10 * 20 + 4;
+    s_picker_rc.bottom = s_picker_rc.top + picker_height;
 }
 
 static int picker_visible_rows() {
@@ -1124,7 +1192,8 @@ static void paint_picker(HDC mem, HFONT fN) {
             else wsprintfA(buf, "%02dh", s_picker_values[idx]);
         }
         else if (s_picker_type == PICKER_WEATHER) {
-            if (s_picker_labels[idx]) lstrcpynA(buf, s_picker_labels[idx], sizeof(buf));
+            if (s_picker_labels[idx]) lstrcpynA(buf,
+                trainer_ui_text(s_picker_labels[idx], NULL), sizeof(buf));
             else wsprintfA(buf, "%d", s_picker_values[idx]);
         }
         else {
@@ -1885,7 +1954,7 @@ static const int MODERN_MAX_CARD_COUNT = 4;
 
 static const char* modern_tab_title(MainTab tab) {
     static const char* titles[TAB_COUNT] = {
-        "Player", "Battle", "Encounters", "Display", "Settings"
+        "Player", "Battle", "Encounters", "World", "Display", "Settings"
     };
     return titles[(int)tab];
 }
@@ -1895,6 +1964,7 @@ static const char* modern_group_title(MainTab tab, int column) {
         {"Features", "Movement", "Actions", "Editors"},
         {"Battle Boosts", "Capture", "", ""},
         {"Encounter Rules", "Wild Pokémon", "", ""},
+        {"", "", "", ""},
         {"Zoom & FPS", "Minimap", "Environment", ""},
         {"Interface", "", "", ""}
     };
@@ -1954,6 +2024,7 @@ static int modern_quick_column() {
 
 static int modern_card_count(MainTab tab) {
     if (tab == TAB_PLAYER) return 4;
+    if (tab == TAB_WORLD) return 0;
     if (tab == TAB_DISPLAY) return 3;
     if (tab == TAB_SETTINGS) return 1;
     return 2;
@@ -1977,7 +2048,7 @@ static int modern_item_height(int item) {
         g_items[item].type == ITEM_TYPE_TRAINER_MANAGER)
         return MODERN_MANAGER_H;
     if (g_items[item].type == ITEM_TYPE_ACTION)
-        return 42;
+        return s_active_tab == TAB_PLAYER ? 36 : 42;
     return ITEM_H;
 }
 
@@ -2379,12 +2450,21 @@ static void modern_draw_control(HDC dc, int control, const RECT& row,
         label.right = action.left - 4;
         DrawTextA(dc, trainer_ui_text(item.label, NULL), -1, &label,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        const bool flash = s_heal_flash_until &&
-                           GetTickCount() < s_heal_flash_until;
+        const bool quick_save = item.on_action == opt_extras_quick_save_trigger;
+        const LONG save_status = quick_save ? opt_extras_quick_save_status() : 0;
+        const bool save_feedback = quick_save &&
+            GetTickCount() < s_quick_save_feedback_until;
+        const bool flash = quick_save
+            ? (save_status == 2 && save_feedback)
+            : (s_heal_flash_until && GetTickCount() < s_heal_flash_until);
+        const bool failed = quick_save && save_status < 0 && save_feedback;
+        const bool pending = quick_save && save_status == 1;
         fill_rounded_rect(dc, action,
-            flash ? COL_ON : RGB(65, 112, 218), 8);
+            flash ? COL_ON : (failed ? RGB(181, 67, 81) :
+                               RGB(65, 112, 218)), 8);
         SelectObject(dc, small_font); SetTextColor(dc, COL_TEXT);
-        DrawTextA(dc, flash ? "OK" : "GO", -1, &action,
+        DrawTextA(dc, pending ? "..." : (failed ? "ERR" :
+                  (flash ? "OK" : "GO")), -1, &action,
                   DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         return;
     }
@@ -2526,6 +2606,843 @@ static void modern_draw_settings(HDC dc, HFONT label_font,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
+static void world_icons_init() {
+    if (s_world_gdiplus_token) return;
+    Gdiplus::GdiplusStartupInput input;
+    if (Gdiplus::GdiplusStartup(&s_world_gdiplus_token, &input, NULL) !=
+        Gdiplus::Ok) {
+        s_world_gdiplus_token = 0;
+        return;
+    }
+
+    GetModuleFileNameW(NULL, s_world_game_folder,
+                       ARRAYSIZE(s_world_game_folder));
+    wchar_t* separator = wcsrchr(s_world_game_folder, L'\\');
+    if (!separator) separator = wcsrchr(s_world_game_folder, L'/');
+    if (separator) separator[1] = L'\0';
+    else s_world_game_folder[0] = L'\0';
+    lstrcpynW(s_world_icon_folder, s_world_game_folder,
+              ARRAYSIZE(s_world_icon_folder));
+    lstrcatW(s_world_icon_folder, L"Graphics\\Icons\\");
+
+    wchar_t missing_path[MAX_PATH] = {};
+    wsprintfW(missing_path, L"%sicon000.png", s_world_icon_folder);
+    Gdiplus::Image* missing = new Gdiplus::Image(missing_path);
+    if (missing->GetLastStatus() == Gdiplus::Ok)
+        s_world_missing_icon = missing;
+    else
+        delete missing;
+
+    wchar_t missing_battler_path[MAX_PATH] = {};
+    wsprintfW(missing_battler_path, L"%sGraphics\\Battlers\\000.png",
+              s_world_game_folder);
+    Gdiplus::Image* missing_battler =
+        new Gdiplus::Image(missing_battler_path);
+    if (missing_battler->GetLastStatus() == Gdiplus::Ok)
+        s_world_missing_battler = missing_battler;
+    else
+        delete missing_battler;
+}
+
+static void world_icons_shutdown() {
+    for (int i = 0; i < ARRAYSIZE(s_world_icons); ++i) {
+        delete s_world_icons[i];
+        s_world_icons[i] = NULL;
+        s_world_icon_attempted[i] = false;
+    }
+    delete s_world_missing_icon;
+    s_world_missing_icon = NULL;
+    for (int i = 0; i < ARRAYSIZE(s_world_battlers); ++i) {
+        delete s_world_battlers[i];
+        s_world_battlers[i] = NULL;
+        s_world_battler_attempted[i] = false;
+    }
+    delete s_world_missing_battler;
+    s_world_missing_battler = NULL;
+    for (int i = 0; i < ARRAYSIZE(s_world_maps); ++i) {
+        delete s_world_maps[i].image;
+        ZeroMemory(&s_world_maps[i], sizeof(s_world_maps[i]));
+    }
+    if (s_world_gdiplus_token) {
+        Gdiplus::GdiplusShutdown(s_world_gdiplus_token);
+        s_world_gdiplus_token = 0;
+    }
+}
+
+static Gdiplus::Image* world_map_image(const char* graphic) {
+    if (!s_world_gdiplus_token || !graphic || !graphic[0] ||
+        lstrcmpA(graphic, "---") == 0) return NULL;
+    WorldMapImage* free_entry = NULL;
+    for (int i = 0; i < ARRAYSIZE(s_world_maps); ++i) {
+        if (s_world_maps[i].graphic[0] &&
+            _stricmp(s_world_maps[i].graphic, graphic) == 0)
+            return s_world_maps[i].image;
+        if (!free_entry && !s_world_maps[i].graphic[0])
+            free_entry = &s_world_maps[i];
+    }
+    if (!free_entry) return NULL;
+    lstrcpynA(free_entry->graphic, graphic, ARRAYSIZE(free_entry->graphic));
+    free_entry->attempted = true;
+
+    wchar_t wide_graphic[96] = {};
+    MultiByteToWideChar(CP_UTF8, 0, graphic, -1, wide_graphic,
+                        ARRAYSIZE(wide_graphic));
+    wchar_t path[MAX_PATH] = {};
+    const size_t graphic_length = strlen(graphic);
+    const bool has_png_extension = graphic_length >= 4 &&
+        _stricmp(graphic + graphic_length - 4, ".png") == 0;
+    wsprintfW(path, has_png_extension
+        ? L"%sGraphics\\Pictures\\%s"
+        : L"%sGraphics\\Pictures\\%s.png",
+        s_world_game_folder, wide_graphic);
+    Gdiplus::Image* image = new Gdiplus::Image(path);
+    if (image->GetLastStatus() != Gdiplus::Ok) {
+        delete image;
+        wsprintfW(path, has_png_extension
+            ? L"%sGraphics\\Pictures\\TownMap\\%s"
+            : L"%sGraphics\\Pictures\\TownMap\\%s.png",
+            s_world_game_folder, wide_graphic);
+        image = new Gdiplus::Image(path);
+    }
+    if (image->GetLastStatus() == Gdiplus::Ok)
+        free_entry->image = image;
+    else
+        delete image;
+    return free_entry->image;
+}
+
+static Gdiplus::Image* world_species_icon(int species) {
+    if (!s_world_gdiplus_token || species <= 0 ||
+        species >= ARRAYSIZE(s_world_icons)) return s_world_missing_icon;
+    if (!s_world_icon_attempted[species]) {
+        s_world_icon_attempted[species] = true;
+        wchar_t path[MAX_PATH] = {};
+        wsprintfW(path, L"%sicon%03d.png", s_world_icon_folder, species);
+        Gdiplus::Image* image = new Gdiplus::Image(path);
+        if (image->GetLastStatus() == Gdiplus::Ok)
+            s_world_icons[species] = image;
+        else
+            delete image;
+    }
+    return s_world_icons[species] ? s_world_icons[species] :
+                                   s_world_missing_icon;
+}
+
+static Gdiplus::Image* world_species_battler(int species) {
+    if (!s_world_gdiplus_token || species <= 0 ||
+        species >= ARRAYSIZE(s_world_battlers))
+        return s_world_missing_battler;
+    if (!s_world_battler_attempted[species]) {
+        s_world_battler_attempted[species] = true;
+        wchar_t path[MAX_PATH] = {};
+        wsprintfW(path, L"%sGraphics\\Battlers\\%03d.png",
+                  s_world_game_folder, species);
+        Gdiplus::Image* image = new Gdiplus::Image(path);
+        if (image->GetLastStatus() == Gdiplus::Ok)
+            s_world_battlers[species] = image;
+        else
+            delete image;
+    }
+    return s_world_battlers[species] ? s_world_battlers[species] :
+                                      s_world_missing_battler;
+}
+
+static void draw_world_species_icon(Gdiplus::Graphics& graphics, int species,
+                                    const RECT& cell) {
+    Gdiplus::Image* image = world_species_icon(species);
+    if (!image) return;
+    const UINT width = image->GetWidth();
+    const UINT height = image->GetHeight();
+    if (!width || !height) return;
+    const int size = 30;
+    const int left = cell.left + ((cell.right - cell.left) - size) / 2;
+    const int top = cell.top + ((cell.bottom - cell.top) - size) / 2;
+    const UINT frame_width = width >= 128 ? 64 :
+        (width >= height * 2 ? width / 2 : width);
+    const UINT frame_height = height >= 64 ? 64 : height;
+    graphics.DrawImage(image, Gdiplus::Rect(left, top, size, size),
+                       0, 0, frame_width, frame_height,
+                       Gdiplus::UnitPixel);
+}
+
+static void draw_world_pokeball(HDC dc, int center_x, int center_y,
+                                int diameter) {
+    const int radius = diameter / 2;
+    const RECT circle = {center_x - radius, center_y - radius,
+                         center_x + radius, center_y + radius};
+    HPEN outline = CreatePen(PS_SOLID, 1, RGB(30, 34, 44));
+    HBRUSH red = CreateSolidBrush(RGB(224, 69, 78));
+    HBRUSH white = CreateSolidBrush(RGB(242, 245, 250));
+    HPEN old_pen = (HPEN)SelectObject(dc, outline);
+    HBRUSH old_brush = (HBRUSH)SelectObject(dc, red);
+    Ellipse(dc, circle.left, circle.top, circle.right, circle.bottom);
+    const int saved = SaveDC(dc);
+    IntersectClipRect(dc, circle.left, center_y, circle.right, circle.bottom);
+    SelectObject(dc, white);
+    Ellipse(dc, circle.left, circle.top, circle.right, circle.bottom);
+    RestoreDC(dc, saved);
+    SelectObject(dc, GetStockObject(NULL_BRUSH));
+    Ellipse(dc, circle.left, circle.top, circle.right, circle.bottom);
+    MoveToEx(dc, circle.left + 1, center_y, NULL);
+    LineTo(dc, circle.right - 1, center_y);
+    SelectObject(dc, white);
+    const int button = diameter >= 16 ? 5 : 4;
+    Ellipse(dc, center_x - button / 2, center_y - button / 2,
+            center_x + (button + 1) / 2, center_y + (button + 1) / 2);
+    SelectObject(dc, old_brush);
+    SelectObject(dc, old_pen);
+    DeleteObject(white);
+    DeleteObject(red);
+    DeleteObject(outline);
+}
+
+static void draw_world_shiny_star(HDC dc, int center_x, int center_y,
+                                  int radius) {
+    static const int offsets[10][2] = {
+        {0,-9}, {2,-3}, {9,-3}, {4,1}, {6,8},
+        {0,4}, {-6,8}, {-4,1}, {-9,-3}, {-2,-3}
+    };
+    POINT points[10] = {};
+    for (int i = 0; i < ARRAYSIZE(points); ++i) {
+        points[i].x = center_x + offsets[i][0] * radius / 9;
+        points[i].y = center_y + offsets[i][1] * radius / 9;
+    }
+    HPEN pen = CreatePen(PS_SOLID, 1, RGB(224, 158, 21));
+    HBRUSH brush = CreateSolidBrush(RGB(255, 214, 57));
+    HPEN old_pen = (HPEN)SelectObject(dc, pen);
+    HBRUSH old_brush = (HBRUSH)SelectObject(dc, brush);
+    Polygon(dc, points, ARRAYSIZE(points));
+    SelectObject(dc, old_brush);
+    SelectObject(dc, old_pen);
+    DeleteObject(brush);
+    DeleteObject(pen);
+}
+
+static bool append_world_search_wchar(wchar_t character) {
+    if (character < 32 || (character >= 0xD800 && character <= 0xDFFF))
+        return false;
+    char encoded[5] = {};
+    const int bytes = WideCharToMultiByte(CP_UTF8, 0, &character, 1,
+                                           encoded, 4, NULL, NULL);
+    const size_t length = strlen(s_world_search);
+    if (bytes <= 0 || length + (size_t)bytes >= sizeof(s_world_search))
+        return false;
+    memcpy(s_world_search + length, encoded, (size_t)bytes);
+    s_world_search[length + bytes] = '\0';
+    return true;
+}
+
+static void erase_world_search_codepoint() {
+    size_t length = strlen(s_world_search);
+    if (!length) return;
+    --length;
+    while (length > 0 &&
+           (((unsigned char)s_world_search[length] & 0xC0) == 0x80))
+        --length;
+    s_world_search[length] = '\0';
+}
+
+static const int WORLD_ROW_H = 32;
+
+static RECT modern_world_card_rect() {
+    return {MODERN_MARGIN,
+            TITLE_H + MODERN_TAB_H + MODERN_PAGE_HEADER_H,
+            MENU_TOTAL_W - MODERN_MARGIN,
+            MENU_FIXED_H - MODERN_MARGIN};
+}
+
+static RECT modern_world_rows_rect() {
+    RECT card = modern_world_card_rect();
+    return {card.left + 10, card.top + 90, card.right - 18, card.bottom - 10};
+}
+
+static int modern_world_visible_rows() {
+    RECT rows = modern_world_rows_rect();
+    const int visible = (rows.bottom - rows.top) / WORLD_ROW_H;
+    return visible > 0 ? visible : 1;
+}
+
+static RECT modern_world_search_rect() {
+    return {MENU_TOTAL_W - MODERN_MARGIN - 360,
+            TITLE_H + MODERN_TAB_H + 6,
+            MENU_TOTAL_W - MODERN_MARGIN,
+            TITLE_H + MODERN_TAB_H + 36};
+}
+
+static RECT modern_world_search_clear_rect() {
+    RECT search = modern_world_search_rect();
+    return {search.right - 30, search.top, search.right, search.bottom};
+}
+
+static void fold_utf8_for_search(const char* source, char* destination,
+                                 int capacity) {
+    if (!destination || capacity <= 0) return;
+    int written = 0;
+    const unsigned char* cursor = (const unsigned char*)(source ? source : "");
+    while (*cursor && written + 1 < capacity) {
+        unsigned char value = *cursor++;
+        if (value == 0xC3 && *cursor) {
+            const unsigned char accent = *cursor++;
+            if ((accent >= 0x80 && accent <= 0x85) ||
+                (accent >= 0xA0 && accent <= 0xA5)) value = 'a';
+            else if (accent == 0x87 || accent == 0xA7) value = 'c';
+            else if ((accent >= 0x88 && accent <= 0x8B) ||
+                     (accent >= 0xA8 && accent <= 0xAB)) value = 'e';
+            else if ((accent >= 0x8C && accent <= 0x8F) ||
+                     (accent >= 0xAC && accent <= 0xAF)) value = 'i';
+            else if (accent == 0x91 || accent == 0xB1) value = 'n';
+            else if ((accent >= 0x92 && accent <= 0x96) ||
+                     (accent >= 0xB2 && accent <= 0xB6)) value = 'o';
+            else if ((accent >= 0x99 && accent <= 0x9C) ||
+                     (accent >= 0xB9 && accent <= 0xBC)) value = 'u';
+            else if (accent == 0x9D || accent == 0xBD || accent == 0xBF)
+                value = 'y';
+            else continue;
+        } else if (value >= 0x80) {
+            continue;
+        }
+        if (value >= 'A' && value <= 'Z') value += 'a' - 'A';
+        destination[written++] = (char)value;
+    }
+    destination[written] = '\0';
+}
+
+static bool contains_ascii_ci(const char* text, const char* query) {
+    if (!query || !query[0]) return true;
+    if (!text) return false;
+    char folded_text[128] = {};
+    char folded_query[64] = {};
+    fold_utf8_for_search(text, folded_text, ARRAYSIZE(folded_text));
+    fold_utf8_for_search(query, folded_query, ARRAYSIZE(folded_query));
+    return folded_query[0] && strstr(folded_text, folded_query) != NULL;
+}
+
+static bool modern_world_search_matches(
+    const OptEncounterCatalog::SearchRow& result) {
+    if (!s_world_search[0]) return false;
+    if (contains_ascii_ci(result.encounter.species_name, s_world_search))
+        return true;
+    char id[16] = {};
+    wsprintfA(id, "%d", result.encounter.species);
+    return contains_ascii_ci(id, s_world_search);
+}
+
+static int modern_world_result_count() {
+    const OptEncounterCatalog* catalog = opt_encounter_catalog();
+    if (!s_world_search[0]) return catalog->row_count;
+    int count = 0;
+    for (int i = 0; i < catalog->search_row_count; ++i)
+        if (modern_world_search_matches(catalog->search_rows[i])) ++count;
+    return count;
+}
+
+static const OptEncounterCatalog::SearchRow* modern_world_result_at(
+    int result_index) {
+    const OptEncounterCatalog* catalog = opt_encounter_catalog();
+    for (int i = 0; i < catalog->search_row_count; ++i) {
+        if (!modern_world_search_matches(catalog->search_rows[i])) continue;
+        if (result_index-- == 0) return &catalog->search_rows[i];
+    }
+    return NULL;
+}
+
+static int modern_world_result_from_point(int x, int y) {
+    if (!s_world_search[0]) return -1;
+    RECT rows = modern_world_rows_rect();
+    const int species_end = rows.left + 168;
+    const int caught_end = species_end + 48;
+    const int shiny_end = caught_end + 46;
+    const int zone_end = shiny_end + 158;
+    if (x < shiny_end + 4 || x >= zone_end - 4 ||
+        y < rows.top || y >= rows.bottom) return -1;
+    const int visual = (y - rows.top) / WORLD_ROW_H;
+    const int result = s_world_scroll + visual;
+    return result >= 0 && result < modern_world_result_count() ? result : -1;
+}
+
+static int modern_world_pokemon_result_from_point(int x, int y) {
+    RECT rows = modern_world_rows_rect();
+    const bool searching = s_world_search[0] != '\0';
+    const int species_end = rows.left + (searching ? 168 : 246);
+    if (x < rows.left + 2 || x >= species_end - 4 ||
+        y < rows.top || y >= rows.bottom) return -1;
+    const int visual = (y - rows.top) / WORLD_ROW_H;
+    const int result = s_world_scroll + visual;
+    return result >= 0 && result < modern_world_result_count() ? result : -1;
+}
+
+static const OptEncounterCatalogRow* modern_world_display_row_at(int index) {
+    const OptEncounterCatalog* catalog = opt_encounter_catalog();
+    if (s_world_search[0]) {
+        const OptEncounterCatalog::SearchRow* result =
+            modern_world_result_at(index);
+        return result ? &result->encounter : NULL;
+    }
+    return index >= 0 && index < catalog->row_count
+        ? &catalog->rows[index] : NULL;
+}
+
+static void modern_draw_world_pokemon_tooltip(HDC dc, HFONT label_font,
+                                              HFONT small_font) {
+    if (s_world_hover_pokemon_result < 0) return;
+    const OptEncounterCatalogRow* row =
+        modern_world_display_row_at(s_world_hover_pokemon_result);
+    if (!row) return;
+    Gdiplus::Image* battler = world_species_battler(row->species);
+    if (!battler) return;
+
+    const int tooltip_width = 220;
+    const int tooltip_height = 226;
+    int left = s_world_mouse.x + 16;
+    if (left + tooltip_width > MENU_TOTAL_W - 8)
+        left = s_world_mouse.x - tooltip_width - 16;
+    if (left < 8) left = 8;
+    int top = s_world_mouse.y + 16;
+    if (top + tooltip_height > MENU_FIXED_H - 8)
+        top = s_world_mouse.y - tooltip_height - 16;
+    if (top < TITLE_H + 4) top = TITLE_H + 4;
+    RECT tooltip = {left, top, left + tooltip_width,
+                    top + tooltip_height};
+    fill_rounded_rect(dc, tooltip, RGB(12, 18, 30), 12);
+    frame_rounded_rect(dc, tooltip, RGB(116, 99, 229), 12, 2);
+
+    RECT sprite_card = {tooltip.left + 12, tooltip.top + 47,
+                        tooltip.right - 12, tooltip.bottom - 12};
+    fill_rounded_rect(dc, sprite_card, RGB(21, 29, 45), 10);
+    frame_rounded_rect(dc, sprite_card, RGB(49, 62, 86), 10);
+
+    char title[128] = {};
+    _snprintf_s(title, sizeof(title), _TRUNCATE, "%s  ·  #%03d",
+                row->species_name, row->species);
+    RECT title_rect = {tooltip.left + 12, tooltip.top + 6,
+                       tooltip.right - 12, tooltip.top + 34};
+    SelectObject(dc, label_font); SetTextColor(dc, COL_TEXT);
+    DrawTextA(dc, title, -1, &title_rect,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    RECT subtitle = {tooltip.left + 12, tooltip.top + 28,
+                     tooltip.right - 12, tooltip.top + 49};
+    SelectObject(dc, small_font); SetTextColor(dc, COL_DIMTEXT);
+    DrawTextA(dc, trainer_ui_text("Pokémon", NULL), -1, &subtitle,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+    const UINT image_width = battler->GetWidth();
+    const UINT image_height = battler->GetHeight();
+    if (!image_width || !image_height) return;
+    const UINT frame_width = image_width >= image_height * 2
+        ? image_height : image_width;
+    const UINT frame_height = image_height;
+    const int available_width = sprite_card.right - sprite_card.left - 16;
+    const int available_height = sprite_card.bottom - sprite_card.top - 12;
+    int draw_width = available_width;
+    int draw_height = (int)((long long)draw_width * frame_height /
+                            frame_width);
+    if (draw_height > available_height) {
+        draw_height = available_height;
+        draw_width = (int)((long long)draw_height * frame_width /
+                           frame_height);
+    }
+    const int draw_left = sprite_card.left +
+        (sprite_card.right - sprite_card.left - draw_width) / 2;
+    const int draw_top = sprite_card.top +
+        (sprite_card.bottom - sprite_card.top - draw_height) / 2;
+    Gdiplus::Graphics graphics(dc);
+    graphics.SetInterpolationMode(Gdiplus::InterpolationModeNearestNeighbor);
+    graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+    graphics.DrawImage(battler,
+        Gdiplus::Rect(draw_left, draw_top, draw_width, draw_height),
+        0, 0, frame_width, frame_height, Gdiplus::UnitPixel);
+    graphics.Flush();
+}
+
+static void modern_draw_world_map_tooltip(HDC dc, HFONT label_font,
+                                          HFONT small_font) {
+    if (s_world_hover_result < 0 || !s_world_search[0]) return;
+    const OptEncounterCatalog::SearchRow* result =
+        modern_world_result_at(s_world_hover_result);
+    if (!result || result->region < 0 || result->map_x < 0 ||
+        result->map_y < 0) return;
+    Gdiplus::Image* map = world_map_image(result->map_graphic);
+    if (!map) return;
+
+    const int tooltip_width = 310;
+    const int tooltip_height = 230;
+    int left = s_world_mouse.x + 16;
+    if (left + tooltip_width > MENU_TOTAL_W - 8)
+        left = s_world_mouse.x - tooltip_width - 16;
+    if (left < 8) left = 8;
+    int top = s_world_mouse.y + 16;
+    if (top + tooltip_height > MENU_FIXED_H - 8)
+        top = s_world_mouse.y - tooltip_height - 16;
+    if (top < TITLE_H + 4) top = TITLE_H + 4;
+    RECT tooltip = {left, top, left + tooltip_width,
+                    top + tooltip_height};
+    fill_rounded_rect(dc, tooltip, RGB(12, 18, 30), 12);
+    frame_rounded_rect(dc, tooltip, RGB(116, 99, 229), 12, 2);
+
+    char title[190] = {};
+    _snprintf_s(title, sizeof(title), _TRUNCATE, "#%03d  %s",
+                result->map_id, result->map_name);
+    RECT title_rect = {tooltip.left + 12, tooltip.top + 5,
+                       tooltip.right - 12, tooltip.top + 32};
+    SelectObject(dc, label_font); SetTextColor(dc, COL_TEXT);
+    DrawTextA(dc, title, -1, &title_rect,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    char coordinates[80] = {};
+    _snprintf_s(coordinates, sizeof(coordinates), _TRUNCATE,
+                "Région %d  ·  (%d, %d)", result->region,
+                result->map_x, result->map_y);
+    RECT coordinate_rect = {tooltip.left + 12, tooltip.top + 27,
+                            tooltip.right - 12, tooltip.top + 47};
+    SelectObject(dc, small_font); SetTextColor(dc, COL_DIMTEXT);
+    DrawTextA(dc, coordinates, -1, &coordinate_rect,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    const UINT source_width = map->GetWidth();
+    const UINT source_height = map->GetHeight();
+    if (!source_width || !source_height) return;
+    const int available_width = tooltip_width - 24;
+    const int available_height = tooltip_height - 58;
+    int map_width = available_width;
+    int map_height = (int)((long long)map_width * source_height /
+                           source_width);
+    if (map_height > available_height) {
+        map_height = available_height;
+        map_width = (int)((long long)map_height * source_width /
+                          source_height);
+    }
+    const int map_left = tooltip.left + (tooltip_width - map_width) / 2;
+    const int map_top = tooltip.top + 50 +
+        (available_height - map_height) / 2;
+
+    Gdiplus::Graphics graphics(dc);
+    graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+    graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+    const Gdiplus::Rect destination(map_left, map_top, map_width, map_height);
+    graphics.DrawImage(map, destination, 0, 0, source_width, source_height,
+                       Gdiplus::UnitPixel);
+
+    Gdiplus::SolidBrush highlight(Gdiplus::Color(126, 255, 213, 54));
+    Gdiplus::Pen outline(Gdiplus::Color(255, 255, 235, 92), 2.0f);
+    bool has_highlight = false;
+    float highlight_left = 0.0f, highlight_top = 0.0f;
+    float highlight_right = 0.0f, highlight_bottom = 0.0f;
+    const int grid_width = result->map_width > 0 ? result->map_width : 1;
+    const int grid_height = result->map_height > 0 ? result->map_height : 1;
+    const int mask_length = (int)strlen(result->map_mask);
+    for (int y = 0; y < grid_height; ++y) {
+        for (int x = 0; x < grid_width; ++x) {
+            const int mask_index = x + y * grid_width;
+            const bool selected = mask_length == 0
+                ? (x == 0 && y == 0)
+                : (mask_index < mask_length &&
+                   result->map_mask[mask_index] != '0');
+            if (!selected) continue;
+            const float tile_left = (float)map_left +
+                (float)((result->map_x + x) * 16 * map_width) /
+                (float)source_width;
+            const float tile_top = (float)map_top +
+                (float)((result->map_y + y) * 16 * map_height) /
+                (float)source_height;
+            const float tile_width = (float)(16 * map_width) /
+                (float)source_width;
+            const float tile_height = (float)(16 * map_height) /
+                (float)source_height;
+            Gdiplus::RectF tile(tile_left, tile_top, tile_width, tile_height);
+            graphics.FillRectangle(&highlight, tile);
+            graphics.DrawRectangle(&outline, tile);
+            if (!has_highlight) {
+                highlight_left = tile_left;
+                highlight_top = tile_top;
+                highlight_right = tile_left + tile_width;
+                highlight_bottom = tile_top + tile_height;
+                has_highlight = true;
+            } else {
+                if (tile_left < highlight_left) highlight_left = tile_left;
+                if (tile_top < highlight_top) highlight_top = tile_top;
+                if (tile_left + tile_width > highlight_right)
+                    highlight_right = tile_left + tile_width;
+                if (tile_top + tile_height > highlight_bottom)
+                    highlight_bottom = tile_top + tile_height;
+            }
+        }
+    }
+    if (has_highlight) {
+        Gdiplus::Pen focus(Gdiplus::Color(255, 255, 240, 74), 3.0f);
+        Gdiplus::RectF focus_rect(highlight_left - 4.0f,
+            highlight_top - 4.0f,
+            highlight_right - highlight_left + 8.0f,
+            highlight_bottom - highlight_top + 8.0f);
+        graphics.DrawRectangle(&focus, focus_rect);
+    }
+    graphics.Flush();
+}
+
+static int modern_world_max_scroll() {
+    int maximum = modern_world_result_count() - modern_world_visible_rows();
+    return maximum > 0 ? maximum : 0;
+}
+
+static void modern_world_clamp_scroll() {
+    const int maximum = modern_world_max_scroll();
+    if (s_world_scroll < 0) s_world_scroll = 0;
+    if (s_world_scroll > maximum) s_world_scroll = maximum;
+}
+
+static const char* modern_world_method_name(int type) {
+    static const char* names[] = {
+        "Grass", "Cave", "Surfing", "Rock Smash", "Old Rod", "Good Rod",
+        "Super Rod", "Headbutt (low)", "Headbutt (high)",
+        "Grass (morning)", "Grass (day)", "Grass (night)", "Bug Contest",
+        "Poké Radar"
+    };
+    return type >= 0 && type < ARRAYSIZE(names) ? names[type] : "Unknown";
+}
+
+static COLORREF modern_world_method_color(int type) {
+    static const COLORREF colors[] = {
+        RGB(69, 186, 116), RGB(151, 112, 81), RGB(55, 145, 220),
+        RGB(163, 130, 92), RGB(71, 132, 205), RGB(71, 132, 205),
+        RGB(71, 132, 205), RGB(96, 174, 107), RGB(96, 174, 107),
+        RGB(244, 174, 72), RGB(91, 183, 116), RGB(92, 103, 190),
+        RGB(166, 102, 199), RGB(215, 84, 137)
+    };
+    return type >= 0 && type < ARRAYSIZE(colors) ? colors[type] : COL_SLIDER;
+}
+
+static void modern_draw_world(HDC dc, HFONT label_font, HFONT value_font,
+                              HFONT small_font) {
+    const OptEncounterCatalog* catalog = opt_encounter_catalog();
+    if (catalog->revision != s_world_revision) {
+        s_world_revision = catalog->revision;
+        s_world_scroll = 0;
+        s_world_hover_result = -1;
+        s_world_hover_pokemon_result = -1;
+    }
+    modern_world_clamp_scroll();
+
+    RECT search_box = modern_world_search_rect();
+    fill_rounded_rect(dc, search_box, RGB(23, 31, 47), 9);
+    frame_rounded_rect(dc, search_box,
+                       s_world_search_active ? COL_SLIDER : RGB(54, 67, 90), 9);
+    RECT search_text = {search_box.left + 12, search_box.top,
+                        search_box.right - 34, search_box.bottom};
+    char shown_search[80] = {};
+    if (s_world_search[0]) {
+        _snprintf_s(shown_search, sizeof(shown_search), _TRUNCATE, "%s%s",
+                    s_world_search, s_world_search_active ? "|" : "");
+    } else {
+        lstrcpynA(shown_search, trainer_ui_text("Search Pokemon...", NULL),
+                  sizeof(shown_search));
+    }
+    SelectObject(dc, small_font);
+    SetTextColor(dc, s_world_search[0] ? COL_TEXT : COL_DIMTEXT);
+    DrawTextA(dc, shown_search, -1, &search_text,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (s_world_search[0]) {
+        RECT clear = modern_world_search_clear_rect();
+        SetTextColor(dc, RGB(171, 181, 202));
+        DrawTextA(dc, "×", -1, &clear,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+
+    const bool searching = s_world_search[0] != '\0';
+    const int result_count = modern_world_result_count();
+
+    RECT card = modern_world_card_rect();
+    fill_rounded_rect(dc, card, RGB(18, 25, 39), 13);
+    frame_rounded_rect(dc, card, RGB(43, 55, 75), 13);
+
+    RECT accent = {card.left + 14, card.top + 13,
+                   card.left + 18, card.top + 31};
+    fill_rounded_rect(dc, accent, COL_ON, 4);
+    RECT section = {accent.right + 8, card.top,
+                    card.right - 12, card.top + 32};
+    SelectObject(dc, label_font); SetTextColor(dc, RGB(207, 214, 230));
+    DrawTextA(dc, trainer_ui_text(searching ? "Search Results" : "Current Zone", NULL), -1, &section,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    char location[256] = {};
+    if (searching)
+        _snprintf_s(location, sizeof(location), _TRUNCATE, "\"%s\"",
+                    s_world_search);
+    else if (catalog->map_id > 0)
+        _snprintf_s(location, sizeof(location), _TRUNCATE, "#%03d  %s",
+                    catalog->map_id,
+                    catalog->map_name[0] ? catalog->map_name : "---");
+    else
+        lstrcpynA(location, trainer_ui_text("Waiting for the current map...", NULL),
+                  sizeof(location));
+    RECT location_rect = {card.left + 28, card.top + 26,
+                          card.right - 120, card.top + 58};
+    SelectObject(dc, value_font); SetTextColor(dc, COL_TEXT);
+    DrawTextA(dc, location, -1, &location_rect,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    if (catalog->ready) {
+        char count[64] = {};
+        _snprintf_s(count, sizeof(count), _TRUNCATE, "%d %s",
+                    result_count, trainer_ui_text("entries", NULL));
+        RECT count_rect = {card.right - 120, card.top + 26,
+                           card.right - 16, card.top + 58};
+        SelectObject(dc, small_font); SetTextColor(dc, COL_DIMTEXT);
+        DrawTextA(dc, count, -1, &count_rect,
+                  DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    }
+
+    RECT rows = modern_world_rows_rect();
+    RECT table_header = {rows.left, card.top + 62, rows.right, rows.top};
+    HBRUSH header_brush = CreateSolidBrush(RGB(27, 35, 52));
+    FillRect(dc, &table_header, header_brush); DeleteObject(header_brush);
+
+    const int icon_end = rows.left + 40;
+    const int species_end = rows.left + (searching ? 168 : 246);
+    const int caught_end = species_end + 48;
+    const int shiny_end = caught_end + 46;
+    const int zone_end = searching ? shiny_end + 158 : shiny_end;
+    const int method_end = searching ? zone_end + 120 : shiny_end + 180;
+    const int levels_end = method_end + (searching ? 76 : 86);
+
+    RECT species_header = {icon_end + 4, table_header.top,
+                           species_end - 4, table_header.bottom};
+    RECT zone_header = {shiny_end + 4, table_header.top,
+                        zone_end - 4, table_header.bottom};
+    RECT method_header = {searching ? zone_end + 4 : shiny_end + 4,
+                          table_header.top, method_end - 4,
+                          table_header.bottom};
+    RECT levels_header = {method_end + 4, table_header.top,
+                          levels_end - 4, table_header.bottom};
+    RECT rate_header = {levels_end + 4, table_header.top,
+                        rows.right - 4, table_header.bottom};
+    SelectObject(dc, small_font); SetTextColor(dc, RGB(170, 181, 204));
+    DrawTextA(dc, trainer_ui_text("Pokémon", NULL), -1, &species_header,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    if (searching)
+        DrawTextA(dc, trainer_ui_text("Zone", NULL), -1, &zone_header,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextA(dc, trainer_ui_text("Method", NULL), -1, &method_header,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextA(dc, trainer_ui_text("Levels", NULL), -1, &levels_header,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    DrawTextA(dc, trainer_ui_text("Rate", NULL), -1, &rate_header,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    draw_world_pokeball(dc, (species_end + caught_end) / 2,
+                        (table_header.top + table_header.bottom) / 2, 14);
+    draw_world_shiny_star(dc, (caught_end + shiny_end) / 2,
+                          (table_header.top + table_header.bottom) / 2, 7);
+
+    if (!catalog->ready || result_count == 0) {
+        RECT empty = {rows.left + 12, rows.top + 20,
+                      rows.right - 12, rows.bottom - 12};
+        SelectObject(dc, label_font); SetTextColor(dc, COL_DIMTEXT);
+        const char* message = searching ? "No location found for this Pokémon." :
+            (catalog->map_id > 0 ? "No wild encounter data for this zone." :
+                                  "Waiting for the current map...");
+        DrawTextA(dc, trainer_ui_text(message, NULL), -1, &empty,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        return;
+    }
+
+    const int visible = modern_world_visible_rows();
+    const int last = s_world_scroll + visible < result_count
+        ? s_world_scroll + visible : result_count;
+    for (int index = s_world_scroll; index < last; ++index) {
+        const int visual = index - s_world_scroll;
+        RECT row_rect = {rows.left, rows.top + visual * WORLD_ROW_H,
+                         rows.right, rows.top + (visual + 1) * WORLD_ROW_H};
+        if (visual & 1) {
+            HBRUSH alternate = CreateSolidBrush(RGB(21, 29, 44));
+            FillRect(dc, &row_rect, alternate); DeleteObject(alternate);
+        }
+        const OptEncounterCatalog::SearchRow* search_result =
+            searching ? modern_world_result_at(index) : NULL;
+        const OptEncounterCatalogRow& row = searching
+            ? search_result->encounter : catalog->rows[index];
+        RECT icon = {row_rect.left + 2, row_rect.top,
+                     icon_end - 2, row_rect.bottom};
+        RECT species = {icon_end + 4, row_rect.top,
+                        species_end - 4, row_rect.bottom};
+        RECT caught = {species_end, row_rect.top,
+                       caught_end, row_rect.bottom};
+        RECT shiny = {caught_end, row_rect.top,
+                      shiny_end, row_rect.bottom};
+        RECT zone = {shiny_end + 4, row_rect.top,
+                     zone_end - 4, row_rect.bottom};
+        RECT method = {searching ? zone_end + 4 : shiny_end + 4,
+                       row_rect.top, method_end - 4, row_rect.bottom};
+        RECT levels = {method_end + 4, row_rect.top,
+                       levels_end - 4, row_rect.bottom};
+        RECT rate = {levels_end + 4, row_rect.top,
+                     rows.right - 4, row_rect.bottom};
+
+        {
+            Gdiplus::Graphics sprite_graphics(dc);
+            sprite_graphics.SetInterpolationMode(
+                Gdiplus::InterpolationModeNearestNeighbor);
+            sprite_graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+            draw_world_species_icon(sprite_graphics, row.species, icon);
+            sprite_graphics.Flush();
+        }
+        if (row.owned)
+            draw_world_pokeball(dc, (caught.left + caught.right) / 2,
+                                (caught.top + caught.bottom) / 2, 16);
+        if (row.shiny_seen)
+            draw_world_shiny_star(dc, (shiny.left + shiny.right) / 2,
+                                  (shiny.top + shiny.bottom) / 2, 9);
+
+        RECT marker = {method.left, row_rect.top + 9,
+                       method.left + 4, row_rect.bottom - 9};
+        fill_rounded_rect(dc, marker, modern_world_method_color(row.type), 3);
+        method.left += 10;
+        SelectObject(dc, small_font); SetTextColor(dc, RGB(192, 202, 220));
+        if (searching) {
+            char zone_text[180] = {};
+            _snprintf_s(zone_text, sizeof(zone_text), _TRUNCATE, "#%03d %s",
+                        search_result->map_id, search_result->map_name);
+            DrawTextA(dc, zone_text, -1, &zone,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        }
+        DrawTextA(dc, trainer_ui_text(modern_world_method_name(row.type), NULL),
+                  -1, &method, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
+                  DT_END_ELLIPSIS);
+        SelectObject(dc, value_font); SetTextColor(dc, COL_TEXT);
+        DrawTextA(dc, row.species_name, -1, &species,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        char level[32] = {};
+        if (row.min_level == row.max_level) wsprintfA(level, "%d", row.min_level);
+        else wsprintfA(level, "%d-%d", row.min_level, row.max_level);
+        DrawTextA(dc, level, -1, &levels,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        char rate_text[32] = {};
+        wsprintfA(rate_text, "%d%%", row.rate);
+        SetTextColor(dc, RGB(134, 221, 180));
+        DrawTextA(dc, rate_text, -1, &rate,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+        HPEN divider = CreatePen(PS_SOLID, 1, RGB(38, 49, 67));
+        HPEN old_pen = (HPEN)SelectObject(dc, divider);
+        MoveToEx(dc, row_rect.left, row_rect.bottom - 1, NULL);
+        LineTo(dc, row_rect.right, row_rect.bottom - 1);
+        SelectObject(dc, old_pen); DeleteObject(divider);
+    }
+
+    const int maximum = modern_world_max_scroll();
+    if (maximum > 0) {
+        RECT track = {card.right - 10, rows.top,
+                      card.right - 6, rows.bottom};
+        fill_rounded_rect(dc, track, RGB(35, 45, 61), 4);
+        const int track_height = track.bottom - track.top;
+        int thumb_height = track_height * visible / result_count;
+        if (thumb_height < 28) thumb_height = 28;
+        const int travel = track_height - thumb_height;
+        const int thumb_top = track.top + s_world_scroll * travel / maximum;
+        RECT thumb = {track.left, thumb_top, track.right,
+                      thumb_top + thumb_height};
+        fill_rounded_rect(dc, thumb, RGB(105, 92, 190), 4);
+    }
+    modern_draw_world_map_tooltip(dc, label_font, small_font);
+    modern_draw_world_pokemon_tooltip(dc, label_font, small_font);
+}
+
 static void paint_modern(HWND window) {
     PAINTSTRUCT ps = {};
     HDC target = BeginPaint(window, &ps);
@@ -2628,6 +3545,8 @@ static void paint_modern(HWND window) {
         if (s_active_tab == TAB_SETTINGS && column == 0)
             modern_draw_settings(dc, label_font, small_font);
     }
+    if (s_active_tab == TAB_WORLD)
+        modern_draw_world(dc, label_font, value_font, small_font);
 
     paint_picker(dc, label_font);
     frame_rounded_rect(dc, all, RGB(54, 66, 88), 2);
@@ -2812,7 +3731,12 @@ static void trigger_action(int item) {
             SetFocus(s_game);
         }
     }
-    s_heal_flash_until = now + 400;
+    if (g_items[item].on_action == opt_extras_quick_save_trigger) {
+        s_quick_save_last_status = 1;
+        s_quick_save_feedback_until = 0;
+    } else {
+        s_heal_flash_until = now + 400;
+    }
     InvalidateRect(s_overlay, NULL, FALSE);
 }
 
@@ -3037,10 +3961,24 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
         sync_overlay_to_game();
         opt_time_refresh_now();
         opt_weather_refresh_now();
-        opt_encounter_refresh_ui();
+        if (opt_encounter_refresh_ui())
+            InvalidateRect(s_overlay, NULL, FALSE);
         if (s_heal_flash_until != 0 && GetTickCount() >= s_heal_flash_until) {
             s_heal_flash_until = 0;
             InvalidateRect(s_overlay, NULL, FALSE);
+        }
+        {
+            const LONG save_status = opt_extras_quick_save_status();
+            if (save_status != s_quick_save_last_status) {
+                s_quick_save_last_status = save_status;
+                if (save_status == 2 || save_status < 0)
+                    s_quick_save_feedback_until = GetTickCount() + 1800;
+                InvalidateRect(s_overlay, NULL, FALSE);
+            } else if (s_quick_save_feedback_until &&
+                       GetTickCount() >= s_quick_save_feedback_until) {
+                s_quick_save_feedback_until = 0;
+                InvalidateRect(s_overlay, NULL, FALSE);
+            }
         }
         {
             static int t = 0;
@@ -3106,12 +4044,44 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
         const int tab = modern_tab_at(x, y);
         if (tab >= 0) {
             s_active_tab = (MainTab)tab;
+            s_world_search_active = false;
+            s_world_hover_result = -1;
+            s_world_hover_pokemon_result = -1;
             s_hovered = -1;
             s_hold_key_capture_item = -1;
             s_menu_hotkey_capture = false;
             picker_close();
             InvalidateRect(hw, NULL, FALSE);
             return 0;
+        }
+
+        if (s_active_tab == TAB_WORLD) {
+            if (s_world_search[0] &&
+                ptin(modern_world_search_clear_rect(), x, y)) {
+                s_world_search[0] = '\0';
+                s_world_search_active = true;
+                s_world_scroll = 0;
+                s_world_hover_result = -1;
+                s_world_hover_pokemon_result = -1;
+                SetForegroundWindow(hw);
+                SetFocus(hw);
+                InterlockedExchange(&s_block_game_keyboard, 2);
+                InvalidateRect(hw, NULL, FALSE);
+                return 0;
+            }
+            if (ptin(modern_world_search_rect(), x, y)) {
+                s_world_search_active = true;
+                SetForegroundWindow(hw);
+                SetFocus(hw);
+                InterlockedExchange(&s_block_game_keyboard, 2);
+                InvalidateRect(hw, NULL, FALSE);
+                return 0;
+            }
+            if (s_world_search_active) {
+                s_world_search_active = false;
+                InterlockedExchange(&s_block_game_keyboard, 1);
+                InvalidateRect(hw, NULL, FALSE);
+            }
         }
 
         if (s_active_tab == TAB_PLAYER &&
@@ -3236,6 +4206,23 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_MOUSEMOVE: {
         int x = (short)LOWORD(lp);
         int y = (short)HIWORD(lp);
+
+        TRACKMOUSEEVENT tracking = {sizeof(tracking), TME_LEAVE, hw, 0};
+        TrackMouseEvent(&tracking);
+        s_world_mouse.x = x;
+        s_world_mouse.y = y;
+        const int world_hover = (!s_picker_open &&
+            s_active_tab == TAB_WORLD)
+            ? modern_world_result_from_point(x, y) : -1;
+        const int pokemon_hover = (!s_picker_open &&
+            s_active_tab == TAB_WORLD)
+            ? modern_world_pokemon_result_from_point(x, y) : -1;
+        if (world_hover != s_world_hover_result ||
+            pokemon_hover != s_world_hover_pokemon_result) {
+            s_world_hover_result = world_hover;
+            s_world_hover_pokemon_result = pokemon_hover;
+            InvalidateRect(hw, NULL, FALSE);
+        }
 		
         if (s_picker_open && s_picker_scroll_drag) {
             RECT sr = picker_scrollbar_rect();
@@ -3292,6 +4279,15 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
 
+    case WM_MOUSELEAVE:
+        if (s_world_hover_result >= 0 ||
+            s_world_hover_pokemon_result >= 0) {
+            s_world_hover_result = -1;
+            s_world_hover_pokemon_result = -1;
+            InvalidateRect(hw, NULL, FALSE);
+        }
+        return 0;
+
     case WM_LBUTTONUP:
         if (s_picker_scroll_drag) {
             s_picker_scroll_drag = false;
@@ -3332,6 +4328,16 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             InvalidateRect(hw, NULL, FALSE);
             return 0;
         }
+
+        if (s_active_tab == TAB_WORLD &&
+            ptin(modern_world_card_rect(), pt.x, pt.y)) {
+            s_world_scroll -= delta * 3;
+            s_world_hover_result = -1;
+            s_world_hover_pokemon_result = -1;
+            modern_world_clamp_scroll();
+            InvalidateRect(hw, NULL, FALSE);
+            return 0;
+        }
     
         int i = modern_control_at(pt.x, pt.y);
         if (i == 6) i = 7;
@@ -3346,20 +4352,69 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
     }
 
     case WM_CHAR:
+        if (s_world_search_active && s_active_tab == TAB_WORLD &&
+            wp >= 32 && wp <= 0xFFFF) {
+            if (append_world_search_wchar((wchar_t)wp)) {
+                s_world_scroll = 0;
+                s_world_hover_result = -1;
+                s_world_hover_pokemon_result = -1;
+                InvalidateRect(hw, NULL, FALSE);
+            }
+        }
         return 0;
 
     case WM_KEYDOWN:
+        if (s_world_search_active && s_active_tab == TAB_WORLD) {
+            if (wp == VK_ESCAPE || wp == VK_RETURN) {
+                s_world_search_active = false;
+                InterlockedExchange(&s_block_game_keyboard, 1);
+                InvalidateRect(hw, NULL, FALSE);
+                return 0;
+            }
+            if (wp == VK_BACK) {
+                erase_world_search_codepoint();
+                s_world_scroll = 0;
+                s_world_hover_result = -1;
+                s_world_hover_pokemon_result = -1;
+                InvalidateRect(hw, NULL, FALSE);
+                return 0;
+            }
+            if (wp == VK_DELETE) {
+                s_world_search[0] = '\0';
+                s_world_scroll = 0;
+                s_world_hover_result = -1;
+                s_world_hover_pokemon_result = -1;
+                InvalidateRect(hw, NULL, FALSE);
+                return 0;
+            }
+        }
         switch (wp) {
         case VK_ESCAPE:
             menu_close();
             return 0;
 
         case VK_UP:
+            if (s_active_tab == TAB_WORLD) {
+                --s_world_scroll;
+                s_world_hover_result = -1;
+                s_world_hover_pokemon_result = -1;
+                modern_world_clamp_scroll();
+                InvalidateRect(hw, NULL, FALSE);
+                return 0;
+            }
             s_hovered = modern_navigation_step(s_hovered, -1);
             InvalidateRect(hw, NULL, FALSE);
             return 0;
 
         case VK_DOWN:
+            if (s_active_tab == TAB_WORLD) {
+                ++s_world_scroll;
+                s_world_hover_result = -1;
+                s_world_hover_pokemon_result = -1;
+                modern_world_clamp_scroll();
+                InvalidateRect(hw, NULL, FALSE);
+                return 0;
+            }
             s_hovered = modern_navigation_step(s_hovered, 1);
             InvalidateRect(hw, NULL, FALSE);
             return 0;
@@ -3507,6 +4562,43 @@ static LRESULT CALLBACK KbdHook(int code, WPARAM wp, LPARAM lp) {
         if (!s_open || !s_overlay || !menu_keyboard_should_capture()) {
             InterlockedExchange(&s_block_game_keyboard, 0);
             return CallNextHookEx(s_kbd_hook, code, wp, lp);
+        }
+
+        if (s_world_search_active && s_active_tab == TAB_WORLD &&
+            (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN)) {
+            InterlockedExchange(&s_block_game_keyboard, 2);
+            switch (kb->vkCode) {
+            case VK_SHIFT: case VK_LSHIFT: case VK_RSHIFT:
+            case VK_CONTROL: case VK_LCONTROL: case VK_RCONTROL:
+            case VK_MENU: case VK_LMENU: case VK_RMENU:
+            case VK_CAPITAL: case VK_NUMLOCK: case VK_SCROLL:
+                return CallNextHookEx(s_kbd_hook, code, wp, lp);
+            case VK_ESCAPE: case VK_RETURN: case VK_BACK: case VK_DELETE:
+            case VK_UP: case VK_DOWN: case VK_PRIOR: case VK_NEXT:
+                PostMessageA(s_overlay, WM_KEYDOWN, kb->vkCode, 0);
+                return 1;
+            default:
+                break;
+            }
+
+            BYTE keyboard_state[256] = {};
+            GetKeyboardState(keyboard_state);
+            if (kb->vkCode < ARRAYSIZE(keyboard_state))
+                keyboard_state[kb->vkCode] |= 0x80;
+            WCHAR characters[8] = {};
+            UINT scan = kb->scanCode;
+            if (kb->flags & LLKHF_EXTENDED) scan |= KF_EXTENDED;
+            const int converted = ToUnicodeEx((UINT)kb->vkCode, scan,
+                keyboard_state, characters, ARRAYSIZE(characters), 0,
+                GetKeyboardLayout(0));
+            if (converted > 0) {
+                for (int i = 0; i < converted; ++i) {
+                    if (characters[i] >= 32)
+                        PostMessageW(s_overlay, WM_CHAR,
+                                     (WPARAM)characters[i], 0);
+                }
+            }
+            return 1;
         }
 
         InterlockedExchange(&s_block_game_keyboard,
@@ -3866,6 +4958,10 @@ bool menu_init(HINSTANCE hinst, HWND game_hwnd) {
         movesdb_free();
         return false;
     }
+    // Les miniatures du tableau Monde proviennent directement des PNG du jeu.
+    // Leur chargement reste facultatif : le trainer continue de fonctionner
+    // si GDI+ ou une icone particuliere est indisponible.
+    world_icons_init();
     return true;
 }
 
@@ -3898,5 +4994,6 @@ void menu_start_loop() {
         DestroyIcon(s_logo_icon);
         s_logo_icon = NULL;
     }
+    world_icons_shutdown();
     movesdb_free();
 }

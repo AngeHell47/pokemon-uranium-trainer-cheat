@@ -11,3 +11,6 @@ void opt_extras_unlock_fly_trigger();
 void opt_extras_open_pc_trigger();
 void opt_extras_complete_dex_trigger();
 void opt_extras_fly_anywhere_trigger();
+void opt_extras_quick_save_trigger();
+// 0=inactif, 1=en cours, 2=réussite, -1=échec/refus hors carte.
+LONG opt_extras_quick_save_status();
