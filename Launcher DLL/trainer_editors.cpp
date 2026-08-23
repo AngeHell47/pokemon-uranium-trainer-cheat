@@ -280,6 +280,20 @@ static void draw_button(HDC dc, const RECT& rect, const char* text,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
+static void draw_close_button(HDC dc, const RECT& rect) {
+    fill_rounded_rect(dc, rect, RGB(71, 43, 57), 6);
+    frame_rounded_rect(dc, rect, RGB(181, 83, 110), 6);
+    const int inset = (rect.right - rect.left) < 26 ? 6 : 8;
+    HPEN close_pen = CreatePen(PS_SOLID, 2, RGB(255, 241, 244));
+    HPEN old_pen = (HPEN)SelectObject(dc, close_pen);
+    MoveToEx(dc, rect.left + inset, rect.top + inset, NULL);
+    LineTo(dc, rect.right - inset, rect.bottom - inset);
+    MoveToEx(dc, rect.right - inset, rect.top + inset, NULL);
+    LineTo(dc, rect.left + inset, rect.bottom - inset);
+    SelectObject(dc, old_pen);
+    DeleteObject(close_pen);
+}
+
 static void draw_title(HDC dc, int width, const char* title,
                        RECT* close_button) {
     RECT title_rect = {0, 0, width, EDITOR_TITLE_HEIGHT};
@@ -291,15 +305,8 @@ static void draw_title(HDC dc, int width, const char* title,
     RECT grip = {10, 0, 34, EDITOR_TITLE_HEIGHT};
     draw_text(dc, grip, "•••", RGB(132, 145, 184),
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    *close_button = {width - 34, 6, width - 8, EDITOR_TITLE_HEIGHT - 6};
-    fill_rounded_rect(dc, *close_button, RGB(126, 48, 67), 8);
-    HPEN close_pen = CreatePen(PS_SOLID, 2, RGB(255, 224, 231));
-    HPEN old_pen = (HPEN)SelectObject(dc, close_pen);
-    MoveToEx(dc, close_button->left + 8, close_button->top + 6, NULL);
-    LineTo(dc, close_button->right - 8, close_button->bottom - 6);
-    MoveToEx(dc, close_button->right - 8, close_button->top + 6, NULL);
-    LineTo(dc, close_button->left + 8, close_button->bottom - 6);
-    SelectObject(dc, old_pen); DeleteObject(close_pen);
+    *close_button = {width - 36, 6, width - 8, EDITOR_TITLE_HEIGHT - 6};
+    draw_close_button(dc, *close_button);
 }
 
 static bool same_target(const PokemonTarget& left,
@@ -1343,7 +1350,7 @@ static void draw_pokemon_choice(HDC dc) {
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     s_choice_cancel_rect = {popup.right - 27, popup.top + 3,
                             popup.right - 4, popup.top + 26};
-    draw_button(dc, s_choice_cancel_rect, "X", COLOR_DANGER);
+    draw_close_button(dc, s_choice_cancel_rect);
 
     s_choice_search_rect = {popup.left + 6, popup.top + 31,
                             popup.right - 6, popup.top + 57};

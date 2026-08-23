@@ -63,14 +63,15 @@ static UiLanguage s_ui_language = UI_ENGLISH;
 
 struct Translation { const char* english; const char* french; const char* spanish; };
 static const Translation kTranslations[] = {
-    { "Pause when window is inactive", "Pause si fenêtre inactive", "Pausar con ventana inactiva" },
+    { "No pause when window is inactive", "Pas de pause si fenêtre inactive", "No pausar con ventana inactiva" },
+    { "Keeps the game running when the window is inactive", "Le jeu continue lorsque sa fenêtre est inactive", "El juego sigue en marcha cuando la ventana está inactiva" },
     { "God mode (no damage)", "God mode (aucun dégât)", "Modo dios (sin daño)" },
     { "Infinite PP", "PP infinis", "PP infinitos" }, { "One-hit KO", "KO en un coup", "KO de un golpe" },
     { "Damage multiplier", "Multiplicateur de dégâts", "Multiplicador de daño" }, { "Global speed", "Vitesse globale", "Velocidad global" },
     { "No wild encounters", "Sans rencontres sauvages", "Sin encuentros salvajes" }, { "Force next encounter", "Forcer prochaine rencontre", "Forzar próximo encuentro" },
     { "Pokemon ID", "ID Pokémon", "ID de Pokémon" }, { "Fixed wild level", "Niveau sauvage fixe", "Nivel salvaje fijo" },
-    { "Wild level", "Niveau sauvage", "Nivel salvaje" }, { "Wild shiny (1/N)", "Shiny sauvage (1/N)", "Shiny salvaje (1/N)" },
-    { "Shiny chance (1/N)", "Chance shiny (1/N)", "Probabilidad shiny (1/N)" }, { "Game time", "Heure du jeu", "Hora del juego" },
+    { "Wild level", "Niveau sauvage", "Nivel salvaje" }, { "Wild shiny", "Shiny sauvage", "Shiny salvaje" },
+    { "Game time", "Heure du jeu", "Hora del juego" },
     { "Weather", "Météo", "Clima" }, { "Heal party", "Soigner équipe", "Curar equipo" },
     { "Unlock all Fly locations", "Débloquer toutes les zones de vol", "Desbloquear todos los destinos Vuelo" },
     { "Fly from anywhere", "Voler depuis n'importe où", "Volar desde cualquier lugar" }, { "Open PC here", "Ouvrir le PC ici", "Abrir PC aquí" },
@@ -88,6 +89,8 @@ static const Translation kTranslations[] = {
     { "Sandstorm", "Tempête de sable", "Tormenta de arena" }, { "Sun", "Soleil", "Sol" },
     { "Heavy rain", "Forte pluie", "Lluvia intensa" }, { "Blizzard", "Blizzard", "Ventisca" },
     { "Open", "OUVRIR", "ABRIR" }, { "Confirm", "CONF.", "CONF." },
+    { "Irreversible action", "Action irréversible", "Acción irreversible" },
+    { "This action permanently changes your game progress and cannot be undone.\n\nDo you want to continue?", "Cette action modifie définitivement la progression du jeu et ne peut pas être annulée.\n\nVoulez-vous continuer ?", "Esta acción modifica el progreso del juego de forma permanente y no se puede deshacer.\n\n¿Quieres continuar?" },
     { "PLAYER & SYSTEM", "JOUEUR & SYSTÈME", "JUGADOR Y SISTEMA" },
     { "WILD ENCOUNTERS", "RENCONTRES SAUVAGES", "ENCUENTROS SALVAJES" },
     { "WORLD & UTILITIES", "MONDE & UTILITAIRES", "MUNDO Y UTILIDADES" },
@@ -102,13 +105,21 @@ static const Translation kTranslations[] = {
     { "Settings", "Paramètres", "Ajustes" },
     { "Trainer Tools", "Outils du dresseur", "Herramientas del entrenador" },
     { "Profile Editors", "Éditeurs du profil", "Editores de perfil" },
+    { "Features", "Fonctionnalités", "Funcionalidades" },
+    { "Player & World", "Joueur et monde", "Jugador y mundo" },
+    { "Movement & Profile", "Déplacement et profil", "Movimiento y perfil" },
+    { "Management", "Gestion", "Gestión" },
+    { "Actions", "Actions", "Acciones" }, { "Editors", "Éditeurs", "Editores" },
     { "Battle Boosts", "Avantages de combat", "Ventajas de combate" },
     { "Capture & Items", "Capture et objets", "Captura y objetos" },
+    { "Capture", "Capture", "Captura" },
     { "Encounter Rules", "Règles des rencontres", "Reglas de encuentros" },
     { "Wild Pokémon", "Pokémon sauvages", "Pokémon salvajes" },
     { "Environment", "Environnement", "Entorno" },
     { "World Actions", "Actions dans le monde", "Acciones del mundo" },
     { "Movement", "Déplacement", "Movimiento" },
+    { "Zoom & FPS", "Zoom et FPS", "Zoom y FPS" },
+    { "Minimap", "Minimap", "Minimapa" },
     { "Camera & Minimap", "Caméra et minimap", "Cámara y minimapa" },
     { "Interface", "Interface", "Interfaz" },
     { "Menu Shortcut", "Raccourci du menu", "Atajo del menú" },
@@ -204,14 +215,15 @@ static const int MENU_LEFT_W  = 374;
 static const int MENU_RIGHT_W = 374;
 static const int MENU_GAP     = 8;
 static const int MENU_TOTAL_W = MENU_LEFT_W + MENU_GAP + MENU_RIGHT_W;
-static const int MENU_FIXED_H = 500;
+// Player now uses a 2x2 card grid, while Display stacks Environment below the
+// minimap card. The taller window keeps every card visible without scrolling.
+static const int MENU_FIXED_H = 640;
 static const UINT WM_APP_GAME_ZOOM_WHEEL = WM_APP + 1;
 
 enum MainTab {
     TAB_PLAYER = 0,
     TAB_BATTLE,
     TAB_ENCOUNTERS,
-    TAB_WORLD,
     TAB_DISPLAY,
     TAB_SETTINGS,
     TAB_COUNT
@@ -228,7 +240,7 @@ static MainTab s_active_tab = TAB_PLAYER;
 // ------------------------------------------------------------
 
 MenuItem g_items[] = {
-    { "Pause When Window Is Inactive", ITEM_TYPE_TOGGLE,
+    { "No Pause When Window Is Inactive", ITEM_TYPE_TOGGLE,
       &g_pause_on_inactive, opt_pause_toggle, NULL,0,0,NULL },
 
     { "God Mode (No Damage)", ITEM_TYPE_TOGGLE,
@@ -263,9 +275,9 @@ MenuItem g_items[] = {
       &g_wild_level_enabled, opt_encounter_toggle_level, NULL,0,0,NULL },
     { "Wild Level", ITEM_TYPE_SLIDER,
       NULL,NULL, &g_wild_level,1,100,opt_encounter_set_level },
-    { "Wild Shiny (1/N)", ITEM_TYPE_TOGGLE,
+    { "Wild Shiny", ITEM_TYPE_TOGGLE,
       &g_wild_shiny_enabled, opt_encounter_toggle_shiny, NULL,0,0,NULL },
-    { "Shiny Chance (1/N)", ITEM_TYPE_SLIDER,
+    { "", ITEM_TYPE_SLIDER,
       NULL,NULL, &g_wild_shiny_rate,1,8192,opt_encounter_set_shiny_rate },
 
     { "Game Time", ITEM_TYPE_TIME,
@@ -325,6 +337,15 @@ MenuItem g_items[] = {
       &g_minimap_round,opt_minimap_set_round, NULL,0,0,NULL },
     { "Show FPS", ITEM_TYPE_TOGGLE,
       &g_minimap_show_fps,opt_minimap_toggle_fps, NULL,0,0,NULL },
+
+    // Kept as regular menu entries so they can live alongside the other
+    // player conveniences in their intended order.
+    { "Infinite Items", ITEM_TYPE_TOGGLE,
+      &g_item_lock, opt_itemlock_toggle, NULL,0,0,NULL },
+    { "Instant Egg Hatch", ITEM_TYPE_TOGGLE,
+      &g_egg_hatch_instant, opt_egghatch_toggle, NULL,0,0,NULL },
+    { "Removable HMs", ITEM_TYPE_TOGGLE,
+      &g_hm_forget_enabled, opt_hmforget_toggle, NULL,0,0,NULL },
 	  
 };
 
@@ -339,23 +360,23 @@ struct QuickToggle {
 static QuickToggle s_quick_toggles[] = {
     { "Capture 100%", &g_capture_guaranteed, opt_capture_toggle },
     { "Catch Trainers", &g_capture_trainers, opt_trainer_capture_toggle },
-    { "Infinite Items", &g_item_lock, opt_itemlock_toggle },
-    { "Instant Egg Hatch", &g_egg_hatch_instant, opt_egghatch_toggle },
-    { "Removable HMs", &g_hm_forget_enabled, opt_hmforget_toggle },
 };
 
 static const int QUICK_TOGGLE_COUNT =
     sizeof(s_quick_toggles) / sizeof(s_quick_toggles[0]);
 
-static const int kPlayerLeft[] = {0, 5, 17, 22};
-static const int kPlayerRight[] = {23, 24, 25};
+static const int kBattleQuickToggles[] = {0, 1};
+
+static const int kPlayerFeatures[] = {5, 36, 38, 37, 22};
+static const int kPlayerMovement[] = {6, 27, 28, 29, 30};
+static const int kPlayerActions[] = {17, 18, 19, 21};
+static const int kPlayerEditors[] = {23, 24, 25};
 static const int kBattleLeft[] = {1, 2, 3, 4};
 static const int kEncountersLeft[] = {8, 9, 10};
 static const int kEncountersRight[] = {11, 12, 13, 14};
-static const int kWorldLeft[] = {15, 16};
-static const int kWorldRight[] = {18, 19, 20, 21};
-static const int kDisplayLeft[] = {6, 27, 28, 29, 30};
-static const int kDisplayRight[] = {26, 31, 32, 33, 34, 35};
+static const int kDisplayLeft[] = {26, 35};
+static const int kDisplayRight[] = {31, 32, 33, 34};
+static const int kDisplayEnvironment[] = {15, 16};
 static const int SECTION_H = 20;
 static const int QUICK_TOGGLE_TOP = TITLE_H + SECTION_H;
 static const int QUICK_TOGGLE_INSERT_SLOT = 5;
@@ -523,8 +544,6 @@ static bool  s_slider_in_quick_column = false;
 static int   s_hold_key_capture_item = -1;
 static UINT_PTR s_watch_timer = 0;
 static DWORD s_heal_flash_until = 0;  // GetTickCount() until which to show flash
-static int s_action_confirmation_item = -1;
-static DWORD s_action_confirmation_until = 0;
 
 static RECT close_button_rect() {
     return {MENU_TOTAL_W - 36, 7, MENU_TOTAL_W - 8, TITLE_H - 7};
@@ -559,13 +578,16 @@ static void frame_rounded_rect(HDC dc, const RECT& rect, COLORREF color,
 
 static void paint_close_button(HDC dc) {
     const RECT rect = close_button_rect();
-    fill_rounded_rect(dc, rect, RGB(126, 48, 67), 7);
-    HPEN pen = CreatePen(PS_SOLID, 2, RGB(255, 224, 231));
+    // Use a compact outlined control rather than a large saturated pill. The
+    // smaller, centered glyph stays crisp against every title-bar color.
+    fill_rounded_rect(dc, rect, RGB(71, 43, 57), 6);
+    frame_rounded_rect(dc, rect, RGB(181, 83, 110), 6);
+    HPEN pen = CreatePen(PS_SOLID, 2, RGB(255, 241, 244));
     HPEN old = (HPEN)SelectObject(dc, pen);
-    MoveToEx(dc, rect.left + 7, rect.top + 6, NULL);
-    LineTo(dc, rect.right - 7, rect.bottom - 6);
-    MoveToEx(dc, rect.right - 7, rect.top + 6, NULL);
-    LineTo(dc, rect.left + 7, rect.bottom - 6);
+    MoveToEx(dc, rect.left + 8, rect.top + 8, NULL);
+    LineTo(dc, rect.right - 8, rect.bottom - 8);
+    MoveToEx(dc, rect.right - 8, rect.top + 8, NULL);
+    LineTo(dc, rect.left + 8, rect.bottom - 8);
     SelectObject(dc, old); DeleteObject(pen);
 }
 
@@ -1687,9 +1709,7 @@ static void paint(HWND hw) {
             DeleteObject(bpn);
 
             SetTextColor(mem, COL_TEXT);
-            const bool confirm = s_action_confirmation_item == i &&
-                                 GetTickCount() < s_action_confirmation_until;
-            DrawTextA(mem, confirm ? "CONF." : (flashing ? "OK!" : "GO"), -1,
+            DrawTextA(mem, flashing ? "OK!" : "GO", -1,
                       &brc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
         else if (g_items[i].type == ITEM_TYPE_POKEMON_MANAGER ||
@@ -1820,22 +1840,24 @@ static const int MODERN_CARD_HEADER_H = 40;
 static const int MODERN_MARGIN = 14;
 static const int MODERN_COLUMN_GAP = 12;
 static const int MODERN_SETTINGS_ROW_H = 74;
+static const int MODERN_SLIDER_H = 48;
+static const int MODERN_MANAGER_H = 48;
+static const int MODERN_MAX_CARD_COUNT = 4;
 
 static const char* modern_tab_title(MainTab tab) {
     static const char* titles[TAB_COUNT] = {
-        "Player", "Battle", "Encounters", "World", "Display", "Settings"
+        "Player", "Battle", "Encounters", "Display", "Settings"
     };
     return titles[(int)tab];
 }
 
 static const char* modern_group_title(MainTab tab, int column) {
-    static const char* titles[TAB_COUNT][2] = {
-        {"Trainer Tools", "Profile Editors"},
-        {"Battle Boosts", "Capture & Items"},
-        {"Encounter Rules", "Wild Pokémon"},
-        {"Environment", "World Actions"},
-        {"Movement", "Camera & Minimap"},
-        {"Interface", ""}
+    static const char* titles[TAB_COUNT][MODERN_MAX_CARD_COUNT] = {
+        {"Features", "Movement", "Actions", "Editors"},
+        {"Battle Boosts", "Capture", "", ""},
+        {"Encounter Rules", "Wild Pokémon", "", ""},
+        {"Zoom & FPS", "Minimap", "Environment", ""},
+        {"Interface", "", "", ""}
     };
     return titles[(int)tab][column];
 }
@@ -1845,33 +1867,76 @@ static void modern_tab_items(MainTab tab, int column,
     *items = NULL;
     *count = 0;
     if (tab == TAB_PLAYER && column == 0) {
-        *items = kPlayerLeft; *count = ARRAYSIZE(kPlayerLeft);
+        *items = kPlayerFeatures; *count = ARRAYSIZE(kPlayerFeatures);
     } else if (tab == TAB_PLAYER && column == 1) {
-        *items = kPlayerRight; *count = ARRAYSIZE(kPlayerRight);
+        *items = kPlayerMovement; *count = ARRAYSIZE(kPlayerMovement);
+    } else if (tab == TAB_PLAYER && column == 2) {
+        *items = kPlayerActions; *count = ARRAYSIZE(kPlayerActions);
+    } else if (tab == TAB_PLAYER && column == 3) {
+        *items = kPlayerEditors; *count = ARRAYSIZE(kPlayerEditors);
     } else if (tab == TAB_BATTLE && column == 0) {
         *items = kBattleLeft; *count = ARRAYSIZE(kBattleLeft);
     } else if (tab == TAB_ENCOUNTERS && column == 0) {
         *items = kEncountersLeft; *count = ARRAYSIZE(kEncountersLeft);
     } else if (tab == TAB_ENCOUNTERS && column == 1) {
         *items = kEncountersRight; *count = ARRAYSIZE(kEncountersRight);
-    } else if (tab == TAB_WORLD && column == 0) {
-        *items = kWorldLeft; *count = ARRAYSIZE(kWorldLeft);
-    } else if (tab == TAB_WORLD && column == 1) {
-        *items = kWorldRight; *count = ARRAYSIZE(kWorldRight);
     } else if (tab == TAB_DISPLAY && column == 0) {
         *items = kDisplayLeft; *count = ARRAYSIZE(kDisplayLeft);
     } else if (tab == TAB_DISPLAY && column == 1) {
         *items = kDisplayRight; *count = ARRAYSIZE(kDisplayRight);
+    } else if (tab == TAB_DISPLAY && column == 2) {
+        *items = kDisplayEnvironment; *count = ARRAYSIZE(kDisplayEnvironment);
     }
+}
+
+static void modern_quick_toggles(MainTab tab, int column,
+                                 const int** toggles, int* count) {
+    *toggles = NULL;
+    *count = 0;
+    if (tab == TAB_BATTLE && column == 1) {
+        *toggles = kBattleQuickToggles;
+        *count = ARRAYSIZE(kBattleQuickToggles);
+    }
+}
+
+static int modern_quick_toggle_index(int visible_index) {
+    const int* toggles = NULL;
+    int count = 0;
+    for (int column = 0; column < MODERN_MAX_CARD_COUNT; ++column) {
+        modern_quick_toggles(s_active_tab, column, &toggles, &count);
+        if (visible_index >= 0 && visible_index < count) return toggles[visible_index];
+    }
+    return -1;
+}
+
+static int modern_quick_column() {
+    return 1;
+}
+
+static int modern_card_count(MainTab tab) {
+    if (tab == TAB_PLAYER) return 4;
+    if (tab == TAB_DISPLAY) return 3;
+    if (tab == TAB_SETTINGS) return 1;
+    return 2;
+}
+
+static bool modern_column_has_content(MainTab tab, int column) {
+    const int* items = NULL;
+    const int* toggles = NULL;
+    int item_count = 0;
+    int toggle_count = 0;
+    modern_tab_items(tab, column, &items, &item_count);
+    modern_quick_toggles(tab, column, &toggles, &toggle_count);
+    return item_count > 0 || toggle_count > 0;
 }
 
 static int modern_item_height(int item) {
     if (item == 6 || g_items[item].type == ITEM_TYPE_SLIDER)
-        return SLIDER_H;
+        return MODERN_SLIDER_H;
     if (g_items[item].type == ITEM_TYPE_POKEMON_MANAGER ||
         g_items[item].type == ITEM_TYPE_INVENTORY_MANAGER ||
         g_items[item].type == ITEM_TYPE_TRAINER_MANAGER)
-        return 54;
+        return MODERN_MANAGER_H;
     if (g_items[item].type == ITEM_TYPE_ACTION)
         return 42;
     return ITEM_H;
@@ -1893,32 +1958,44 @@ static int modern_tab_at(int x, int y) {
 }
 
 static RECT modern_card_rect(int column) {
+    if (column < 0 || column >= modern_card_count(s_active_tab))
+        return {0, 0, 0, 0};
     const int normal_width = (MENU_TOTAL_W - MODERN_MARGIN * 2 -
                               MODERN_COLUMN_GAP) / 2;
     const int width = s_active_tab == TAB_SETTINGS
         ? MENU_TOTAL_W - MODERN_MARGIN * 2 : normal_width;
-    const int left = MODERN_MARGIN + column * (width + MODERN_COLUMN_GAP);
-    const int top = TITLE_H + MODERN_TAB_H + MODERN_PAGE_HEADER_H;
+    int visual_column = column;
+    if (s_active_tab == TAB_PLAYER && column >= 2)
+        visual_column = column - 2;
+    else if (s_active_tab == TAB_DISPLAY && column == 2)
+        visual_column = 1;
+    const int left = MODERN_MARGIN + visual_column * (width + MODERN_COLUMN_GAP);
+    int top = TITLE_H + MODERN_TAB_H + MODERN_PAGE_HEADER_H;
     if (s_active_tab == TAB_SETTINGS) {
-        if (column != 0) return {0, 0, 0, 0};
         return {left, top, left + width,
-                top + MODERN_CARD_HEADER_H + MODERN_SETTINGS_ROW_H * 4 + 10};
+                top + MODERN_CARD_HEADER_H + MODERN_SETTINGS_ROW_H * 5 + 10};
     }
+    if (s_active_tab == TAB_PLAYER && column >= 2)
+        top = modern_card_rect(column - 2).bottom + MODERN_COLUMN_GAP;
+    else if (s_active_tab == TAB_DISPLAY && column == 2)
+        top = modern_card_rect(1).bottom + MODERN_COLUMN_GAP;
     int content_height = 0;
     const int* items = NULL;
     int count = 0;
     modern_tab_items(s_active_tab, column, &items, &count);
     for (int i = 0; i < count; ++i)
         content_height += modern_item_height(items[i]);
-    if (s_active_tab == TAB_BATTLE && column == 1)
-        content_height = QUICK_TOGGLE_COUNT * ITEM_H;
+    const int* toggles = NULL;
+    int toggle_count = 0;
+    modern_quick_toggles(s_active_tab, column, &toggles, &toggle_count);
+    content_height += toggle_count * ITEM_H;
     return {left, top, left + width,
             top + MODERN_CARD_HEADER_H + content_height + 10};
 }
 
 static RECT modern_speed_reset_rect() {
-    if (s_active_tab != TAB_DISPLAY) return {0, 0, 0, 0};
-    RECT card = modern_card_rect(0);
+    if (s_active_tab != TAB_PLAYER) return {0, 0, 0, 0};
+    RECT card = modern_card_rect(1);
     return {card.right - 100, card.top + 8,
             card.right - 12, card.top + MODERN_CARD_HEADER_H - 8};
 }
@@ -1945,7 +2022,7 @@ static RECT modern_settings_default_rect() {
 }
 
 static RECT modern_settings_unload_rect() {
-    RECT row = modern_settings_row_rect(3);
+    RECT row = modern_settings_row_rect(4);
     return {row.right - 166, row.top + 17, row.right, row.bottom - 17};
 }
 
@@ -1955,7 +2032,7 @@ static RECT modern_settings_toggle_rect(int row_index) {
 }
 
 static RECT modern_item_rect(int item) {
-    for (int column = 0; column < 2; ++column) {
+    for (int column = 0; column < modern_card_count(s_active_tab); ++column) {
         const int* items = NULL;
         int count = 0;
         modern_tab_items(s_active_tab, column, &items, &count);
@@ -1972,11 +2049,20 @@ static RECT modern_item_rect(int item) {
 }
 
 static RECT modern_quick_rect(int quick_index) {
-    if (s_active_tab != TAB_BATTLE || quick_index < 0 ||
-        quick_index >= QUICK_TOGGLE_COUNT)
+    const int column = modern_quick_column();
+    const int* toggles = NULL;
+    int count = 0;
+    modern_quick_toggles(s_active_tab, column, &toggles, &count);
+    if (quick_index < 0 || quick_index >= count)
         return {0, 0, 0, 0};
-    RECT card = modern_card_rect(1);
-    const int top = card.top + MODERN_CARD_HEADER_H + quick_index * ITEM_H;
+    RECT card = modern_card_rect(column);
+    const int* items = NULL;
+    int item_count = 0;
+    int top = card.top + MODERN_CARD_HEADER_H;
+    modern_tab_items(s_active_tab, column, &items, &item_count);
+    for (int i = 0; i < item_count; ++i)
+        top += modern_item_height(items[i]);
+    top += quick_index * ITEM_H;
     return {card.left + 8, top, card.right - 8, top + ITEM_H};
 }
 
@@ -1987,16 +2073,17 @@ static RECT modern_control_rect(int control) {
 }
 
 static int modern_control_at(int x, int y) {
-    for (int column = 0; column < 2; ++column) {
+    for (int column = 0; column < modern_card_count(s_active_tab); ++column) {
         const int* items = NULL;
         int count = 0;
         modern_tab_items(s_active_tab, column, &items, &count);
         for (int i = 0; i < count; ++i) {
             if (ptin(modern_item_rect(items[i]), x, y)) return items[i];
         }
-    }
-    if (s_active_tab == TAB_BATTLE) {
-        for (int i = 0; i < QUICK_TOGGLE_COUNT; ++i) {
+        const int* toggles = NULL;
+        int toggle_count = 0;
+        modern_quick_toggles(s_active_tab, column, &toggles, &toggle_count);
+        for (int i = 0; i < toggle_count; ++i) {
             if (ptin(modern_quick_rect(i), x, y)) return ITEM_COUNT + i;
         }
     }
@@ -2041,15 +2128,16 @@ static int modern_slider_val_from_x(int item, int x) {
 static int modern_navigation_step(int current, int direction) {
     int controls[ITEM_COUNT + QUICK_TOGGLE_COUNT] = {};
     int count = 0;
-    for (int column = 0; column < 2; ++column) {
+    for (int column = 0; column < modern_card_count(s_active_tab); ++column) {
         const int* items = NULL;
         int item_count = 0;
         modern_tab_items(s_active_tab, column, &items, &item_count);
         for (int i = 0; i < item_count; ++i) controls[count++] = items[i];
-        if (s_active_tab == TAB_BATTLE && column == 1) {
-            for (int i = 0; i < QUICK_TOGGLE_COUNT; ++i)
-                controls[count++] = ITEM_COUNT + i;
-        }
+        const int* toggles = NULL;
+        int toggle_count = 0;
+        modern_quick_toggles(s_active_tab, column, &toggles, &toggle_count);
+        for (int i = 0; i < toggle_count; ++i)
+            controls[count++] = ITEM_COUNT + i;
     }
     if (count == 0) return -1;
     int position = direction > 0 ? -1 : 0;
@@ -2150,7 +2238,8 @@ static void modern_draw_control(HDC dc, int control, const RECT& row,
         fill_rounded_rect(dc, row, COL_HOVER, 9);
 
     if (control >= ITEM_COUNT) {
-        const int quick = control - ITEM_COUNT;
+        const int quick = modern_quick_toggle_index(control - ITEM_COUNT);
+        if (quick < 0 || quick >= QUICK_TOGGLE_COUNT) return;
         RECT label = {row.left + 10, row.top, row.right - 106, row.bottom};
         SelectObject(dc, label_font); SetTextColor(dc, COL_TEXT);
         DrawTextA(dc, trainer_ui_text(s_quick_toggles[quick].label, NULL),
@@ -2245,21 +2334,18 @@ static void modern_draw_control(HDC dc, int control, const RECT& row,
     }
 
     if (item.type == ITEM_TYPE_ACTION) {
-        RECT action = {row.right - 74, row.top + 7,
-                       row.right - 10, row.bottom - 7};
-        label.right = action.left - 8;
+        // Keep enough room for the longer Spanish Fly-unlock label.
+        RECT action = {row.right - 60, row.top + 7,
+                       row.right - 8, row.bottom - 7};
+        label.right = action.left - 4;
         DrawTextA(dc, trainer_ui_text(item.label, NULL), -1, &label,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        const bool confirm = s_action_confirmation_item == control &&
-                             GetTickCount() < s_action_confirmation_until;
         const bool flash = s_heal_flash_until &&
                            GetTickCount() < s_heal_flash_until;
         fill_rounded_rect(dc, action,
-            confirm ? RGB(186, 126, 48) :
-            (flash ? COL_ON : RGB(65, 112, 218)), 8);
+            flash ? COL_ON : RGB(65, 112, 218), 8);
         SelectObject(dc, small_font); SetTextColor(dc, COL_TEXT);
-        DrawTextA(dc, confirm ? trainer_ui_text("Confirm", NULL) :
-                  (flash ? "OK" : "GO"), -1, &action,
+        DrawTextA(dc, flash ? "OK" : "GO", -1, &action,
                   DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         return;
     }
@@ -2326,7 +2412,29 @@ static void modern_draw_settings(HDC dc, HFONT label_font,
     DrawTextA(dc, trainer_ui_text("Default", NULL), -1, &default_button,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
-    const int toggle_rows[] = {1, 2};
+    RECT pause_row = modern_settings_row_rect(1);
+    RECT pause_button = modern_settings_toggle_rect(1);
+    RECT pause_label = {pause_row.left + 10, pause_row.top + 8,
+                        pause_button.left - 16, pause_row.top + 34};
+    SelectObject(dc, label_font); SetTextColor(dc, COL_TEXT);
+    DrawTextA(dc, trainer_ui_text(g_items[0].label, NULL), -1, &pause_label,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    RECT pause_description = {pause_row.left + 10, pause_row.top + 33,
+                              pause_button.left - 16, pause_row.bottom - 7};
+    SelectObject(dc, small_font); SetTextColor(dc, COL_DIMTEXT);
+    DrawTextA(dc,
+              trainer_ui_text("Keeps the game running when the window is inactive", NULL),
+              -1, &pause_description, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
+              DT_END_ELLIPSIS);
+    fill_rounded_rect(dc, pause_button,
+        g_pause_on_inactive ? RGB(40, 111, 83) : RGB(51, 65, 93), 9);
+    frame_rounded_rect(dc, pause_button,
+        g_pause_on_inactive ? RGB(72, 185, 130) : RGB(73, 89, 121), 9);
+    SetTextColor(dc, g_pause_on_inactive ? RGB(222, 255, 238) : RGB(220, 226, 240));
+    DrawTextA(dc, trainer_ui_text(g_pause_on_inactive ? "On" : "Off", NULL), -1,
+              &pause_button, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+    const int toggle_rows[] = {2, 3};
     const char* toggle_labels[] = {"Start trainer with game", "Fast boot"};
     const char* toggle_descriptions[] = {
         "Installs the required version.dll next to Uranium.exe",
@@ -2360,7 +2468,7 @@ static void modern_draw_settings(HDC dc, HFONT label_font,
                   &toggle_button, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 
-    RECT unload_row = modern_settings_row_rect(3);
+    RECT unload_row = modern_settings_row_rect(4);
     RECT unload_button = modern_settings_unload_rect();
     RECT unload_label = {unload_row.left + 10, unload_row.top + 8,
                          unload_button.left - 16, unload_row.bottom - 8};
@@ -2442,8 +2550,9 @@ static void paint_modern(HWND window) {
     DrawTextA(dc, trainer_ui_text(modern_tab_title(s_active_tab), NULL),
               -1, &page_title, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-    for (int column = 0; column < 2; ++column) {
-        if (s_active_tab == TAB_SETTINGS && column == 1) continue;
+    for (int column = 0; column < modern_card_count(s_active_tab); ++column) {
+        if (!modern_column_has_content(s_active_tab, column) &&
+            !(s_active_tab == TAB_SETTINGS && column == 0)) continue;
         RECT card = modern_card_rect(column);
         fill_rounded_rect(dc, card, RGB(18, 25, 39), 13);
         frame_rounded_rect(dc, card, RGB(43, 55, 75), 13);
@@ -2452,7 +2561,7 @@ static void paint_modern(HWND window) {
         fill_rounded_rect(dc, accent, column == 0 ? COL_SLIDER : COL_ON, 4);
         RECT group_title = {accent.right + 8, card.top,
                             card.right - 12, card.top + MODERN_CARD_HEADER_H};
-        if (s_active_tab == TAB_DISPLAY && column == 0)
+        if (s_active_tab == TAB_PLAYER && column == 1)
             group_title.right = modern_speed_reset_rect().left - 8;
         SelectObject(dc, tab_font); SetTextColor(dc, RGB(207, 214, 230));
         DrawTextA(dc, trainer_ui_text(modern_group_title(s_active_tab, column), NULL),
@@ -2467,13 +2576,14 @@ static void paint_modern(HWND window) {
             modern_draw_control(dc, item, modern_item_rect(item),
                                 label_font, value_font, small_font);
         }
-        if (s_active_tab == TAB_BATTLE && column == 1) {
-            for (int i = 0; i < QUICK_TOGGLE_COUNT; ++i) {
+        const int* toggles = NULL;
+        int toggle_count = 0;
+        modern_quick_toggles(s_active_tab, column, &toggles, &toggle_count);
+        for (int i = 0; i < toggle_count; ++i) {
                 modern_draw_control(dc, ITEM_COUNT + i,
                     modern_quick_rect(i), label_font, value_font, small_font);
-            }
         }
-        if (s_active_tab == TAB_DISPLAY && column == 0)
+        if (s_active_tab == TAB_PLAYER && column == 1)
             modern_draw_speed_reset(dc, small_font);
         if (s_active_tab == TAB_SETTINGS && column == 0)
             modern_draw_settings(dc, label_font, small_font);
@@ -2621,19 +2731,38 @@ static bool action_requires_confirmation(int item) {
             g_items[item].on_action == opt_extras_complete_dex_trigger);
 }
 
+static void utf8_to_wide(const char* source, wchar_t* destination,
+                         int destination_count) {
+    if (!destination || destination_count <= 0) return;
+    destination[0] = L'\0';
+    if (!source) return;
+    int converted = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+        source, -1, destination, destination_count);
+    if (converted <= 0) {
+        MultiByteToWideChar(CP_ACP, 0, source, -1,
+            destination, destination_count);
+    }
+    destination[destination_count - 1] = L'\0';
+}
+
+static bool confirm_irreversible_action() {
+    wchar_t title[96] = {};
+    wchar_t message[512] = {};
+    utf8_to_wide(trainer_ui_text("Irreversible action", NULL), title,
+                 ARRAYSIZE(title));
+    utf8_to_wide(trainer_ui_text(
+        "This action permanently changes your game progress and cannot be undone.\n\nDo you want to continue?",
+        NULL), message, ARRAYSIZE(message));
+    return MessageBoxW(s_overlay, message, title,
+        MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_SETFOREGROUND) == IDYES;
+}
+
 static void trigger_action(int item) {
     if (item < 0 || item >= ITEM_COUNT ||
         g_items[item].type != ITEM_TYPE_ACTION || !g_items[item].on_action) return;
-    const DWORD now = GetTickCount();
-    if (action_requires_confirmation(item) &&
-        (s_action_confirmation_item != item || now >= s_action_confirmation_until)) {
-        s_action_confirmation_item = item;
-        s_action_confirmation_until = now + 4000;
-        InvalidateRect(s_overlay, NULL, FALSE);
+    if (action_requires_confirmation(item) && !confirm_irreversible_action())
         return;
-    }
-    s_action_confirmation_item = -1;
-    s_action_confirmation_until = 0;
+    const DWORD now = GetTickCount();
     g_items[item].on_action();
     if (g_items[item].on_action == opt_extras_open_pc_trigger) {
         menu_close();
@@ -2867,12 +2996,6 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             s_heal_flash_until = 0;
             InvalidateRect(s_overlay, NULL, FALSE);
         }
-        if (s_action_confirmation_item >= 0 &&
-            GetTickCount() >= s_action_confirmation_until) {
-            s_action_confirmation_item = -1;
-            s_action_confirmation_until = 0;
-            InvalidateRect(s_overlay, NULL, FALSE);
-        }
         {
             static int t = 0;
             if (++t >= 10) {
@@ -2944,7 +3067,7 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
 
-        if (s_active_tab == TAB_DISPLAY &&
+        if (s_active_tab == TAB_PLAYER &&
             ptin(modern_speed_reset_rect(), x, y)) {
             opt_speed_reset_defaults();
             InvalidateRect(hw, NULL, FALSE);
@@ -2967,6 +3090,10 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             if (ptin(modern_settings_toggle_rect(1), x, y)) {
+                toggle_item(0);
+                return 0;
+            }
+            if (ptin(modern_settings_toggle_rect(2), x, y)) {
                 const bool requested = !s_auto_start_trainer;
                 // Do not report the option as enabled if version.dll could not
                 // be installed (for example, another DLL already occupies it).
@@ -2979,7 +3106,7 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
                 InvalidateRect(hw, NULL, FALSE);
                 return 0;
             }
-            if (ptin(modern_settings_toggle_rect(2), x, y)) {
+            if (ptin(modern_settings_toggle_rect(3), x, y)) {
                 if (!s_auto_start_trainer) return 0;
                 s_fast_boot = !s_fast_boot;
                 opt_startup_set_fast_boot(s_fast_boot);
@@ -2999,7 +3126,7 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
         }
         if (control >= ITEM_COUNT) {
             s_hold_key_capture_item = -1;
-            toggle_quick_item(control - ITEM_COUNT);
+            toggle_quick_item(modern_quick_toggle_index(control - ITEM_COUNT));
             return 0;
         }
 
@@ -3213,7 +3340,7 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
         case VK_RETURN:
         case VK_SPACE:
             if (s_hovered >= ITEM_COUNT) {
-                toggle_quick_item(s_hovered - ITEM_COUNT);
+                toggle_quick_item(modern_quick_toggle_index(s_hovered - ITEM_COUNT));
                 return 0;
             }
             if (s_hovered >= 0 && g_items[s_hovered].type == ITEM_TYPE_TIME) {
@@ -3593,7 +3720,7 @@ void menu_open() {
 
     InvalidateRect(s_overlay, NULL, TRUE);
     s_open = true;
-    s_hovered = 0;
+    s_hovered = kPlayerFeatures[0];
     InterlockedExchange(&s_block_game_keyboard,
                         menu_keyboard_should_capture()
                             ? (menu_has_keyboard_editor() ? 2 : 1)
