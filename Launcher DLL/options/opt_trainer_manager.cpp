@@ -14,7 +14,7 @@ static TrainerProfile s_shared_profile = {};
 static TrainerProfile s_profile = {};
 static TrainerProfile s_requested = {};
 static LONG s_revision = 0;
-static char s_status[128] = "En attente du dresseur...";
+static char s_status[128] = "Waiting for trainer data...";
 static volatile LONG s_operation = OP_NONE;
 static volatile LONG s_active = 0;
 
@@ -76,9 +76,9 @@ static void read_profile_on_game_thread() {
         s_profile = s_shared_profile;
         LeaveCriticalSection(&s_lock);
         InterlockedIncrement(&s_revision);
-        set_status("Profil charge.");
+        set_status("Profile loaded.");
     } else {
-        set_status("Lecture du profil indisponible.");
+        set_status("Trainer profile is unavailable.");
     }
 }
 
@@ -114,10 +114,10 @@ static void write_profile_on_game_thread() {
         "end\n",
         name_hex, requested.gender, requested.badge_mask, requested.play_seconds);
     if (rgss_safe_eval(code) == 0) {
-        set_status("Modifications appliquees. Sauvegardez le jeu pour les conserver.");
+        set_status("Changes applied. Save the game to keep them.");
         read_profile_on_game_thread();
     } else {
-        set_status("Echec de l'application du profil.");
+        set_status("Unable to apply the trainer profile.");
     }
 }
 

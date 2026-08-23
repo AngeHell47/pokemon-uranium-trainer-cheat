@@ -1,3 +1,3 @@
-Le launcher DLL c'est une DLL qui se lance automatiquement quand on lance le launcher officiel et qui patch directement.
+The DLL launcher starts automatically with the official launcher and applies its patch directly.
 
-Le lancher exe c'est un executable qui lance uranium.exe (officiel) et qui patch l'executable.
+The EXE launcher starts the official Uranium.exe and injects the patch into the process.

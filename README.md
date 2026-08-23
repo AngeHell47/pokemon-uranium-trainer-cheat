@@ -1,88 +1,58 @@
 # Pokémon Uranium External Trainer
 
-Trainer Windows x86 externe pour la version RGSS1 de Pokémon Uranium.
+A standalone 32-bit Windows trainer for the RGSS1 version of Pokémon Uranium.
+It lets you launch the game directly or attach to an existing game process,
+then injects its embedded overlay safely into the game's RGSS thread. No
+`version.dll` needs to be copied next to the game.
 
-L'application permet de sélectionner le processus du jeu puis charge un
-payload intégré qui affiche l'overlay et pilote les fonctions RGSS dans le bon
-thread. Aucun `version.dll` ne doit être copié à côté du jeu.
+## Using the trainer
 
-## Utilisation
+1. Run `UraniumTrainer.exe`.
+2. Click **Launch game + load save directly** to skip the intro and open the default save.
+3. To attach to a game already running, select the process labelled `[Game]` and click **Connect to selected game**.
+4. Press `Insert` to hide or show the overlay, or click the close button in its title bar.
 
-1. Lancer `UraniumTrainer.exe`.
-2. Cliquer sur **Lancer le jeu + chargement direct** pour supprimer l'intro et
-   arriver directement sur la sauvegarde par défaut.
-3. Pour un jeu déjà ouvert normalement, sélectionner le processus marqué
-   `[Jeu]` puis cliquer sur **Connecter au jeu sélectionné**.
-4. Utiliser `Inser` pour masquer ou réafficher l'overlay.
+The launcher closes after a successful injection and initialized overlay. It stays open and displays the error if anything fails. Direct launch is temporary: it does not save a startup preference or change normal launches of `Uranium.exe`.
 
-Une fois l'injection confirmée et l'overlay initialisé, le launcher se ferme
-automatiquement. En cas d'échec, il reste ouvert et affiche le message d'erreur.
+Run the trainer at the same privilege level as the game. If the game runs as administrator, run the trainer as administrator too.
 
-Le lancement direct est éphémère : il n'écrit aucun réglage persistant et ne
-change pas le comportement d'un démarrage normal de `Uranium.exe`.
+## Overlay and language
 
-Le jeu et le trainer doivent fonctionner au même niveau de privilèges. Si le
-jeu est administrateur, le trainer doit l'être également.
+The trainer opens in English by default. Use the United States, French or Spanish flag in the top-right of the **Uranium Trainer** title bar to switch the overlay language. The selected language is saved in `trainer.ini`.
 
-### Portabilité et modifications du jeu
+The compact main window is organized into six tabs: **Player**, **Battle**, **Encounters**, **World**, **Display** and **Settings**. Each page uses short cards instead of one continuous feature list. The **Settings** tab lets you replace the global `Insert` show/hide shortcut, restore its default value, or use **Stop & Unload** to cleanly detach the trainer from the current game process. The overlay and its Pokémon, inventory and trainer editors remain visible and interactive when Uranium loses focus or is minimized. After its initial placement, the overlay keeps the position chosen by the user.
 
-Le trainer n'altère ni `Data/Scripts.rxdata`, ni l'archive du jeu. Les gardes
-Ruby du God mode, des PP infinis et des CS effaçables sont installés uniquement
-en mémoire à chaque injection, puis disparaissent avec le processus du jeu.
-Python n'est requis ni pour utiliser le trainer, ni pour préparer une nouvelle
-installation : `UraniumTrainer.exe` contient déjà tout le payload nécessaire.
+The **Global speed** control keeps its x1–x5 slider; the separate duplicate multiplier row has been removed. The **Pokemon ID** control displays the selected value followed by the corresponding Pokémon name; the name is read from the game data.
 
-## Compilation
+## Features
 
-Prérequis : Visual Studio 2022 avec les outils Desktop C++ x86.
+- Direct game launch and save loading without simulated input.
+- God mode that preserves real HP, infinite PP, one-hit KOs, damage multiplier, guaranteed catches, trainer catches, instant egg hatching, removable HMs and infinite items.
+- Configurable noclip, wild-encounter controls, wild level and shiny chance.
+- Forced time and weather that can be disabled without altering saved state.
+- Global speed x1–x5, plus configurable walking, running, surfing and cycling speeds.
+- One-click restoration of the default walking, running, surfing and cycling speeds.
+- Party and PC Pokémon editor, full inventory editor and trainer-profile editor.
+- Money, map zoom-out, mouse-wheel zoom and a configurable minimap.
 
-Lancer :
+Overlay clicks are intercepted before they reach the game.
+
+## Building
+
+Requirements: Visual Studio 2022 with the Desktop C++ x86 tools.
 
 ```bat
 cd "Trainer externe"
 build.bat
 ```
 
-Le binaire généré se trouve dans `Trainer externe/UraniumTrainer.exe`.
+The resulting executable is `Trainer externe/UraniumTrainer.exe`. It embeds the payload and the move database, so neither `moves.txt` nor an auxiliary DLL is required when using it.
 
-L'EXE contient également la base des attaques nécessaire à l'éditeur Pokémon ;
-aucun fichier `moves.txt` ni DLL auxiliaire n'est requis à l'utilisation.
+## Project layout
 
-## Fonctions actuelles
+- `Trainer externe/` — process picker, injector and packaging.
+- `Launcher DLL/` — injected payload, overlay and trainer options.
+- `tools/` — God mode patch generator without game data.
+- `docs/` — [architecture](docs/ARCHITECTURE.md), stability audit, roadmap and [Ruby hook notes](docs/GAME_SCRIPT_HOOKS.md).
 
-- Démarrage direct sur la sauvegarde, sans intro ni simulation de saisie.
-- God mode à HP réels et PP infinis pour les Pokémon du joueur.
-- Capture garantie des Pokémon sauvages capturables, quelle que soit la Ball.
-- Éclosion des œufs au prochain pas, avec animation et données natives.
-- CS effaçables dans l'écran natif de remplacement d'une attaque.
-- Météo et heure forcées, réversibles sans modifier leur état sauvegardé.
-- Noclip pendant le maintien d'une touche configurable (`Ctrl` par défaut), ou
-  actif en permanence si aucune touche n'est assignée, blocage des rencontres,
-  soin de l'équipe et vitesses de déplacement.
-- Vitesse globale x1 à x5, active pendant le maintien d'une touche configurable
-  ou en permanence sans touche (comportement par défaut). Les ticks RGSS sont accélérés tandis que le
-  rendu adapte sa cadence jusqu'à 120 FPS au maximum, sans falsifier l'horloge
-  Windows. Ce plafond affiche davantage de positions intermédiaires pendant les
-  déplacements sans multiplier inutilement le rendu.
-- Argent et deux fenêtres autonomes : inventaire complet par poche/catalogue,
-  plus équipe et boîtes avec création, suppression et édition détaillée des
-  Pokémon (PV, IV/EV, nature, objet tenu, attaques, PP et provenance).
-- Dézoom logique de la carte en conservant la taille physique de la fenêtre.
-- Zoom avant/arrière directement en jeu avec la molette de la souris.
-- Minimap configurable sur la carte, avec pointeur central du joueur, taille,
-  niveau de détail et forme carrée ou ronde.
-
-Les clics reçus par l'overlay sont bloqués avant d'atteindre le jeu. Les limites
-de validation et les essais restant à effectuer en situation réelle sont
-détaillés dans [l'audit de stabilité](docs/STABILITY_AUDIT.md).
-
-## Organisation
-
-- `Trainer externe/` : sélecteur de processus, injection et empaquetage.
-- `Launcher DLL/` : payload, overlay et implémentation des options.
-- `tools/` : générateur du correctif God mode, sans données du jeu.
-- `docs/` : architecture, audit de stabilité, feuille de route et
-  [points d'accroche Ruby](docs/GAME_SCRIPT_HOOKS.md) pour les futures options.
-
-Ce dépôt ne contient ni le jeu, ni ses données propriétaires, ni les artefacts
-de compilation.
+This repository does not include the game, proprietary game data or build artifacts.

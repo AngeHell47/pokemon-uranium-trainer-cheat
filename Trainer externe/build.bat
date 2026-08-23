@@ -66,5 +66,5 @@ cl /nologo /O2 /GS /MT /EHsc /std:c++17 /utf-8 trainer_external.cpp trainer_exte
 if errorlevel 1 exit /b 1
 
 echo.
-echo Build termine : %CD%\UraniumTrainer.exe
+echo Build complete: %CD%\UraniumTrainer.exe
 endlocal

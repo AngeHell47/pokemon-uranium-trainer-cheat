@@ -48,7 +48,7 @@ std::wstring win32_error(DWORD code) {
     const DWORD length = FormatMessageW(flags, nullptr, code, 0,
         reinterpret_cast<wchar_t*>(&message), 0, nullptr);
 
-    std::wstring result = length && message ? message : L"erreur Windows inconnue";
+    std::wstring result = length && message ? message : L"unknown Windows error";
     if (message) LocalFree(message);
     while (!result.empty() && (result.back() == L'\r' || result.back() == L'\n' || result.back() == L' ')) {
         result.pop_back();
@@ -247,7 +247,7 @@ void refresh_processes() {
         const ProcessEntry& entry = g_processes[i];
         wchar_t label[320] = {};
         swprintf_s(label, L"%s%s  (PID %lu)",
-            entry.looks_like_game ? L"[Jeu]  " : L"",
+            entry.looks_like_game ? L"[Game]  " : L"",
             entry.name.c_str(), entry.pid);
         SendMessageW(g_process_combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
         if (entry.pid == previous_pid) selected = static_cast<int>(i);
@@ -290,7 +290,7 @@ bool file_matches(const std::wstring& path, const BYTE* expected, DWORD expected
 bool extract_payload(std::wstring& payload_path, std::wstring& error) {
     HRSRC resource = FindResourceW(g_instance, MAKEINTRESOURCEW(IDR_TRAINER_PAYLOAD), MAKEINTRESOURCEW(10));
     if (!resource) {
-        error = L"Payload integre introuvable.";
+        error = L"Embedded payload was not found.";
         return false;
     }
 
@@ -298,19 +298,19 @@ bool extract_payload(std::wstring& payload_path, std::wstring& error) {
     const DWORD size = SizeofResource(g_instance, resource);
     const BYTE* bytes = static_cast<const BYTE*>(LockResource(loaded));
     if (!loaded || !bytes || size == 0) {
-        error = L"Impossible de lire le payload integre.";
+        error = L"Unable to read the embedded payload.";
         return false;
     }
 
     wchar_t temp[MAX_PATH] = {};
     if (!GetTempPathW(MAX_PATH, temp)) {
-        error = L"Impossible de trouver le dossier temporaire.";
+        error = L"Unable to locate the temporary folder.";
         return false;
     }
 
     std::wstring directory = std::wstring(temp) + L"PolkamonUraniumTrainer";
     if (!CreateDirectoryW(directory.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) {
-        error = L"Impossible de creer le cache du trainer : " + win32_error(GetLastError());
+        error = L"Unable to create the trainer cache: " + win32_error(GetLastError());
         return false;
     }
 
@@ -322,7 +322,7 @@ bool extract_payload(std::wstring& payload_path, std::wstring& error) {
     HANDLE file = CreateFileW(payload_path.c_str(), GENERIC_WRITE, 0, nullptr,
         CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) {
-        error = L"Impossible d'extraire le payload : " + win32_error(GetLastError());
+        error = L"Unable to extract the payload: " + win32_error(GetLastError());
         return false;
     }
 
@@ -330,7 +330,7 @@ bool extract_payload(std::wstring& payload_path, std::wstring& error) {
     const bool ok = WriteFile(file, bytes, size, &written, nullptr) && written == size;
     CloseHandle(file);
     if (!ok) {
-        error = L"Ecriture incomplete du payload : " + win32_error(GetLastError());
+        error = L"Payload write was incomplete: " + win32_error(GetLastError());
         return false;
     }
     return true;
@@ -370,14 +370,14 @@ bool inject_payload(DWORD pid, const std::wstring& payload_path, std::wstring& e
     if (existing_trainer) {
         CloseHandle(existing_trainer);
         if (wait_for_trainer_ready(pid, 60000)) return true;
-        error = L"Le payload est charge, mais son overlay n'a pas termine son initialisation.";
+        error = L"The payload is loaded, but its overlay has not finished initializing.";
         return false;
     }
 
     const std::wstring payload_name = basename_of(payload_path);
     if (remote_module_base(pid, payload_name.c_str())) {
         if (wait_for_trainer_ready(pid, 60000)) return true;
-        error = L"Le payload est present, mais son overlay n'est pas disponible. Redemarre le jeu avant de reessayer.";
+        error = L"The payload is present, but its overlay is unavailable. Restart the game before trying again.";
         return false;
     }
 
@@ -385,16 +385,16 @@ bool inject_payload(DWORD pid, const std::wstring& payload_path, std::wstring& e
         PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, pid);
     if (!process) {
         const DWORD code = GetLastError();
-        error = L"Ouverture du processus impossible : " + win32_error(code);
+        error = L"Unable to open the process: " + win32_error(code);
         if (code == ERROR_ACCESS_DENIED) {
-            error += L" Relance le trainer en administrateur si le jeu l'est aussi.";
+            error += L" Run the trainer as administrator if the game is also running as administrator.";
         }
         return false;
     }
 
     if (!is_process_32_bit(process)) {
         CloseHandle(process);
-        error = L"Le trainer et Pokemon Uranium doivent tous les deux etre en 32 bits.";
+        error = L"The trainer and Pokemon Uranium must both be 32-bit applications.";
         return false;
     }
 
@@ -408,7 +408,7 @@ bool inject_payload(DWORD pid, const std::wstring& payload_path, std::wstring& e
     }
     if (!load_library) {
         CloseHandle(process);
-        error = L"Impossible de localiser LoadLibraryW dans le processus cible.";
+        error = L"Unable to locate LoadLibraryW in the target process.";
         return false;
     }
 
@@ -416,14 +416,14 @@ bool inject_payload(DWORD pid, const std::wstring& payload_path, std::wstring& e
     void* remote_path = VirtualAllocEx(process, nullptr, bytes,
         MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!remote_path) {
-        error = L"Allocation distante impossible : " + win32_error(GetLastError());
+        error = L"Remote allocation failed: " + win32_error(GetLastError());
         CloseHandle(process);
         return false;
     }
 
     SIZE_T written = 0;
     if (!WriteProcessMemory(process, remote_path, payload_path.c_str(), bytes, &written) || written != bytes) {
-        error = L"Ecriture distante impossible : " + win32_error(GetLastError());
+        error = L"Remote write failed: " + win32_error(GetLastError());
         VirtualFreeEx(process, remote_path, 0, MEM_RELEASE);
         CloseHandle(process);
         return false;
@@ -432,7 +432,7 @@ bool inject_payload(DWORD pid, const std::wstring& payload_path, std::wstring& e
     HANDLE thread = CreateRemoteThread(process, nullptr, 0,
         reinterpret_cast<LPTHREAD_START_ROUTINE>(load_library), remote_path, 0, nullptr);
     if (!thread) {
-        error = L"Chargement du trainer impossible : " + win32_error(GetLastError());
+        error = L"Unable to load the trainer: " + win32_error(GetLastError());
         VirtualFreeEx(process, remote_path, 0, MEM_RELEASE);
         CloseHandle(process);
         return false;
@@ -449,8 +449,8 @@ bool inject_payload(DWORD pid, const std::wstring& payload_path, std::wstring& e
     bool ok = wait == WAIT_OBJECT_0 && GetExitCodeThread(thread, &module_handle) && module_handle != 0;
     if (!ok) {
         error = wait == WAIT_TIMEOUT
-            ? L"Le chargement du trainer a depasse le delai autorise."
-            : L"Le processus cible a refuse le payload.";
+            ? L"The trainer load timed out."
+            : L"The target process rejected the payload.";
     }
 
     if (wait == WAIT_OBJECT_0) VirtualFreeEx(process, remote_path, 0, MEM_RELEASE);
@@ -458,7 +458,7 @@ bool inject_payload(DWORD pid, const std::wstring& payload_path, std::wstring& e
     CloseHandle(process);
     if (!ok) return false;
     if (!wait_for_trainer_ready(pid, 60000)) {
-        error = L"Le payload a ete charge, mais l'overlay ne s'est pas initialise. Redemarre le jeu avant de reessayer.";
+        error = L"The payload loaded, but the overlay did not initialize. Restart the game before trying again.";
         return false;
     }
     return true;
@@ -478,7 +478,7 @@ void launch_game_and_load(HWND window) {
     const std::wstring game_path = locate_game_executable();
     if (game_path.empty()) {
         set_status(window,
-            L"Uranium.exe est introuvable. Place le trainer dans le dossier du jeu ou dans son dossier Launcher.",
+            L"Uranium.exe was not found. Put the trainer in the game folder or its Launcher folder.",
             RGB(185, 28, 28));
         return;
     }
@@ -502,11 +502,11 @@ void launch_game_and_load(HWND window) {
     PROCESS_INFORMATION process = {};
     EnableWindow(g_launch_button, FALSE);
     EnableWindow(g_attach_button, FALSE);
-    set_status(window, L"Lancement direct du jeu et de la sauvegarde...", RGB(37, 99, 235));
+    set_status(window, L"Launching the game and loading the save...", RGB(37, 99, 235));
 
     if (!CreateProcessW(game_path.c_str(), mutable_command.data(), nullptr, nullptr,
                         FALSE, 0, nullptr, game_directory.c_str(), &startup, &process)) {
-        error = L"Impossible de lancer Uranium.exe : " + win32_error(GetLastError());
+        error = L"Unable to launch Uranium.exe: " + win32_error(GetLastError());
         set_status(window, error, RGB(185, 28, 28));
         EnableWindow(g_launch_button, TRUE);
         EnableWindow(g_attach_button, TRUE);
@@ -527,7 +527,7 @@ void launch_game_and_load(HWND window) {
 
     bool connected = false;
     if (!rgss_ready) {
-        error = L"Le moteur RGSS du jeu ne s'est pas initialise a temps.";
+        error = L"The game's RGSS engine did not initialize in time.";
     } else {
         connected = inject_payload(process.dwProcessId, payload_path, error);
     }
@@ -541,10 +541,10 @@ void launch_game_and_load(HWND window) {
         return;
     }
 
-    SetWindowTextW(g_attach_button, L"Connecte");
-    SetWindowTextW(g_launch_button, L"Jeu lance");
+    SetWindowTextW(g_attach_button, L"Connected");
+    SetWindowTextW(g_launch_button, L"Game launched");
     set_status(window,
-        L"Jeu lance : intro supprimee et sauvegarde par defaut chargee directement.",
+        L"Game launched: intro skipped and the default save loaded directly.",
         RGB(21, 128, 61));
 
     // inject_payload ne reussit qu'une fois l'overlay initialise et detecte.
@@ -555,13 +555,13 @@ void launch_game_and_load(HWND window) {
 void attach_selected_process(HWND window) {
     const int index = static_cast<int>(SendMessageW(g_process_combo, CB_GETCURSEL, 0, 0));
     if (index < 0 || index >= static_cast<int>(g_processes.size())) {
-        set_status(window, L"Selectionne d'abord le processus du jeu.", RGB(185, 28, 28));
+        set_status(window, L"Select the game process first.", RGB(185, 28, 28));
         return;
     }
 
     const ProcessEntry entry = g_processes[index];
     EnableWindow(g_attach_button, FALSE);
-    set_status(window, L"Connexion a " + entry.name + L"...", RGB(37, 99, 235));
+    set_status(window, L"Connecting to " + entry.name + L"...", RGB(37, 99, 235));
 
     std::wstring payload_path;
     std::wstring error;
@@ -572,9 +572,9 @@ void attach_selected_process(HWND window) {
     }
 
     set_status(window,
-        L"Connecte. Le menu s'ouvre automatiquement; Inser permet de le masquer ou l'afficher.",
+        L"Connected. The menu opens automatically; Insert hides or shows it.",
         RGB(21, 128, 61));
-    SetWindowTextW(g_attach_button, L"Connecte");
+    SetWindowTextW(g_attach_button, L"Connected");
 
     // Fermer seulement apres confirmation que le trainer est entierement pret.
     PostMessageW(window, WM_CLOSE, 0, 0);
@@ -603,12 +603,12 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
 
-        HWND title = CreateWindowExW(0, L"STATIC", L"Trainer externe - Pokemon Uranium",
+        HWND title = CreateWindowExW(0, L"STATIC", L"Pokemon Uranium External Trainer",
             WS_CHILD | WS_VISIBLE, 22, 18, 510, 28, window, nullptr, g_instance, nullptr);
         set_control_font(title);
 
         HWND help = CreateWindowExW(0, L"STATIC",
-            L"Lancement direct recommande, ou connexion a un jeu deja ouvert.",
+            L"Recommended: launch the game directly, or connect to a game already running.",
             WS_CHILD | WS_VISIBLE, 22, 50, 510, 22, window, nullptr, g_instance, nullptr);
         set_control_font(help);
 
@@ -617,32 +617,32 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             22, 83, 390, 250, window, reinterpret_cast<HMENU>(kProcessCombo), g_instance, nullptr);
         set_control_font(g_process_combo);
 
-        HWND refresh = CreateWindowExW(0, WC_BUTTONW, L"Actualiser",
+        HWND refresh = CreateWindowExW(0, WC_BUTTONW, L"Refresh",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
             422, 82, 110, 30, window, reinterpret_cast<HMENU>(kRefreshButton), g_instance, nullptr);
         set_control_font(refresh);
 
         g_launch_button = CreateWindowExW(0, WC_BUTTONW,
-            L"Lancer le jeu + chargement direct",
+            L"Launch game + load save directly",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
             22, 126, 510, 38, window, reinterpret_cast<HMENU>(kLaunchButton), g_instance, nullptr);
         set_control_font(g_launch_button);
 
-        g_attach_button = CreateWindowExW(0, WC_BUTTONW, L"Connecter au jeu selectionne",
+        g_attach_button = CreateWindowExW(0, WC_BUTTONW, L"Connect to selected game",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
             22, 174, 510, 38, window, reinterpret_cast<HMENU>(kAttachButton), g_instance, nullptr);
         set_control_font(g_attach_button);
 
-        g_status_text = CreateWindowExW(0, L"STATIC", L"Recherche des processus 32 bits...",
+        g_status_text = CreateWindowExW(0, L"STATIC", L"Searching for 32-bit processes...",
             WS_CHILD | WS_VISIBLE | SS_LEFT, 22, 227, 510, 54,
             window, reinterpret_cast<HMENU>(kStatusText), g_instance, nullptr);
         set_control_font(g_status_text);
 
         refresh_processes();
         if (g_processes.empty()) {
-            set_status(window, L"Aucun processus 32 bits accessible. Lance d'abord le jeu.", RGB(185, 28, 28));
+            set_status(window, L"No accessible 32-bit process. Launch the game first.", RGB(185, 28, 28));
         } else {
-            set_status(window, L"Processus detectes. Les candidats du jeu apparaissent en premier.", RGB(75, 85, 99));
+            set_status(window, L"Processes detected. Game candidates are listed first.", RGB(75, 85, 99));
         }
         return 0;
     }
@@ -650,11 +650,11 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     case WM_COMMAND:
         switch (LOWORD(wparam)) {
         case kRefreshButton:
-            SetWindowTextW(g_attach_button, L"Connecter");
+            SetWindowTextW(g_attach_button, L"Connect");
             refresh_processes();
             set_status(window, g_processes.empty()
-                ? L"Aucun processus compatible. Lance d'abord le jeu."
-                : L"Liste actualisee.",
+                ? L"No compatible process. Launch the game first."
+                : L"List refreshed.",
                 g_processes.empty() ? RGB(185, 28, 28) : RGB(75, 85, 99));
             return 0;
         case kAttachButton:
@@ -714,7 +714,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
     const int x = desktop.left + ((desktop.right - desktop.left) - width) / 2;
     const int y = desktop.top + ((desktop.bottom - desktop.top) - height) / 2;
 
-    HWND window = CreateWindowExW(0, kWindowClass, L"Trainer externe - Pokemon Uranium",
+    HWND window = CreateWindowExW(0, kWindowClass, L"Pokemon Uranium External Trainer",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
         x, y, width, height, nullptr, nullptr, instance, nullptr);
     if (!window) return 1;
@@ -741,7 +741,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
             PostMessageW(window, WM_COMMAND, MAKEWPARAM(kAttachButton, BN_CLICKED),
                 reinterpret_cast<LPARAM>(g_attach_button));
         } else {
-            set_status(window, L"Le PID demande n'est pas un processus 32 bits accessible.", RGB(185, 28, 28));
+            set_status(window, L"The requested PID is not an accessible 32-bit process.", RGB(185, 28, 28));
         }
     }
 

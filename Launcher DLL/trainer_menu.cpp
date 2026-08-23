@@ -32,6 +32,136 @@
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
 
+// RGSS returns names as UTF-8. DrawTextA interprets those bytes using the
+// Windows ANSI code page, which produces mojibake for accented characters.
+// Draw every overlay label as Unicode, while retaining an ANSI fallback for
+// legacy strings supplied by older game data.
+static int draw_text_utf8(HDC dc, const char* text, int length,
+                          LPRECT rect, UINT format) {
+    if (!text) text = "";
+    wchar_t wide[512] = {};
+    const int source_length = length < 0 ? -1 : length;
+    int converted = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                         text, source_length,
+                                         wide, (int)(sizeof(wide) / sizeof(wide[0])) - 1);
+    if (converted <= 0) {
+        converted = MultiByteToWideChar(CP_ACP, 0, text, source_length,
+                                         wide, (int)(sizeof(wide) / sizeof(wide[0])) - 1);
+    }
+    if (converted <= 0) return 0;
+    wide[(converted < (int)(sizeof(wide) / sizeof(wide[0]))) ? converted :
+         (int)(sizeof(wide) / sizeof(wide[0])) - 1] = L'\0';
+    return DrawTextW(dc, wide, length < 0 ? -1 : converted, rect, format);
+}
+
+#define DrawTextA draw_text_utf8
+
+namespace {
+enum UiLanguage { UI_ENGLISH, UI_FRENCH, UI_SPANISH };
+static UiLanguage s_ui_language = UI_ENGLISH;
+
+struct Translation { const char* english; const char* french; const char* spanish; };
+static const Translation kTranslations[] = {
+    { "Pause when window is inactive", "Pause si fenêtre inactive", "Pausar con ventana inactiva" },
+    { "God mode (no damage)", "God mode (aucun dégât)", "Modo dios (sin daño)" },
+    { "Infinite PP", "PP infinis", "PP infinitos" }, { "One-hit KO", "KO en un coup", "KO de un golpe" },
+    { "Damage multiplier", "Multiplicateur de dégâts", "Multiplicador de daño" }, { "Global speed", "Vitesse globale", "Velocidad global" },
+    { "No wild encounters", "Sans rencontres sauvages", "Sin encuentros salvajes" }, { "Force next encounter", "Forcer prochaine rencontre", "Forzar próximo encuentro" },
+    { "Pokemon ID", "ID Pokémon", "ID de Pokémon" }, { "Fixed wild level", "Niveau sauvage fixe", "Nivel salvaje fijo" },
+    { "Wild level", "Niveau sauvage", "Nivel salvaje" }, { "Wild shiny (1/N)", "Shiny sauvage (1/N)", "Shiny salvaje (1/N)" },
+    { "Shiny chance (1/N)", "Chance shiny (1/N)", "Probabilidad shiny (1/N)" }, { "Game time", "Heure du jeu", "Hora del juego" },
+    { "Weather", "Météo", "Clima" }, { "Heal party", "Soigner équipe", "Curar equipo" },
+    { "Unlock all Fly locations", "Débloquer toutes les zones de vol", "Desbloquear todos los destinos Vuelo" },
+    { "Fly from anywhere", "Voler depuis n'importe où", "Volar desde cualquier lugar" }, { "Open PC here", "Ouvrir le PC ici", "Abrir PC aquí" },
+    { "Complete the Pokedex", "Compléter le Pokédex", "Completar la Pokédex" }, { "Money ($)", "Argent ($)", "Dinero ($)" },
+    { "Manage All Pokémon", "Gérer tous les Pokémon", "Gestionar todos los Pokémon" }, { "Manage inventory", "Gérer l'inventaire", "Gestionar inventario" },
+    { "Manage trainer", "Gérer le dresseur", "Gestionar entrenador" }, { "Camera zoom out (%)", "Dézoom caméra (%)", "Alejar cámara (%)" },
+    { "Walking speed", "Vitesse de marche", "Velocidad al caminar" }, { "Running speed", "Vitesse de course", "Velocidad al correr" },
+    { "Surfing speed", "Vitesse de surf", "Velocidad al surfear" }, { "Cycling speed", "Vitesse de vélo", "Velocidad en bicicleta" },
+    { "Show minimap", "Afficher la minimap", "Mostrar minimapa" }, { "Minimap size (px)", "Taille minimap (px)", "Tamaño minimapa (px)" },
+    { "Minimap zoom (%)", "Zoom minimap (%)", "Zoom minimapa (%)" }, { "Round minimap", "Minimap ronde", "Minimapa redondo" },
+    { "Show FPS", "Afficher les FPS", "Mostrar FPS" }, { "Catch trainers", "Capturer dresseurs", "Capturar entrenadores" },
+    { "Infinite items", "Objets infinis", "Objetos infinitos" }, { "Instant egg hatch", "Éclosion instantanée", "Eclosión instantánea" },
+    { "Removable HMs", "CS effaçables", "MO eliminables" }, { "None", "Aucune", "Ninguno" },
+    { "Rain", "Pluie", "Lluvia" }, { "Storm", "Orage", "Tormenta" }, { "Snow", "Neige", "Nieve" },
+    { "Sandstorm", "Tempête de sable", "Tormenta de arena" }, { "Sun", "Soleil", "Sol" },
+    { "Heavy rain", "Forte pluie", "Lluvia intensa" }, { "Blizzard", "Blizzard", "Ventisca" },
+    { "Open", "OUVRIR", "ABRIR" }, { "Confirm", "CONF.", "CONF." },
+    { "PLAYER & SYSTEM", "JOUEUR & SYSTÈME", "JUGADOR Y SISTEMA" },
+    { "WILD ENCOUNTERS", "RENCONTRES SAUVAGES", "ENCUENTROS SALVAJES" },
+    { "WORLD & UTILITIES", "MONDE & UTILITAIRES", "MUNDO Y UTILIDADES" },
+    { "MANAGEMENT", "GESTION", "GESTIÓN" },
+    { "MOVEMENT & DISPLAY", "MOUVEMENT & AFFICHAGE", "MOVIMIENTO Y PANTALLA" },
+    { "QUICK SETTINGS", "RÉGLAGES RAPIDES", "AJUSTES RÁPIDOS" },
+    { "CAPTURE & ITEMS", "CAPTURE & OBJETS", "CAPTURA Y OBJETOS" },
+    { "WORLD, ENCOUNTERS & MAP", "MONDE, RENCONTRES & CARTE", "MUNDO, ENCUENTROS Y MAPA" },
+    { "Player", "Joueur", "Jugador" }, { "Battle", "Combat", "Combate" },
+    { "Encounters", "Rencontres", "Encuentros" }, { "World", "Monde", "Mundo" },
+    { "Display", "Affichage", "Pantalla" },
+    { "Settings", "Paramètres", "Ajustes" },
+    { "Trainer Tools", "Outils du dresseur", "Herramientas del entrenador" },
+    { "Profile Editors", "Éditeurs du profil", "Editores de perfil" },
+    { "Battle Boosts", "Avantages de combat", "Ventajas de combate" },
+    { "Capture & Items", "Capture et objets", "Captura y objetos" },
+    { "Encounter Rules", "Règles des rencontres", "Reglas de encuentros" },
+    { "Wild Pokémon", "Pokémon sauvages", "Pokémon salvajes" },
+    { "Environment", "Environnement", "Entorno" },
+    { "World Actions", "Actions dans le monde", "Acciones del mundo" },
+    { "Movement", "Déplacement", "Movimiento" },
+    { "Camera & Minimap", "Caméra et minimap", "Cámara y minimapa" },
+    { "Interface", "Interface", "Interfaz" },
+    { "Menu Shortcut", "Raccourci du menu", "Atajo del menú" },
+    { "Click the key button, then press a new shortcut", "Cliquez sur la touche, puis choisissez un nouveau raccourci", "Haz clic en la tecla y pulsa un nuevo atajo" },
+    { "Unload Trainer", "Décharger le trainer", "Descargar el trainer" },
+    { "Stop & Unload", "Arrêter et décharger", "Detener y descargar" },
+    { "Default Speeds", "Vitesses par défaut", "Velocidades predeterminadas" },
+    { "Reset", "Réinitialiser", "Restablecer" },
+    { "Default", "Par défaut", "Predeterminado" },
+    { "Open Editor", "Ouvrir l'éditeur", "Abrir editor" },
+    { "Pokemon manager", "Gestion des Pokémon", "Gestión de Pokémon" },
+    { "Inventory manager", "Gestion de l'inventaire", "Gestión del inventario" },
+    { "Trainer manager", "Gestion du dresseur", "Gestión del entrenador" },
+    { "Identity", "Identité", "Identidad" },
+    { "Status and origin", "État et provenance", "Estado y origen" },
+    { "Stats", "Statistiques", "Estadísticas" },
+    { "Nickname", "Surnom", "Apodo" }, { "Species", "Espèce", "Especie" },
+    { "Level", "Niveau", "Nivel" }, { "Experience", "Expérience", "Experiencia" },
+    { "Gender", "Sexe", "Sexo" }, { "Form", "Forme", "Forma" },
+    { "Nature", "Nature", "Naturaleza" }, { "Ability", "Capacité", "Habilidad" },
+    { "Held item", "Objet tenu", "Objeto equipado" }, { "Friendship", "Bonheur", "Amistad" },
+    { "Status", "Statut", "Estado" }, { "Counter", "Compteur", "Contador" },
+    { "Egg", "Œuf", "Huevo" }, { "Egg steps", "Pas de l'œuf", "Pasos del huevo" },
+    { "Markings", "Marquages", "Marcas" }, { "Met", "Obtention", "Obtención" },
+    { "Map", "Carte", "Mapa" }, { "Met level", "Niv. obtenu", "Nivel de obtención" },
+    { "Met text", "Lieu d'obtention", "Lugar de obtención" },
+    { "Original identity (read-only)", "Identité d'origine (lecture seule)", "Identidad original (solo lectura)" },
+    { "Create a Pokemon", "Créer un Pokémon", "Crear un Pokémon" },
+    { "Search", "Rechercher", "Buscar" }, { "Create Pokemon", "Créer le Pokémon", "Crear Pokémon" },
+    { "Cancel", "Annuler", "Cancelar" }, { "Refresh", "Actualiser", "Actualizar" },
+    { "Add", "Ajouter", "Añadir" }, { "Delete", "Supprimer", "Eliminar" },
+    { "Full catalog / give an item", "Catalogue complet / donner un objet", "Catálogo completo / dar un objeto" },
+    { "All", "Tous", "Todos" }, { "Quantity", "Quantité", "Cantidad" },
+    { "Set quantity", "Fixer la quantité", "Fijar cantidad" }, { "Give +", "Donner +", "Dar +" },
+    { "Remove all", "Tout retirer", "Quitar todo" }, { "Confirm removal", "Confirmer le retrait", "Confirmar retirada" },
+    { "Name", "Pseudo", "Nombre" }, { "Play time (H:MM:SS)", "Temps de jeu (H:MM:SS)", "Tiempo de juego (H:MM:SS)" },
+    { "Badges (click to toggle)", "Badges (cliquer pour changer)", "Medallas (clic para cambiar)" },
+    { "Apply", "Appliquer", "Aplicar" }, { "Reload", "Recharger", "Recargar" },
+    { "Boy", "Garçon", "Chico" }, { "Girl", "Fille", "Chica" }, { "Neutral", "Neutre", "Neutro" }
+};
+}
+
+bool trainer_ui_is_spanish() { return s_ui_language == UI_SPANISH; }
+
+const char* trainer_ui_text(const char* english, const char* spanish) {
+    if (s_ui_language == UI_ENGLISH) return english ? english : "";
+    if (spanish && spanish[0] && s_ui_language == UI_SPANISH) return spanish;
+    for (const Translation& entry : kTranslations) {
+        if (english && _stricmp(entry.english, english) == 0)
+            return s_ui_language == UI_FRENCH ? entry.french : entry.spanish;
+    }
+    return english ? english : "";
+}
+
 #ifndef ITEM_TYPE_PARTYMON
 #define ITEM_TYPE_PARTYMON 3
 #endif
@@ -64,11 +194,24 @@
 #define PARTYMON_H 270
 #endif
 
-static const int MENU_LEFT_W  = 300;
-static const int MENU_RIGHT_W = 340;
+static const int MENU_LEFT_W  = 374;
+static const int MENU_RIGHT_W = 374;
 static const int MENU_GAP     = 8;
 static const int MENU_TOTAL_W = MENU_LEFT_W + MENU_GAP + MENU_RIGHT_W;
+static const int MENU_FIXED_H = 500;
 static const UINT WM_APP_GAME_ZOOM_WHEEL = WM_APP + 1;
+
+enum MainTab {
+    TAB_PLAYER = 0,
+    TAB_BATTLE,
+    TAB_ENCOUNTERS,
+    TAB_WORLD,
+    TAB_DISPLAY,
+    TAB_SETTINGS,
+    TAB_COUNT
+};
+
+static MainTab s_active_tab = TAB_PLAYER;
 
 
 
@@ -79,102 +222,102 @@ static const UINT WM_APP_GAME_ZOOM_WHEEL = WM_APP + 1;
 // ------------------------------------------------------------
 
 MenuItem g_items[] = {
-    { "Pause si fenetre inactive", ITEM_TYPE_TOGGLE,
+    { "Pause When Window Is Inactive", ITEM_TYPE_TOGGLE,
       &g_pause_on_inactive, opt_pause_toggle, NULL,0,0,NULL },
 
-    { "God mode (aucun degat)", ITEM_TYPE_TOGGLE,
+    { "God Mode (No Damage)", ITEM_TYPE_TOGGLE,
       &g_hp_lock, opt_hp_toggle, NULL,0,0,NULL },
 
-    { "PP infinis", ITEM_TYPE_TOGGLE,
+    { "Infinite PP", ITEM_TYPE_TOGGLE,
       &g_pp_lock, opt_pp_toggle, NULL,0,0,NULL },
 
-    { "KO en un coup", ITEM_TYPE_TOGGLE,
+    { "One-Hit KO", ITEM_TYPE_TOGGLE,
       &g_ohk_lock, opt_ohk_toggle, NULL,0,0,NULL },
 
-    { "Multiplicateur de degats", ITEM_TYPE_SLIDER,
+    { "Damage Multiplier", ITEM_TYPE_SLIDER,
       NULL,NULL, &g_damage_multiplier,1,100,opt_damage_apply },
 	  
-    { "No-clip", ITEM_TYPE_TOGGLE,
+    { "No-Clip", ITEM_TYPE_TOGGLE,
       &g_noclip, opt_noclip_toggle, NULL,0,0,NULL },
 
-    { "Vitesse globale", ITEM_TYPE_TOGGLE,
+    { "Global Speed", ITEM_TYPE_TOGGLE,
       &g_game_speed_enabled, opt_gamespeed_toggle, NULL,0,0,NULL },
 
-    { "Multiplicateur", ITEM_TYPE_SLIDER,
+    { "", ITEM_TYPE_SLIDER,
       NULL,NULL, &g_game_speed_factor,1,5,opt_gamespeed_apply },
 	  
-    { "Sans rencontres sauvages", ITEM_TYPE_TOGGLE,
+    { "No Wild Encounters", ITEM_TYPE_TOGGLE,
       &g_noenc, opt_noenc_toggle, NULL,0,0,NULL },
 
-    { "Forcer prochaine rencontre", ITEM_TYPE_TOGGLE,
+    { "Force Next Encounter", ITEM_TYPE_TOGGLE,
       &g_force_next_wild, opt_encounter_toggle_force, NULL,0,0,NULL },
-    { "Pokemon ID (#Uranium)", ITEM_TYPE_SLIDER,
+    { "Pokemon ID", ITEM_TYPE_SLIDER,
       NULL,NULL, &g_forced_wild_species,1,201,opt_encounter_set_species },
-    { "Niveau sauvage fixe", ITEM_TYPE_TOGGLE,
+    { "Fixed Wild Level", ITEM_TYPE_TOGGLE,
       &g_wild_level_enabled, opt_encounter_toggle_level, NULL,0,0,NULL },
-    { "Niveau sauvage", ITEM_TYPE_SLIDER,
+    { "Wild Level", ITEM_TYPE_SLIDER,
       NULL,NULL, &g_wild_level,1,100,opt_encounter_set_level },
-    { "Shiny sauvage (1/N)", ITEM_TYPE_TOGGLE,
+    { "Wild Shiny (1/N)", ITEM_TYPE_TOGGLE,
       &g_wild_shiny_enabled, opt_encounter_toggle_shiny, NULL,0,0,NULL },
-    { "Chance shiny (1/N)", ITEM_TYPE_SLIDER,
+    { "Shiny Chance (1/N)", ITEM_TYPE_SLIDER,
       NULL,NULL, &g_wild_shiny_rate,1,8192,opt_encounter_set_shiny_rate },
 
-    { "Heure du jeu", ITEM_TYPE_TIME,
+    { "Game Time", ITEM_TYPE_TIME,
       NULL,NULL, NULL,0,0,NULL },
 
-    { "Meteo", ITEM_TYPE_WEATHER,
+    { "Weather", ITEM_TYPE_WEATHER,
       NULL,NULL, NULL,0,0,NULL },
 
-    { "Soigner equipe", ITEM_TYPE_ACTION,
+    { "Heal Party", ITEM_TYPE_ACTION,
       NULL,NULL, NULL,0,0,NULL,opt_heal_trigger },
 
-    { "Debloquer toutes les zones de vol", ITEM_TYPE_ACTION,
+    { "Unlock All Fly Locations", ITEM_TYPE_ACTION,
       NULL,NULL, NULL,0,0,NULL,opt_extras_unlock_fly_trigger },
 
-    { "Voler depuis n'importe ou", ITEM_TYPE_ACTION,
+    { "Fly From Anywhere", ITEM_TYPE_ACTION,
       NULL,NULL, NULL,0,0,NULL,opt_extras_fly_anywhere_trigger },
 
-    { "Ouvrir le PC ici", ITEM_TYPE_ACTION,
+    { "Open PC Here", ITEM_TYPE_ACTION,
       NULL,NULL, NULL,0,0,NULL,opt_extras_open_pc_trigger },
 
-    { "Completer tout le Pokedex", ITEM_TYPE_ACTION,
+    { "Complete the Pokedex", ITEM_TYPE_ACTION,
       NULL,NULL, NULL,0,0,NULL,opt_extras_complete_dex_trigger },
 
-    { "Argent ($)", ITEM_TYPE_SLIDER,
+    { "Money ($)", ITEM_TYPE_SLIDER,
       NULL,NULL, &g_money_value,0,999999,opt_money_apply },
 
-    { "Gerer tous les Pokemon", ITEM_TYPE_POKEMON_MANAGER,
+    { "Manage All Pokémon", ITEM_TYPE_POKEMON_MANAGER,
       NULL,NULL, NULL,0,0,NULL },
-    { "Gerer tout l'inventaire", ITEM_TYPE_INVENTORY_MANAGER,
+    { "Manage Inventory", ITEM_TYPE_INVENTORY_MANAGER,
       NULL,NULL, NULL,0,0,NULL },
-    { "Gerer le dresseur", ITEM_TYPE_TRAINER_MANAGER,
+    { "Manage Trainer", ITEM_TYPE_TRAINER_MANAGER,
       NULL,NULL, NULL,0,0,NULL },
 
-    { "Dezoom camera (%)", ITEM_TYPE_SLIDER,
+    { "Camera Zoom Out (%)", ITEM_TYPE_SLIDER,
       NULL,NULL, &g_zoom_value,OPT_ZOOM_MIN_PERCENT,
       OPT_ZOOM_MAX_PERCENT,opt_zoom_apply },
 
 
-    { "Vitesse de marche", ITEM_TYPE_SLIDER,
+    { "Walking Speed", ITEM_TYPE_SLIDER,
       NULL,NULL, &g_speed_walk_value,1,8,opt_speed_apply_walk },
-    { "Vitesse de course", ITEM_TYPE_SLIDER,
+    { "Running Speed", ITEM_TYPE_SLIDER,
       NULL,NULL, &g_speed_run_value,1,8,opt_speed_apply_run },
-    { "Vitesse de surf", ITEM_TYPE_SLIDER,
+    { "Surfing Speed", ITEM_TYPE_SLIDER,
       NULL,NULL, &g_speed_surf_value,1,8,opt_speed_apply_surf },
-    { "Vitesse de velo", ITEM_TYPE_SLIDER,
+    { "Cycling Speed", ITEM_TYPE_SLIDER,
       NULL,NULL, &g_speed_bike_value,1,8,opt_speed_apply_bike },
 
-    { "Afficher la minimap", ITEM_TYPE_TOGGLE,
+    { "Show Minimap", ITEM_TYPE_TOGGLE,
       &g_minimap_enabled,opt_minimap_toggle, NULL,0,0,NULL },
-    { "Taille minimap (px)", ITEM_TYPE_SLIDER,
+    { "Minimap Size (px)", ITEM_TYPE_SLIDER,
       NULL,NULL, &g_minimap_size,OPT_MINIMAP_MIN_SIZE,
       OPT_MINIMAP_MAX_SIZE,opt_minimap_set_size },
-    { "Zoom minimap (%)", ITEM_TYPE_SLIDER,
+    { "Minimap Zoom (%)", ITEM_TYPE_SLIDER,
       NULL,NULL, &g_minimap_zoom,OPT_MINIMAP_MIN_ZOOM,
       OPT_MINIMAP_MAX_ZOOM,opt_minimap_set_zoom },
-    { "Minimap ronde", ITEM_TYPE_TOGGLE,
+    { "Round Minimap", ITEM_TYPE_TOGGLE,
       &g_minimap_round,opt_minimap_set_round, NULL,0,0,NULL },
-    { "Afficher les FPS", ITEM_TYPE_TOGGLE,
+    { "Show FPS", ITEM_TYPE_TOGGLE,
       &g_minimap_show_fps,opt_minimap_toggle_fps, NULL,0,0,NULL },
 	  
 };
@@ -189,22 +332,33 @@ struct QuickToggle {
 
 static QuickToggle s_quick_toggles[] = {
     { "Capture 100%", &g_capture_guaranteed, opt_capture_toggle },
-    { "Capturer dresseurs", &g_capture_trainers, opt_trainer_capture_toggle },
-    { "Objets infinis", &g_item_lock, opt_itemlock_toggle },
-    { "Eclosion instantanee", &g_egg_hatch_instant, opt_egghatch_toggle },
-    { "CS effacables", &g_hm_forget_enabled, opt_hmforget_toggle },
+    { "Catch Trainers", &g_capture_trainers, opt_trainer_capture_toggle },
+    { "Infinite Items", &g_item_lock, opt_itemlock_toggle },
+    { "Instant Egg Hatch", &g_egg_hatch_instant, opt_egghatch_toggle },
+    { "Removable HMs", &g_hm_forget_enabled, opt_hmforget_toggle },
 };
 
 static const int QUICK_TOGGLE_COUNT =
     sizeof(s_quick_toggles) / sizeof(s_quick_toggles[0]);
-static const int QUICK_TOGGLE_TOP = TITLE_H + 10;
+
+static const int kPlayerLeft[] = {0, 5, 17, 22};
+static const int kPlayerRight[] = {23, 24, 25};
+static const int kBattleLeft[] = {1, 2, 3, 4};
+static const int kEncountersLeft[] = {8, 9, 10};
+static const int kEncountersRight[] = {11, 12, 13, 14};
+static const int kWorldLeft[] = {15, 16};
+static const int kWorldRight[] = {18, 19, 20, 21};
+static const int kDisplayLeft[] = {6, 27, 28, 29, 30};
+static const int kDisplayRight[] = {26, 31, 32, 33, 34, 35};
+static const int SECTION_H = 20;
+static const int QUICK_TOGGLE_TOP = TITLE_H + SECTION_H;
 static const int QUICK_TOGGLE_INSERT_SLOT = 5;
 
 // Options du menu principal affichees dans la colonne "Options rapides".
 // Les indices correspondent a God mode, PP, noclip, rencontres, heure,
 // meteo, soin et argent dans g_items.
 static const int s_quick_menu_items[] = {
-    1, 2, 3, 4, 6, 7, 8, 9, 10,
+    1, 2, 3, 4, 6, 8, 9, 10, 15, 16, 26,
     31, 32, 33, 34, 35
 };
 static const int QUICK_MENU_ITEM_COUNT =
@@ -246,7 +400,7 @@ static int quick_menu_item_y(int slot) {
         y += g_items[item].type == ITEM_TYPE_SLIDER ? SLIDER_H : ITEM_H;
     }
     if (slot >= QUICK_TOGGLE_INSERT_SLOT)
-        y += QUICK_TOGGLE_COUNT * ITEM_H;
+        y += QUICK_TOGGLE_COUNT * ITEM_H + SECTION_H * 2;
     return y;
 }
 
@@ -266,21 +420,27 @@ static int item_h(int idx) {
     return ITEM_H;
 }
 
-static int menu_height() {
-    int left = TITLE_H + 20;
-    for (int i = 0; i < ITEM_COUNT; i++) {
-        if (is_quick_menu_item(i)) continue;
-        left += item_h(i);
+static const char* left_section_title(int item_index) {
+    switch (item_index) {
+    case 0:  return "PLAYER & SYSTEM";
+    case 11: return "WILD ENCOUNTERS";
+    case 17: return "WORLD & UTILITIES";
+    case 23: return "MANAGEMENT";
+    case 27: return "MOVEMENT & DISPLAY";
+    default: return NULL;
     }
-    const int right = QUICK_TOGGLE_TOP + quick_menu_items_height() +
-                      QUICK_TOGGLE_COUNT * ITEM_H + 20;
-    return left > right ? left : right;
+}
+
+static int menu_height() {
+    return MENU_FIXED_H;
 }
 
 static int item_y(int idx) {
     int y = TITLE_H;
-    for (int i = 0; i < idx; i++) {
+    for (int i = 0; i <= idx; i++) {
         if (is_quick_menu_item(i)) continue;
+        if (left_section_title(i)) y += SECTION_H;
+        if (i == idx) break;
         y += item_h(i);
     }
     return y;
@@ -315,6 +475,7 @@ static RECT quick_toggle_rect(int index) {
         const int item = s_quick_menu_items[slot];
         top += g_items[item].type == ITEM_TYPE_SLIDER ? SLIDER_H : ITEM_H;
     }
+    top += SECTION_H;
     RECT result = {
         MENU_LEFT_W + MENU_GAP + 8,
         top + index * ITEM_H,
@@ -344,6 +505,9 @@ static volatile LONG s_input_guard_in_tick = 0;
 static DWORD s_game_tid = 0;
 static bool  s_dragging_menu = false;
 static int   s_drag_ox = 0, s_drag_oy = 0;
+static bool  s_menu_positioned = false;
+static int   s_menu_toggle_key = VK_INSERT;
+static bool  s_menu_hotkey_capture = false;
 static bool  s_slider_drag   = false;
 static int   s_slider_idx    = -1;
 static int   s_slider_start_value = 0;
@@ -354,8 +518,138 @@ static DWORD s_heal_flash_until = 0;  // GetTickCount() until which to show flas
 static int s_action_confirmation_item = -1;
 static DWORD s_action_confirmation_until = 0;
 
+static RECT close_button_rect() {
+    return {MENU_TOTAL_W - 36, 7, MENU_TOTAL_W - 8, TITLE_H - 7};
+}
+
+static RECT language_flag_rect(UiLanguage language) {
+    const int right = MENU_TOTAL_W - 48 - (UI_SPANISH - language) * 38;
+    return {right - 34, 5, right, TITLE_H - 5};
+}
+
+static void fill_rounded_rect(HDC dc, const RECT& rect, COLORREF color,
+                              int radius = 8) {
+    HBRUSH brush = CreateSolidBrush(color);
+    HPEN pen = CreatePen(PS_NULL, 0, 0);
+    HBRUSH old_brush = (HBRUSH)SelectObject(dc, brush);
+    HPEN old_pen = (HPEN)SelectObject(dc, pen);
+    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
+    SelectObject(dc, old_brush); SelectObject(dc, old_pen);
+    DeleteObject(brush); DeleteObject(pen);
+}
+
+static void frame_rounded_rect(HDC dc, const RECT& rect, COLORREF color,
+                               int radius = 8, int width = 1) {
+    HPEN pen = CreatePen(PS_SOLID, width, color);
+    HPEN old_pen = (HPEN)SelectObject(dc, pen);
+    HBRUSH old_brush = (HBRUSH)SelectObject(dc, GetStockObject(NULL_BRUSH));
+    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom,
+              radius, radius);
+    SelectObject(dc, old_pen); SelectObject(dc, old_brush);
+    DeleteObject(pen);
+}
+
+static void paint_close_button(HDC dc) {
+    const RECT rect = close_button_rect();
+    fill_rounded_rect(dc, rect, RGB(126, 48, 67), 7);
+    HPEN pen = CreatePen(PS_SOLID, 2, RGB(255, 224, 231));
+    HPEN old = (HPEN)SelectObject(dc, pen);
+    MoveToEx(dc, rect.left + 7, rect.top + 6, NULL);
+    LineTo(dc, rect.right - 7, rect.bottom - 6);
+    MoveToEx(dc, rect.right - 7, rect.top + 6, NULL);
+    LineTo(dc, rect.left + 7, rect.bottom - 6);
+    SelectObject(dc, old); DeleteObject(pen);
+}
+
+static void paint_section_header(HDC dc, const RECT& rect, const char* title,
+                                 HFONT font) {
+    RECT background = rect;
+    background.left += 2; background.right -= 2;
+    HBRUSH brush = CreateSolidBrush(RGB(18, 25, 41));
+    FillRect(dc, &background, brush); DeleteObject(brush);
+    RECT accent = {background.left + 7, background.top + 5,
+                   background.left + 10, background.bottom - 5};
+    HBRUSH accent_brush = CreateSolidBrush(COL_SLIDER);
+    FillRect(dc, &accent, accent_brush); DeleteObject(accent_brush);
+    RECT text_rect = {accent.right + 7, background.top,
+                      background.right - 5, background.bottom};
+    SelectObject(dc, font); SetTextColor(dc, RGB(165, 177, 207));
+    DrawTextA(dc, trainer_ui_text(title, NULL), -1, &text_rect,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+}
+
+static void paint_language_flag(HDC dc, const RECT& rect, UiLanguage language) {
+    const bool selected = s_ui_language == language;
+    if (selected) {
+        fill_rounded_rect(dc, rect, RGB(49, 43, 86), 9);
+        frame_rounded_rect(dc, rect, RGB(139, 122, 255), 9);
+    }
+
+    // All three flags use a fixed 3:2 canvas. This keeps them crisp and avoids
+    // the vertically stretched appearance of the previous title-bar buttons.
+    const int flag_width = 24;
+    const int flag_height = 16;
+    const int center_x = (rect.left + rect.right) / 2;
+    const int center_y = (rect.top + rect.bottom) / 2;
+    RECT flag = {center_x - flag_width / 2, center_y - flag_height / 2,
+                 center_x + flag_width / 2, center_y + flag_height / 2};
+    if (language == UI_FRENCH) {
+        HBRUSH blue = CreateSolidBrush(RGB(0, 85, 164));
+        HBRUSH white = CreateSolidBrush(RGB(255, 255, 255));
+        HBRUSH red = CreateSolidBrush(RGB(239, 65, 53));
+        const int third = (flag.right - flag.left) / 3;
+        RECT left = {flag.left, flag.top, flag.left + third, flag.bottom};
+        RECT middle = {left.right, flag.top, left.right + third, flag.bottom};
+        RECT right = {middle.right, flag.top, flag.right, flag.bottom};
+        FillRect(dc, &left, blue); FillRect(dc, &middle, white); FillRect(dc, &right, red);
+        DeleteObject(blue); DeleteObject(white); DeleteObject(red);
+    } else if (language == UI_SPANISH) {
+        HBRUSH red = CreateSolidBrush(RGB(170, 21, 27));
+        HBRUSH yellow = CreateSolidBrush(RGB(241, 191, 0));
+        const int band = (flag.bottom - flag.top) / 4;
+        RECT top = {flag.left, flag.top, flag.right, flag.top + band};
+        RECT middle = {flag.left, top.bottom, flag.right, flag.bottom - band};
+        RECT bottom = {flag.left, middle.bottom, flag.right, flag.bottom};
+        FillRect(dc, &top, red); FillRect(dc, &middle, yellow); FillRect(dc, &bottom, red);
+        RECT crest = {flag.left + 7, middle.top + 2,
+                      flag.left + 10, middle.bottom - 2};
+        HBRUSH crest_brush = CreateSolidBrush(RGB(170, 21, 27));
+        FillRect(dc, &crest, crest_brush); DeleteObject(crest_brush);
+        SetPixel(dc, crest.left + 1, crest.top, RGB(244, 213, 65));
+        DeleteObject(red); DeleteObject(yellow);
+    } else {
+        HBRUSH red = CreateSolidBrush(RGB(178, 34, 52));
+        HBRUSH white = CreateSolidBrush(RGB(245, 245, 245));
+        HBRUSH blue = CreateSolidBrush(RGB(60, 59, 110));
+        const int height = flag.bottom - flag.top;
+        for (int stripe_index = 0; stripe_index < 13; ++stripe_index) {
+            const int top = flag.top + stripe_index * height / 13;
+            const int bottom = flag.top + (stripe_index + 1) * height / 13;
+            RECT stripe = {flag.left, top, flag.right, bottom};
+            FillRect(dc, &stripe, (stripe_index & 1) ? white : red);
+        }
+        RECT canton = {flag.left, flag.top, flag.left + 11,
+                       flag.top + (height * 7) / 13};
+        FillRect(dc, &canton, blue);
+        for (int star_row = 0; star_row < 3; ++star_row) {
+            for (int star_col = 0; star_col < 4; ++star_col) {
+                const int offset = (star_row & 1) ? 1 : 0;
+                SetPixel(dc, canton.left + 2 + star_col * 2 + offset,
+                         canton.top + 1 + star_row * 2, RGB(255,255,255));
+            }
+        }
+        DeleteObject(red); DeleteObject(white); DeleteObject(blue);
+    }
+
+    HPEN frame_pen = CreatePen(PS_SOLID, 1, RGB(20, 20, 55));
+    HPEN old_pen = (HPEN)SelectObject(dc, frame_pen);
+    HBRUSH old_brush = (HBRUSH)SelectObject(dc, GetStockObject(NULL_BRUSH));
+    Rectangle(dc, flag.left, flag.top, flag.right, flag.bottom);
+    SelectObject(dc, old_pen); SelectObject(dc, old_brush); DeleteObject(frame_pen);
+
+}
+
 static bool menu_keyboard_should_capture();
-static bool menu_context_is_foreground();
 static void cancel_overlay_mouse_interaction();
 static bool overlay_contains_screen_point(const POINT& pt);
 
@@ -387,6 +681,58 @@ static void set_hold_key(int index, int virtual_key) {
         opt_gamespeed_set_hold_key(virtual_key);
     else if (is_noclip_item(index))
         opt_noclip_set_hold_key(virtual_key);
+}
+
+static void get_virtual_key_name(int virtual_key, char* buffer, int capacity) {
+    if (!buffer || capacity <= 0) return;
+    buffer[0] = '\0';
+    const char* fixed = NULL;
+    switch (virtual_key) {
+    case VK_INSERT: fixed = "INSERT"; break;
+    case VK_DELETE: fixed = "DELETE"; break;
+    case VK_HOME: fixed = "HOME"; break;
+    case VK_END: fixed = "END"; break;
+    case VK_PRIOR: fixed = "PAGE UP"; break;
+    case VK_NEXT: fixed = "PAGE DOWN"; break;
+    case VK_SPACE: fixed = "SPACE"; break;
+    case VK_TAB: fixed = "TAB"; break;
+    case VK_RETURN: fixed = "ENTER"; break;
+    case VK_BACK: fixed = "BACKSPACE"; break;
+    case VK_ESCAPE: fixed = "ESCAPE"; break;
+    }
+    if (fixed) {
+        lstrcpynA(buffer, fixed, capacity);
+        return;
+    }
+    if ((virtual_key >= '0' && virtual_key <= '9') ||
+        (virtual_key >= 'A' && virtual_key <= 'Z') ||
+        (virtual_key >= VK_F1 && virtual_key <= VK_F24)) {
+        if (virtual_key >= VK_F1 && virtual_key <= VK_F24)
+            wsprintfA(buffer, "F%d", virtual_key - VK_F1 + 1);
+        else if (capacity > 1) {
+            buffer[0] = (char)virtual_key;
+            buffer[1] = '\0';
+        }
+        return;
+    }
+    UINT scan = MapVirtualKeyA((UINT)virtual_key, MAPVK_VK_TO_VSC);
+    LONG key_data = (LONG)(scan << 16);
+    if (virtual_key == VK_INSERT || virtual_key == VK_DELETE ||
+        virtual_key == VK_HOME || virtual_key == VK_END ||
+        virtual_key == VK_PRIOR || virtual_key == VK_NEXT)
+        key_data |= 1 << 24;
+    if (GetKeyNameTextA(key_data, buffer, capacity) <= 0)
+        wsprintfA(buffer, "VK%02X", virtual_key);
+    CharUpperBuffA(buffer, lstrlenA(buffer));
+}
+
+static void save_menu_toggle_key(int virtual_key) {
+    if (virtual_key <= 0 || virtual_key > 254) return;
+    s_menu_toggle_key = virtual_key;
+    char value[16] = {};
+    wsprintfA(value, "%d", virtual_key);
+    WritePrivateProfileStringA("Settings", "MenuToggleKey", value,
+                               "trainer.ini");
 }
 
 static RECT hold_key_rect(int index) {
@@ -536,13 +882,13 @@ static void picker_open_weather(const RECT& anchor) {
     s_picker_count = 10;
 
     s_picker_values[0] = -1; s_picker_labels[0] = "OFF";
-    s_picker_values[1] = 0;  s_picker_labels[1] = "Aucune";
-    s_picker_values[2] = 1;  s_picker_labels[2] = "Pluie";
-    s_picker_values[3] = 2;  s_picker_labels[3] = "Orage";
-    s_picker_values[4] = 3;  s_picker_labels[4] = "Neige";
-    s_picker_values[5] = 4;  s_picker_labels[5] = "Tempete sable";
-    s_picker_values[6] = 5;  s_picker_labels[6] = "Soleil";
-    s_picker_values[7] = 6;  s_picker_labels[7] = "Pluie forte";
+    s_picker_values[1] = 0;  s_picker_labels[1] = "None";
+    s_picker_values[2] = 1;  s_picker_labels[2] = "Rain";
+    s_picker_values[3] = 2;  s_picker_labels[3] = "Storm";
+    s_picker_values[4] = 3;  s_picker_labels[4] = "Snow";
+    s_picker_values[5] = 4;  s_picker_labels[5] = "Sandstorm";
+    s_picker_values[6] = 5;  s_picker_labels[6] = "Sun";
+    s_picker_values[7] = 6;  s_picker_labels[7] = "Heavy rain";
     s_picker_values[8] = 7;  s_picker_labels[8] = "Blizzard";
     s_picker_values[9] = 8;  s_picker_labels[9] = "Fallout";
 
@@ -702,7 +1048,7 @@ static void paint_picker(HDC mem, HFONT fN) {
         char buf[256];
         
         if (s_picker_type == PICKER_TIME) {
-            if (s_picker_labels[idx]) lstrcpynA(buf, s_picker_labels[idx], sizeof(buf));
+            if (s_picker_labels[idx]) lstrcpynA(buf, trainer_ui_text(s_picker_labels[idx], NULL), sizeof(buf));
             else wsprintfA(buf, "%02dh", s_picker_values[idx]);
         }
         else if (s_picker_type == PICKER_WEATHER) {
@@ -784,12 +1130,6 @@ static void cancel_overlay_mouse_interaction() {
 static void sync_overlay_to_game() {
     if (!s_overlay || !s_game || !s_open) return;
 
-    if (IsIconic(s_game) || !IsWindowVisible(s_game)) {
-        cancel_overlay_mouse_interaction();
-        ShowWindow(s_overlay, SW_HIDE);
-        return;
-    }
-
     if (trainer_editors_any_open()) {
         ShowWindow(s_overlay, SW_HIDE);
         InterlockedExchange(&s_block_game_keyboard,
@@ -802,17 +1142,8 @@ static void sync_overlay_to_game() {
         return;
     }
 
-    // Garder l'overlay visible lorsque RGSS perd le premier plan. Il reste
-    // click-through via WM_NCHITTEST et ne capture ni souris ni clavier tant
-    // que le jeu n'est pas redevenu l'application active.
-    if (!menu_context_is_foreground()) {
-        cancel_overlay_mouse_interaction();
-        ShowWindow(s_overlay, SW_SHOWNOACTIVATE);
-        SetWindowPos(s_overlay, HWND_TOPMOST, 0, 0, 0, 0,
-                     SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
-        return;
-    }
-
+    // The trainer is an independent tool window. Keep it visible and clickable
+    // even when Uranium is minimized or another application has the focus.
     ShowWindow(s_overlay, SW_SHOWNOACTIVATE);
     InterlockedExchange(&s_block_game_keyboard,
                         menu_keyboard_should_capture()
@@ -925,7 +1256,7 @@ static void paint_quick_menu_items(HDC mem, HFONT fN, HFONT fB, HFONT fS) {
                           gamespeed ? row.left + 94 :
                           (hold_key ? row.right - 122 : row.right - 62),
                           row.top + ITEM_H};
-            DrawTextA(mem, item.label, -1, &label,
+            DrawTextA(mem, trainer_ui_text(item.label, NULL), -1, &label,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
             if (gamespeed) {
                 int slider_index = -1;
@@ -944,35 +1275,26 @@ static void paint_quick_menu_items(HDC mem, HFONT fN, HFONT fB, HFONT fS) {
                     const int fill_width = mx > mn
                         ? (int)((long long)(val - mn) * width / (mx - mn)) : 0;
                     HBRUSH track_bg = CreateSolidBrush(RGB(30,30,50));
-                    FillRect(mem, &track, track_bg);
-                    DeleteObject(track_bg);
+                    FillRect(mem, &track, track_bg); DeleteObject(track_bg);
                     if (fill_width > 0) {
-                        RECT fill = {track.left, track.top,
-                                     track.left + fill_width, track.bottom};
+                        RECT fill = {track.left, track.top, track.left + fill_width, track.bottom};
                         HBRUSH fill_bg = CreateSolidBrush(COL_SLIDER);
-                        FillRect(mem, &fill, fill_bg);
-                        DeleteObject(fill_bg);
+                        FillRect(mem, &fill, fill_bg); DeleteObject(fill_bg);
                     }
                     HPEN track_pen = CreatePen(PS_SOLID, 1, COL_BORDER);
                     HPEN old_track_pen = (HPEN)SelectObject(mem, track_pen);
-                    HBRUSH old_track_brush =
-                        (HBRUSH)SelectObject(mem, null_brush);
-                    Rectangle(mem, track.left, track.top,
-                              track.right, track.bottom);
-                    SelectObject(mem, old_track_pen);
-                    SelectObject(mem, old_track_brush);
+                    HBRUSH old_track_brush = (HBRUSH)SelectObject(mem, null_brush);
+                    Rectangle(mem, track.left, track.top, track.right, track.bottom);
+                    SelectObject(mem, old_track_pen); SelectObject(mem, old_track_brush);
                     DeleteObject(track_pen);
                     RECT thumb = {track.left + fill_width - 3, track.top - 3,
                                   track.left + fill_width + 3, track.bottom + 3};
                     HBRUSH thumb_bg = CreateSolidBrush(RGB(200,200,255));
-                    FillRect(mem, &thumb, thumb_bg);
-                    DeleteObject(thumb_bg);
+                    FillRect(mem, &thumb, thumb_bg); DeleteObject(thumb_bg);
                     char factor[8];
                     wsprintfA(factor, "x%d", val);
-                    SelectObject(mem, fS);
-                    SetTextColor(mem, COL_TEXT);
-                    RECT factor_rect = {track.left, row.top,
-                                        track.right, row.bottom};
+                    SelectObject(mem, fS); SetTextColor(mem, COL_TEXT);
+                    RECT factor_rect = {track.left, row.top, track.right, row.bottom};
                     DrawTextA(mem, factor, -1, &factor_rect,
                               DT_CENTER | DT_VCENTER | DT_SINGLELINE);
                     SelectObject(mem, fN);
@@ -1002,7 +1324,7 @@ static void paint_quick_menu_items(HDC mem, HFONT fN, HFONT fB, HFONT fS) {
             draw_quick_toggle_switch(mem, row, *item.value);
         } else if (item.type == ITEM_TYPE_TIME) {
             RECT label = {row.left + 4, row.top, row.right - 86, row.bottom};
-            DrawTextA(mem, item.label, -1, &label,
+            DrawTextA(mem, trainer_ui_text(item.label, NULL), -1, &label,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             RECT box = quick_time_box_rect(slot);
             HBRUSH bg = CreateSolidBrush(RGB(25,25,40));
@@ -1021,7 +1343,7 @@ static void paint_quick_menu_items(HDC mem, HFONT fN, HFONT fB, HFONT fS) {
             DrawTextA(mem, text, -1, &box, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         } else if (item.type == ITEM_TYPE_WEATHER) {
             RECT label = {row.left + 4, row.top, row.right - 116, row.bottom};
-            DrawTextA(mem, item.label, -1, &label,
+            DrawTextA(mem, trainer_ui_text(item.label, NULL), -1, &label,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             RECT box = quick_weather_box_rect(slot);
             HBRUSH bg = CreateSolidBrush(RGB(25,25,40));
@@ -1031,17 +1353,17 @@ static void paint_quick_menu_items(HDC mem, HFONT fN, HFONT fB, HFONT fS) {
             HBRUSH old_brush = (HBRUSH)SelectObject(mem, null_brush);
             Rectangle(mem, box.left, box.top, box.right, box.bottom);
             SelectObject(mem, old_pen); SelectObject(mem, old_brush); DeleteObject(pen);
-            const char* names[] = {"Aucune","Pluie","Orage","Neige","Sable",
-                                   "Soleil","Forte pluie","Blizzard","Fallout"};
+            const char* names[] = {"None","Rain","Storm","Snow","Sandstorm",
+                                   "Sun","Heavy rain","Blizzard","Fallout"};
             const char* text = g_weather_type >= 0 && g_weather_type <= 8
-                ? names[g_weather_type] : "---";
+                ? trainer_ui_text(names[g_weather_type], NULL) : "---";
             SelectObject(mem, fB);
             SetTextColor(mem, g_weather_enabled ? COL_SLIDER : COL_TEXT);
             DrawTextA(mem, text, -1, &box,
                       DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         } else if (item.type == ITEM_TYPE_ACTION) {
             RECT label = {row.left + 4, row.top, row.right - 62, row.bottom};
-            DrawTextA(mem, item.label, -1, &label,
+            DrawTextA(mem, trainer_ui_text(item.label, NULL), -1, &label,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             RECT button = {row.right - 54, row.top + 8,
                            row.right - 6, row.bottom - 8};
@@ -1052,17 +1374,25 @@ static void paint_quick_menu_items(HDC mem, HFONT fN, HFONT fB, HFONT fS) {
             DrawTextA(mem, "OK", -1, &button,
                       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         } else if (item.type == ITEM_TYPE_SLIDER) {
-            RECT label = {row.left + 4, row.top, row.right - 90,
+            const bool species_slider = item.on_slide == opt_encounter_set_species;
+            RECT label = {row.left + 4, row.top,
+                          species_slider ? row.left + 92 : row.right - 90,
                           row.top + ITEM_H};
-            DrawTextA(mem, item.label, -1, &label,
+            DrawTextA(mem, trainer_ui_text(item.label, NULL), -1, &label,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-            char value[32] = {};
-            wsprintfA(value, "%d", *item.slider_val);
-            RECT value_rect = {row.right - 86, row.top, row.right - 4,
+            char value[96] = {};
+            if (species_slider) {
+                _snprintf_s(value, sizeof(value), _TRUNCATE, "%s - #%d",
+                            opt_encounter_species_name(), *item.slider_val);
+            } else {
+                wsprintfA(value, "%d", *item.slider_val);
+            }
+            RECT value_rect = {species_slider ? row.left + 96 : row.right - 86,
+                               row.top, row.right - 4,
                                row.top + ITEM_H};
             SelectObject(mem, fB); SetTextColor(mem, COL_SLIDER);
             DrawTextA(mem, value, -1, &value_rect,
-                      DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+                      DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
             RECT track = quick_slider_track_rect(slot);
             HBRUSH track_bg = CreateSolidBrush(RGB(30,30,50));
             FillRect(mem, &track, track_bg); DeleteObject(track_bg);
@@ -1110,7 +1440,7 @@ static void paint_quick_toggles(HDC mem, HFONT fN) {
 
         RECT label = {row.left + 4, row.top, row.right - 64, row.bottom};
         SetTextColor(mem, COL_TEXT);
-        DrawTextA(mem, s_quick_toggles[i].label, -1, &label,
+        DrawTextA(mem, trainer_ui_text(s_quick_toggles[i].label, NULL), -1, &label,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
         const bool value = *s_quick_toggles[i].value;
@@ -1162,6 +1492,10 @@ static void paint(HWND hw) {
     RECT trc = {0,0,W,TITLE_H};
     FillRect(mem, &trc, tbr);
     DeleteObject(tbr);
+    RECT title_accent = {0, TITLE_H - 2, W, TITLE_H};
+    HBRUSH title_accent_brush = CreateSolidBrush(RGB(86, 104, 224));
+    FillRect(mem, &title_accent, title_accent_brush);
+    DeleteObject(title_accent_brush);
 
     SetBkMode(mem, TRANSPARENT);
 
@@ -1173,6 +1507,10 @@ static void paint(HWND hw) {
     SetTextColor(mem, COL_TEXT);
     DrawTextA(mem, "Uranium Trainer", -1, &trc,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    paint_language_flag(mem, language_flag_rect(UI_ENGLISH), UI_ENGLISH);
+    paint_language_flag(mem, language_flag_rect(UI_FRENCH), UI_FRENCH);
+    paint_language_flag(mem, language_flag_rect(UI_SPANISH), UI_SPANISH);
+    paint_close_button(mem);
 
     RECT dh = {4,0,20,TITLE_H};
     SetTextColor(mem, RGB(160,160,200));
@@ -1186,6 +1524,12 @@ static void paint(HWND hw) {
         int y  = item_y(i);
         int ih = item_h(i);
 
+        const char* section = left_section_title(i);
+        if (section) {
+            RECT section_rect = {2, y - SECTION_H, MENU_LEFT_W - 2, y};
+            paint_section_header(mem, section_rect, section, fS);
+        }
+
         if (i == s_hovered) {
             HBRUSH hbr = CreateSolidBrush(COL_HOVER);
             RECT ir = {2, y, MENU_LEFT_W - 2, y + ih};
@@ -1194,7 +1538,7 @@ static void paint(HWND hw) {
         }
 
         if (!item_group_continues_after(i)) {
-            HPEN sep = CreatePen(PS_SOLID, 1, RGB(40,40,60));
+            HPEN sep = CreatePen(PS_SOLID, 1, RGB(30,40,59));
             HPEN osep = (HPEN)SelectObject(mem, sep);
             MoveToEx(mem, 2, y + ih - 1, NULL);
             LineTo(mem, MENU_LEFT_W - 2, y + ih - 1);
@@ -1209,7 +1553,7 @@ static void paint(HWND hw) {
             RECT lrc = {PAD, y,
                         noclip_item ? MENU_LEFT_W - 128 : MENU_LEFT_W - 70,
                         y + ITEM_H};
-            DrawTextA(mem, g_items[i].label, -1, &lrc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            DrawTextA(mem, trainer_ui_text(g_items[i].label, NULL), -1, &lrc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
             if (noclip_item) {
                 RECT krc = hold_key_rect(i);
@@ -1258,7 +1602,7 @@ static void paint(HWND hw) {
         }
         else if (g_items[i].type == ITEM_TYPE_TIME) {
             RECT lrc = {PAD, y, MENU_LEFT_W - 90, y + ITEM_H};
-            DrawTextA(mem, g_items[i].label, -1, &lrc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            DrawTextA(mem, trainer_ui_text(g_items[i].label, NULL), -1, &lrc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
             RECT brc = {MENU_LEFT_W - 78, y + 8, MENU_LEFT_W - PAD, y + ITEM_H - 8};
             HBRUSH bbg = CreateSolidBrush(RGB(25,25,40));
@@ -1288,7 +1632,7 @@ static void paint(HWND hw) {
         }
         else if (g_items[i].type == ITEM_TYPE_WEATHER) {
             RECT lrc = {PAD, y, MENU_LEFT_W - 110, y + ITEM_H};
-            DrawTextA(mem, g_items[i].label, -1, &lrc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            DrawTextA(mem, trainer_ui_text(g_items[i].label, NULL), -1, &lrc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
             RECT brc = {MENU_LEFT_W - 98, y + 8, MENU_LEFT_W - PAD, y + ITEM_H - 8};
             HBRUSH bbg = CreateSolidBrush(RGB(25,25,40));
@@ -1303,11 +1647,11 @@ static void paint(HWND hw) {
             SelectObject(mem, obb);
             DeleteObject(bpn);
 
-            const char* wnames[] = {"Aucune","Pluie","Orage","Neige","Sable",
-                                    "Soleil","Forte pluie","Blizzard","Fallout"};
+            const char* wnames[] = {"None","Rain","Storm","Snow","Sandstorm",
+                                    "Sun","Heavy rain","Blizzard","Fallout"};
             char wbuf[32];
             if (g_weather_type >= 0 && g_weather_type <= 8) {
-                lstrcpynA(wbuf, wnames[g_weather_type], sizeof(wbuf));
+                lstrcpynA(wbuf, trainer_ui_text(wnames[g_weather_type], NULL), sizeof(wbuf));
             } else {
                 lstrcpyA(wbuf, "---");
             }
@@ -1320,7 +1664,7 @@ static void paint(HWND hw) {
         }
         else if (g_items[i].type == ITEM_TYPE_ACTION) {
             RECT lrc = {PAD, y, MENU_LEFT_W - 70, y + ITEM_H};
-            DrawTextA(mem, g_items[i].label, -1, &lrc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            DrawTextA(mem, trainer_ui_text(g_items[i].label, NULL), -1, &lrc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
             RECT brc = {MENU_LEFT_W - 58, y + 8, MENU_LEFT_W - PAD, y + ITEM_H - 8};
             bool flashing = (s_heal_flash_until != 0 && GetTickCount() < s_heal_flash_until);
@@ -1344,7 +1688,7 @@ static void paint(HWND hw) {
                  g_items[i].type == ITEM_TYPE_INVENTORY_MANAGER ||
                  g_items[i].type == ITEM_TYPE_TRAINER_MANAGER) {
             RECT lrc = {PAD, y, MENU_LEFT_W - 76, y + ITEM_H};
-            DrawTextA(mem, g_items[i].label, -1, &lrc,
+            DrawTextA(mem, trainer_ui_text(g_items[i].label, NULL), -1, &lrc,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
             RECT brc = {MENU_LEFT_W - 68, y + 6,
@@ -1359,12 +1703,12 @@ static void paint(HWND hw) {
             SelectObject(mem, obpn);
             SelectObject(mem, obb);
             DeleteObject(bpn);
-            DrawTextA(mem, "OUVRIR", -1, &brc,
+            DrawTextA(mem, trainer_ui_text("Open", NULL), -1, &brc,
                       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
         else if (g_items[i].type == ITEM_TYPE_SLIDER) {
             RECT lrc = {PAD, y, MENU_LEFT_W - 70, y + ITEM_H};
-            DrawTextA(mem, g_items[i].label, -1, &lrc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            DrawTextA(mem, trainer_ui_text(g_items[i].label, NULL), -1, &lrc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
             int val = *g_items[i].slider_val;
             int mn  = g_items[i].slider_min;
@@ -1377,6 +1721,9 @@ static void paint(HWND hw) {
             char vbuf[32];
             if (g_items[i].on_slide == opt_gamespeed_apply)
                 wsprintfA(vbuf, "x%d", val);
+            else if (g_items[i].on_slide == opt_encounter_set_species)
+                _snprintf_s(vbuf, sizeof(vbuf), _TRUNCATE, "%s - #%d",
+                            opt_encounter_species_name(), val);
             else
                 wsprintfA(vbuf, "%d", val);
 
@@ -1418,12 +1765,25 @@ static void paint(HWND hw) {
     }
 
     // Séparateur vertical
-    HPEN vpen = CreatePen(PS_SOLID, 1, RGB(50,50,80));
+    HPEN vpen = CreatePen(PS_SOLID, 1, RGB(42,54,78));
     HPEN ovpen = (HPEN)SelectObject(mem, vpen);
     MoveToEx(mem, MENU_LEFT_W + MENU_GAP / 2, TITLE_H, NULL);
     LineTo(mem, MENU_LEFT_W + MENU_GAP / 2, H - 20);
     SelectObject(mem, ovpen);
     DeleteObject(vpen);
+
+    RECT quick_header = {MENU_LEFT_W + MENU_GAP + 4, TITLE_H,
+                         MENU_TOTAL_W - 4, QUICK_TOGGLE_TOP};
+    paint_section_header(mem, quick_header, "QUICK SETTINGS", fS);
+    RECT capture_header = {MENU_LEFT_W + MENU_GAP + 4,
+                           quick_toggle_rect(0).top - SECTION_H,
+                           MENU_TOTAL_W - 4, quick_toggle_rect(0).top};
+    paint_section_header(mem, capture_header, "CAPTURE & ITEMS", fS);
+    RECT encounter_header = {MENU_LEFT_W + MENU_GAP + 4,
+                             quick_menu_item_y(QUICK_TOGGLE_INSERT_SLOT) - SECTION_H,
+                             MENU_TOTAL_W - 4,
+                             quick_menu_item_y(QUICK_TOGGLE_INSERT_SLOT)};
+    paint_section_header(mem, encounter_header, "WORLD, ENCOUNTERS & MAP", fS);
 
     paint_quick_menu_items(mem, fN, fB, fS);
     paint_quick_toggles(mem, fN);
@@ -1440,6 +1800,647 @@ static void paint(HWND hw) {
     DeleteObject(bmp);
     DeleteDC(mem);
     EndPaint(hw, &ps);
+}
+
+// ------------------------------------------------------------
+// TABBED MAIN INTERFACE
+// ------------------------------------------------------------
+
+static const int MODERN_TAB_H = 48;
+static const int MODERN_PAGE_HEADER_H = 42;
+static const int MODERN_CARD_HEADER_H = 40;
+static const int MODERN_MARGIN = 14;
+static const int MODERN_COLUMN_GAP = 12;
+static const int MODERN_SETTINGS_ROW_H = 74;
+
+static const char* modern_tab_title(MainTab tab) {
+    static const char* titles[TAB_COUNT] = {
+        "Player", "Battle", "Encounters", "World", "Display", "Settings"
+    };
+    return titles[(int)tab];
+}
+
+static const char* modern_group_title(MainTab tab, int column) {
+    static const char* titles[TAB_COUNT][2] = {
+        {"Trainer Tools", "Profile Editors"},
+        {"Battle Boosts", "Capture & Items"},
+        {"Encounter Rules", "Wild Pokémon"},
+        {"Environment", "World Actions"},
+        {"Movement", "Camera & Minimap"},
+        {"Interface", ""}
+    };
+    return titles[(int)tab][column];
+}
+
+static void modern_tab_items(MainTab tab, int column,
+                             const int** items, int* count) {
+    *items = NULL;
+    *count = 0;
+    if (tab == TAB_PLAYER && column == 0) {
+        *items = kPlayerLeft; *count = ARRAYSIZE(kPlayerLeft);
+    } else if (tab == TAB_PLAYER && column == 1) {
+        *items = kPlayerRight; *count = ARRAYSIZE(kPlayerRight);
+    } else if (tab == TAB_BATTLE && column == 0) {
+        *items = kBattleLeft; *count = ARRAYSIZE(kBattleLeft);
+    } else if (tab == TAB_ENCOUNTERS && column == 0) {
+        *items = kEncountersLeft; *count = ARRAYSIZE(kEncountersLeft);
+    } else if (tab == TAB_ENCOUNTERS && column == 1) {
+        *items = kEncountersRight; *count = ARRAYSIZE(kEncountersRight);
+    } else if (tab == TAB_WORLD && column == 0) {
+        *items = kWorldLeft; *count = ARRAYSIZE(kWorldLeft);
+    } else if (tab == TAB_WORLD && column == 1) {
+        *items = kWorldRight; *count = ARRAYSIZE(kWorldRight);
+    } else if (tab == TAB_DISPLAY && column == 0) {
+        *items = kDisplayLeft; *count = ARRAYSIZE(kDisplayLeft);
+    } else if (tab == TAB_DISPLAY && column == 1) {
+        *items = kDisplayRight; *count = ARRAYSIZE(kDisplayRight);
+    }
+}
+
+static int modern_item_height(int item) {
+    if (item == 6 || g_items[item].type == ITEM_TYPE_SLIDER)
+        return SLIDER_H;
+    if (g_items[item].type == ITEM_TYPE_POKEMON_MANAGER ||
+        g_items[item].type == ITEM_TYPE_INVENTORY_MANAGER ||
+        g_items[item].type == ITEM_TYPE_TRAINER_MANAGER)
+        return 54;
+    if (g_items[item].type == ITEM_TYPE_ACTION)
+        return 42;
+    return ITEM_H;
+}
+
+static RECT modern_tab_rect(int tab) {
+    const int usable = MENU_TOTAL_W - MODERN_MARGIN * 2;
+    const int left = MODERN_MARGIN + tab * usable / TAB_COUNT;
+    const int right = MODERN_MARGIN + (tab + 1) * usable / TAB_COUNT;
+    return {left + 3, TITLE_H + 7, right - 3,
+            TITLE_H + MODERN_TAB_H - 5};
+}
+
+static int modern_tab_at(int x, int y) {
+    for (int tab = 0; tab < TAB_COUNT; ++tab) {
+        if (ptin(modern_tab_rect(tab), x, y)) return tab;
+    }
+    return -1;
+}
+
+static RECT modern_card_rect(int column) {
+    const int normal_width = (MENU_TOTAL_W - MODERN_MARGIN * 2 -
+                              MODERN_COLUMN_GAP) / 2;
+    const int width = s_active_tab == TAB_SETTINGS
+        ? MENU_TOTAL_W - MODERN_MARGIN * 2 : normal_width;
+    const int left = MODERN_MARGIN + column * (width + MODERN_COLUMN_GAP);
+    const int top = TITLE_H + MODERN_TAB_H + MODERN_PAGE_HEADER_H;
+    if (s_active_tab == TAB_SETTINGS) {
+        if (column != 0) return {0, 0, 0, 0};
+        return {left, top, left + width,
+                top + MODERN_CARD_HEADER_H + MODERN_SETTINGS_ROW_H * 2 + 10};
+    }
+    int content_height = 0;
+    const int* items = NULL;
+    int count = 0;
+    modern_tab_items(s_active_tab, column, &items, &count);
+    for (int i = 0; i < count; ++i)
+        content_height += modern_item_height(items[i]);
+    if (s_active_tab == TAB_BATTLE && column == 1)
+        content_height = QUICK_TOGGLE_COUNT * ITEM_H;
+    return {left, top, left + width,
+            top + MODERN_CARD_HEADER_H + content_height + 10};
+}
+
+static RECT modern_speed_reset_rect() {
+    if (s_active_tab != TAB_DISPLAY) return {0, 0, 0, 0};
+    RECT card = modern_card_rect(0);
+    return {card.right - 100, card.top + 8,
+            card.right - 12, card.top + MODERN_CARD_HEADER_H - 8};
+}
+
+static RECT modern_settings_row_rect(int row_index) {
+    if (s_active_tab != TAB_SETTINGS) return {0, 0, 0, 0};
+    RECT card = modern_card_rect(0);
+    const int top = card.top + MODERN_CARD_HEADER_H +
+                    row_index * MODERN_SETTINGS_ROW_H;
+    return {card.left + 10, top, card.right - 10,
+            top + MODERN_SETTINGS_ROW_H};
+}
+
+static RECT modern_settings_key_rect() {
+    RECT row = modern_settings_row_rect(0);
+    return {row.right - 224, row.top + 17,
+            row.right - 106, row.bottom - 17};
+}
+
+static RECT modern_settings_default_rect() {
+    RECT row = modern_settings_row_rect(0);
+    return {row.right - 98, row.top + 17,
+            row.right, row.bottom - 17};
+}
+
+static RECT modern_settings_unload_rect() {
+    RECT row = modern_settings_row_rect(1);
+    return {row.right - 166, row.top + 17, row.right, row.bottom - 17};
+}
+
+static RECT modern_item_rect(int item) {
+    for (int column = 0; column < 2; ++column) {
+        const int* items = NULL;
+        int count = 0;
+        modern_tab_items(s_active_tab, column, &items, &count);
+        RECT card = modern_card_rect(column);
+        int top = card.top + MODERN_CARD_HEADER_H;
+        for (int i = 0; i < count; ++i) {
+            const int height = modern_item_height(items[i]);
+            if (items[i] == item)
+                return {card.left + 8, top, card.right - 8, top + height};
+            top += height;
+        }
+    }
+    return {0, 0, 0, 0};
+}
+
+static RECT modern_quick_rect(int quick_index) {
+    if (s_active_tab != TAB_BATTLE || quick_index < 0 ||
+        quick_index >= QUICK_TOGGLE_COUNT)
+        return {0, 0, 0, 0};
+    RECT card = modern_card_rect(1);
+    const int top = card.top + MODERN_CARD_HEADER_H + quick_index * ITEM_H;
+    return {card.left + 8, top, card.right - 8, top + ITEM_H};
+}
+
+static RECT modern_control_rect(int control) {
+    return control >= ITEM_COUNT
+        ? modern_quick_rect(control - ITEM_COUNT)
+        : modern_item_rect(control);
+}
+
+static int modern_control_at(int x, int y) {
+    for (int column = 0; column < 2; ++column) {
+        const int* items = NULL;
+        int count = 0;
+        modern_tab_items(s_active_tab, column, &items, &count);
+        for (int i = 0; i < count; ++i) {
+            if (ptin(modern_item_rect(items[i]), x, y)) return items[i];
+        }
+    }
+    if (s_active_tab == TAB_BATTLE) {
+        for (int i = 0; i < QUICK_TOGGLE_COUNT; ++i) {
+            if (ptin(modern_quick_rect(i), x, y)) return ITEM_COUNT + i;
+        }
+    }
+    return -1;
+}
+
+static RECT modern_switch_rect(const RECT& row) {
+    return {row.right - 52, row.top + 8, row.right - 10, row.top + 30};
+}
+
+static RECT modern_hold_key_rect(int item) {
+    RECT row = modern_item_rect(item);
+    return {row.right - 120, row.top + 8, row.right - 62, row.top + 30};
+}
+
+static RECT modern_time_box_rect(int item) {
+    RECT row = modern_item_rect(item);
+    return {row.right - 92, row.top + 7, row.right - 10, row.bottom - 7};
+}
+
+static RECT modern_weather_box_rect(int item) {
+    RECT row = modern_item_rect(item);
+    return {row.right - 124, row.top + 7, row.right - 10, row.bottom - 7};
+}
+
+static RECT modern_slider_track_rect(int item) {
+    RECT row = modern_item_rect(item == 7 ? 6 : item);
+    return {row.left + 10, row.bottom - 18,
+            row.right - 10, row.bottom - 10};
+}
+
+static int modern_slider_val_from_x(int item, int x) {
+    RECT track = modern_slider_track_rect(item);
+    int relative = x - track.left;
+    const int width = track.right - track.left;
+    if (relative < 0) relative = 0;
+    if (relative > width) relative = width;
+    return g_items[item].slider_min + (int)((long long)relative *
+        (g_items[item].slider_max - g_items[item].slider_min) / width);
+}
+
+static int modern_navigation_step(int current, int direction) {
+    int controls[ITEM_COUNT + QUICK_TOGGLE_COUNT] = {};
+    int count = 0;
+    for (int column = 0; column < 2; ++column) {
+        const int* items = NULL;
+        int item_count = 0;
+        modern_tab_items(s_active_tab, column, &items, &item_count);
+        for (int i = 0; i < item_count; ++i) controls[count++] = items[i];
+        if (s_active_tab == TAB_BATTLE && column == 1) {
+            for (int i = 0; i < QUICK_TOGGLE_COUNT; ++i)
+                controls[count++] = ITEM_COUNT + i;
+        }
+    }
+    if (count == 0) return -1;
+    int position = direction > 0 ? -1 : 0;
+    for (int i = 0; i < count; ++i) {
+        if (controls[i] == current) { position = i; break; }
+    }
+    position += direction;
+    if (position < 0) position = count - 1;
+    if (position >= count) position = 0;
+    return controls[position];
+}
+
+static void modern_draw_switch(HDC dc, const RECT& row, bool value,
+                               HFONT small_font, bool show_state = true) {
+    RECT track = modern_switch_rect(row);
+    fill_rounded_rect(dc, track, value ? COL_ON : COL_OFF, 12);
+    const int knob_size = 16;
+    const int knob_left = value ? track.right - knob_size - 3 : track.left + 3;
+    RECT knob = {knob_left, track.top + 3,
+                 knob_left + knob_size, track.top + 3 + knob_size};
+    HBRUSH knob_brush = CreateSolidBrush(RGB(247, 249, 253));
+    HPEN knob_pen = CreatePen(PS_NULL, 0, 0);
+    HBRUSH old_brush = (HBRUSH)SelectObject(dc, knob_brush);
+    HPEN old_pen = (HPEN)SelectObject(dc, knob_pen);
+    Ellipse(dc, knob.left, knob.top, knob.right, knob.bottom);
+    SelectObject(dc, old_brush); SelectObject(dc, old_pen);
+    DeleteObject(knob_brush); DeleteObject(knob_pen);
+
+    if (show_state) {
+        RECT state = {track.left - 38, row.top,
+                      track.left - 6, row.top + ITEM_H};
+        SelectObject(dc, small_font);
+        SetTextColor(dc, value ? COL_ON : COL_DIMTEXT);
+        DrawTextA(dc, value ? "ON" : "OFF", -1, &state,
+                  DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    }
+}
+
+static void modern_draw_slider(HDC dc, int item, const RECT& row,
+                               HFONT label_font, HFONT value_font) {
+    const MenuItem& entry = g_items[item];
+    const bool species = entry.on_slide == opt_encounter_set_species;
+    const int value_width = species ? 170 : 76;
+    RECT label = {row.left + 10, row.top + 2,
+                  row.right - value_width - 8, row.top + ITEM_H};
+    SelectObject(dc, label_font); SetTextColor(dc, COL_TEXT);
+    DrawTextA(dc, trainer_ui_text(entry.label, NULL), -1, &label,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    char value[128] = {};
+    if (entry.on_slide == opt_gamespeed_apply)
+        wsprintfA(value, "x%d", *entry.slider_val);
+    else if (species)
+        _snprintf_s(value, sizeof(value), _TRUNCATE, "%s  ·  #%d",
+                    opt_encounter_species_name(), *entry.slider_val);
+    else if (entry.on_slide == opt_money_apply)
+        _snprintf_s(value, sizeof(value), _TRUNCATE, "$%d", *entry.slider_val);
+    else
+        wsprintfA(value, "%d", *entry.slider_val);
+    RECT value_rect = entry.on_slide == opt_gamespeed_apply
+        ? RECT{row.right - 174, row.top + 2,
+               row.right - 132, row.top + ITEM_H}
+        : RECT{row.right - value_width, row.top + 2,
+               row.right - 10, row.top + ITEM_H};
+    SelectObject(dc, value_font); SetTextColor(dc, RGB(159, 145, 255));
+    DrawTextA(dc, value, -1, &value_rect,
+              DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    RECT track = modern_slider_track_rect(item);
+    fill_rounded_rect(dc, track, RGB(38, 48, 67), 8);
+    const int range = entry.slider_max - entry.slider_min;
+    int fill_width = range > 0 ? (int)((long long)(*entry.slider_val -
+        entry.slider_min) * (track.right - track.left) / range) : 0;
+    if (fill_width < 0) fill_width = 0;
+    if (fill_width > track.right - track.left)
+        fill_width = track.right - track.left;
+    if (fill_width > 0) {
+        RECT fill = {track.left, track.top, track.left + fill_width,
+                     track.bottom};
+        fill_rounded_rect(dc, fill, COL_SLIDER, 8);
+    }
+    const int thumb_x = track.left + fill_width;
+    RECT thumb = {thumb_x - 6, track.top - 4,
+                  thumb_x + 6, track.bottom + 4};
+    HBRUSH brush = CreateSolidBrush(RGB(239, 236, 255));
+    HPEN pen = CreatePen(PS_SOLID, 2, RGB(124, 105, 255));
+    HBRUSH old_brush = (HBRUSH)SelectObject(dc, brush);
+    HPEN old_pen = (HPEN)SelectObject(dc, pen);
+    Ellipse(dc, thumb.left, thumb.top, thumb.right, thumb.bottom);
+    SelectObject(dc, old_brush); SelectObject(dc, old_pen);
+    DeleteObject(brush); DeleteObject(pen);
+}
+
+static void modern_draw_control(HDC dc, int control, const RECT& row,
+                                HFONT label_font, HFONT value_font,
+                                HFONT small_font) {
+    if (s_hovered == control)
+        fill_rounded_rect(dc, row, COL_HOVER, 9);
+
+    if (control >= ITEM_COUNT) {
+        const int quick = control - ITEM_COUNT;
+        RECT label = {row.left + 10, row.top, row.right - 106, row.bottom};
+        SelectObject(dc, label_font); SetTextColor(dc, COL_TEXT);
+        DrawTextA(dc, trainer_ui_text(s_quick_toggles[quick].label, NULL),
+                  -1, &label, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
+                  DT_END_ELLIPSIS);
+        modern_draw_switch(dc, row, *s_quick_toggles[quick].value, small_font);
+        return;
+    }
+
+    MenuItem& item = g_items[control];
+    if (item.type == ITEM_TYPE_SLIDER) {
+        modern_draw_slider(dc, control, row, label_font, value_font);
+        return;
+    }
+
+    RECT label = {row.left + 10, row.top,
+                  row.right - 112, row.bottom};
+    SelectObject(dc, label_font); SetTextColor(dc, COL_TEXT);
+
+    if (item.type == ITEM_TYPE_TOGGLE) {
+        if (control == 6) {
+            RECT global_label = {row.left + 10, row.top + 1,
+                                 row.right - 174, row.top + ITEM_H};
+            DrawTextA(dc, trainer_ui_text(item.label, NULL), -1,
+                      &global_label, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
+                      DT_END_ELLIPSIS);
+            RECT key = modern_hold_key_rect(control);
+            fill_rounded_rect(dc, key, RGB(27, 35, 52), 7);
+            frame_rounded_rect(dc, key,
+                s_hold_key_capture_item == control ? RGB(245, 186, 73) : COL_BORDER,
+                7);
+            char key_name[32] = {};
+            if (s_hold_key_capture_item == control) lstrcpyA(key_name, "...");
+            else get_hold_key_name(control, key_name, sizeof(key_name));
+            SelectObject(dc, small_font); SetTextColor(dc, COL_TEXT);
+            DrawTextA(dc, key_name, -1, &key,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            modern_draw_switch(dc, row, *item.value, small_font, false);
+            modern_draw_slider(dc, 7, row, label_font, value_font);
+            return;
+        }
+
+        const bool hold_key = is_hold_key_item(control);
+        label.right = hold_key ? row.right - 180 : row.right - 108;
+        DrawTextA(dc, trainer_ui_text(item.label, NULL), -1, &label,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        if (hold_key) {
+            RECT key = modern_hold_key_rect(control);
+            fill_rounded_rect(dc, key, RGB(27, 35, 52), 7);
+            frame_rounded_rect(dc, key,
+                s_hold_key_capture_item == control ? RGB(245, 186, 73) : COL_BORDER,
+                7);
+            char key_name[32] = {};
+            if (s_hold_key_capture_item == control) lstrcpyA(key_name, "...");
+            else get_hold_key_name(control, key_name, sizeof(key_name));
+            SelectObject(dc, small_font); SetTextColor(dc, COL_TEXT);
+            DrawTextA(dc, key_name, -1, &key,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        }
+        modern_draw_switch(dc, row, *item.value, small_font, !hold_key);
+        return;
+    }
+
+    if (item.type == ITEM_TYPE_TIME || item.type == ITEM_TYPE_WEATHER) {
+        RECT box = item.type == ITEM_TYPE_TIME
+            ? modern_time_box_rect(control)
+            : modern_weather_box_rect(control);
+        label.right = box.left - 10;
+        DrawTextA(dc, trainer_ui_text(item.label, NULL), -1, &label,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        fill_rounded_rect(dc, box, RGB(27, 35, 52), 7);
+        const bool enabled = item.type == ITEM_TYPE_TIME
+            ? g_time_enabled : g_weather_enabled;
+        frame_rounded_rect(dc, box, enabled ? COL_SLIDER : COL_BORDER, 7);
+        char text[64] = {};
+        if (item.type == ITEM_TYPE_TIME) {
+            if (g_time_hour >= 0 && g_time_hour <= 24)
+                wsprintfA(text, "%02d:%02d", g_time_hour, g_time_minute);
+            else lstrcpyA(text, "--:--");
+        } else {
+            const char* names[] = {"None", "Rain", "Storm", "Snow",
+                "Sandstorm", "Sun", "Heavy rain", "Blizzard", "Fallout"};
+            lstrcpynA(text, g_weather_type >= 0 && g_weather_type <= 8
+                ? trainer_ui_text(names[g_weather_type], NULL) : "---",
+                sizeof(text));
+        }
+        SelectObject(dc, value_font);
+        SetTextColor(dc, enabled ? RGB(159, 145, 255) : COL_TEXT);
+        DrawTextA(dc, text, -1, &box,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        return;
+    }
+
+    if (item.type == ITEM_TYPE_ACTION) {
+        RECT action = {row.right - 74, row.top + 7,
+                       row.right - 10, row.bottom - 7};
+        label.right = action.left - 8;
+        DrawTextA(dc, trainer_ui_text(item.label, NULL), -1, &label,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        const bool confirm = s_action_confirmation_item == control &&
+                             GetTickCount() < s_action_confirmation_until;
+        const bool flash = s_heal_flash_until &&
+                           GetTickCount() < s_heal_flash_until;
+        fill_rounded_rect(dc, action,
+            confirm ? RGB(186, 126, 48) :
+            (flash ? COL_ON : RGB(65, 112, 218)), 8);
+        SelectObject(dc, small_font); SetTextColor(dc, COL_TEXT);
+        DrawTextA(dc, confirm ? trainer_ui_text("Confirm", NULL) :
+                  (flash ? "OK" : "GO"), -1, &action,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        return;
+    }
+
+    if (item.type == ITEM_TYPE_POKEMON_MANAGER ||
+        item.type == ITEM_TYPE_INVENTORY_MANAGER ||
+        item.type == ITEM_TYPE_TRAINER_MANAGER) {
+        RECT manager_label = {row.left + 12, row.top,
+                              row.right - 134, row.bottom};
+        SelectObject(dc, label_font); SetTextColor(dc, COL_TEXT);
+        DrawTextA(dc, trainer_ui_text(item.label, NULL), -1,
+                  &manager_label, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
+                  DT_END_ELLIPSIS);
+        RECT open = {row.right - 126, row.top + 10,
+                     row.right - 10, row.bottom - 10};
+        fill_rounded_rect(dc, open, RGB(51, 65, 93), 8);
+        SelectObject(dc, small_font); SetTextColor(dc, RGB(214, 220, 235));
+        DrawTextA(dc, trainer_ui_text("Open Editor", NULL), -1, &open,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
+}
+
+static void modern_draw_speed_reset(HDC dc, HFONT small_font) {
+    RECT button = modern_speed_reset_rect();
+    fill_rounded_rect(dc, button, RGB(51, 65, 93), 8);
+    frame_rounded_rect(dc, button, RGB(73, 89, 121), 8);
+    SelectObject(dc, small_font); SetTextColor(dc, RGB(220, 226, 240));
+    DrawTextA(dc, trainer_ui_text("Reset", NULL), -1, &button,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+}
+
+static void modern_draw_settings(HDC dc, HFONT label_font,
+                                 HFONT small_font) {
+    RECT row = modern_settings_row_rect(0);
+    RECT key_button = modern_settings_key_rect();
+    RECT default_button = modern_settings_default_rect();
+    RECT label = {row.left + 10, row.top + 8,
+                  key_button.left - 16, row.top + 34};
+    SelectObject(dc, label_font); SetTextColor(dc, COL_TEXT);
+    DrawTextA(dc, trainer_ui_text("Menu Shortcut", NULL), -1, &label,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    RECT description = {row.left + 10, row.top + 33,
+                        key_button.left - 16, row.bottom - 7};
+    SelectObject(dc, small_font); SetTextColor(dc, COL_DIMTEXT);
+    DrawTextA(dc,
+              trainer_ui_text("Click the key button, then press a new shortcut", NULL),
+              -1, &description, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
+              DT_END_ELLIPSIS);
+
+    fill_rounded_rect(dc, key_button, RGB(61, 50, 122), 9);
+    frame_rounded_rect(dc, key_button,
+        s_menu_hotkey_capture ? RGB(245, 186, 73) : RGB(124, 105, 255), 9);
+    char key_name[40] = {};
+    if (s_menu_hotkey_capture) lstrcpyA(key_name, "...");
+    else get_virtual_key_name(s_menu_toggle_key, key_name, sizeof(key_name));
+    SelectObject(dc, small_font);
+    SetTextColor(dc, s_menu_hotkey_capture ? RGB(255, 220, 151) : COL_TEXT);
+    DrawTextA(dc, key_name, -1, &key_button,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    fill_rounded_rect(dc, default_button, RGB(51, 65, 93), 9);
+    frame_rounded_rect(dc, default_button, RGB(73, 89, 121), 9);
+    SetTextColor(dc, RGB(220, 226, 240));
+    DrawTextA(dc, trainer_ui_text("Default", NULL), -1, &default_button,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    RECT unload_row = modern_settings_row_rect(1);
+    RECT unload_button = modern_settings_unload_rect();
+    RECT unload_label = {unload_row.left + 10, unload_row.top + 8,
+                         unload_button.left - 16, unload_row.bottom - 8};
+    SelectObject(dc, label_font); SetTextColor(dc, COL_TEXT);
+    DrawTextA(dc, trainer_ui_text("Unload Trainer", NULL), -1, &unload_label,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    RECT divider = {unload_row.left, unload_row.top,
+                    unload_row.right, unload_row.top + 1};
+    HBRUSH divider_brush = CreateSolidBrush(RGB(43, 55, 75));
+    FillRect(dc, &divider, divider_brush); DeleteObject(divider_brush);
+    fill_rounded_rect(dc, unload_button, RGB(123, 50, 67), 9);
+    frame_rounded_rect(dc, unload_button, RGB(200, 91, 112), 9);
+    SelectObject(dc, small_font); SetTextColor(dc, RGB(255, 232, 236));
+    DrawTextA(dc, trainer_ui_text("Stop & Unload", NULL), -1, &unload_button,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+}
+
+static void paint_modern(HWND window) {
+    PAINTSTRUCT ps = {};
+    HDC target = BeginPaint(window, &ps);
+    HDC dc = CreateCompatibleDC(target);
+    HBITMAP bitmap = CreateCompatibleBitmap(target, MENU_TOTAL_W, menu_height());
+    HBITMAP old_bitmap = (HBITMAP)SelectObject(dc, bitmap);
+
+    RECT all = {0, 0, MENU_TOTAL_W, menu_height()};
+    HBRUSH background = CreateSolidBrush(COL_BG);
+    FillRect(dc, &all, background); DeleteObject(background);
+    SetBkMode(dc, TRANSPARENT);
+
+    HFONT title_font = CreateFontA(-17, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE,
+        FALSE, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, "Segoe UI");
+    HFONT tab_font = CreateFontA(-14, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE,
+        FALSE, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, "Segoe UI");
+    HFONT page_font = CreateFontA(-21, 0, 0, 0, FW_BOLD, FALSE, FALSE,
+        FALSE, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, "Segoe UI");
+    HFONT label_font = CreateFontA(-15, 0, 0, 0, FW_NORMAL, FALSE, FALSE,
+        FALSE, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, "Segoe UI");
+    HFONT value_font = CreateFontA(-14, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE,
+        FALSE, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, "Segoe UI");
+    HFONT small_font = CreateFontA(-12, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE,
+        FALSE, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, "Segoe UI");
+    HFONT old_font = (HFONT)SelectObject(dc, title_font);
+
+    RECT title_bar = {0, 0, MENU_TOTAL_W, TITLE_H};
+    HBRUSH title_brush = CreateSolidBrush(COL_TITLE);
+    FillRect(dc, &title_bar, title_brush); DeleteObject(title_brush);
+    SetTextColor(dc, RGB(255, 255, 255));
+    RECT title_text = {16, 0, 320, TITLE_H};
+    DrawTextA(dc, "Uranium Trainer", -1, &title_text,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    paint_language_flag(dc, language_flag_rect(UI_ENGLISH), UI_ENGLISH);
+    paint_language_flag(dc, language_flag_rect(UI_FRENCH), UI_FRENCH);
+    paint_language_flag(dc, language_flag_rect(UI_SPANISH), UI_SPANISH);
+    paint_close_button(dc);
+
+    RECT tab_bar = {0, TITLE_H, MENU_TOTAL_W, TITLE_H + MODERN_TAB_H};
+    HBRUSH tab_background = CreateSolidBrush(RGB(14, 20, 33));
+    FillRect(dc, &tab_bar, tab_background); DeleteObject(tab_background);
+    for (int tab = 0; tab < TAB_COUNT; ++tab) {
+        RECT rect = modern_tab_rect(tab);
+        if (tab == (int)s_active_tab) {
+            fill_rounded_rect(dc, rect, RGB(61, 50, 122), 10);
+            frame_rounded_rect(dc, rect, RGB(124, 105, 255), 10);
+            SetTextColor(dc, RGB(246, 244, 255));
+        } else {
+            SetTextColor(dc, COL_DIMTEXT);
+        }
+        SelectObject(dc, tab_font);
+        DrawTextA(dc, trainer_ui_text(modern_tab_title((MainTab)tab), NULL),
+                  -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE |
+                  DT_END_ELLIPSIS);
+    }
+
+    const int page_top = TITLE_H + MODERN_TAB_H;
+    RECT page_title = {MODERN_MARGIN + 2, page_top + 7,
+                       MENU_TOTAL_W - MODERN_MARGIN, page_top + 33};
+    SelectObject(dc, page_font); SetTextColor(dc, COL_TEXT);
+    DrawTextA(dc, trainer_ui_text(modern_tab_title(s_active_tab), NULL),
+              -1, &page_title, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    for (int column = 0; column < 2; ++column) {
+        if (s_active_tab == TAB_SETTINGS && column == 1) continue;
+        RECT card = modern_card_rect(column);
+        fill_rounded_rect(dc, card, RGB(18, 25, 39), 13);
+        frame_rounded_rect(dc, card, RGB(43, 55, 75), 13);
+        RECT accent = {card.left + 14, card.top + 13,
+                       card.left + 18, card.top + 27};
+        fill_rounded_rect(dc, accent, column == 0 ? COL_SLIDER : COL_ON, 4);
+        RECT group_title = {accent.right + 8, card.top,
+                            card.right - 12, card.top + MODERN_CARD_HEADER_H};
+        if (s_active_tab == TAB_DISPLAY && column == 0)
+            group_title.right = modern_speed_reset_rect().left - 8;
+        SelectObject(dc, tab_font); SetTextColor(dc, RGB(207, 214, 230));
+        DrawTextA(dc, trainer_ui_text(modern_group_title(s_active_tab, column), NULL),
+                  -1, &group_title, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
+                  DT_END_ELLIPSIS);
+
+        const int* items = NULL;
+        int count = 0;
+        modern_tab_items(s_active_tab, column, &items, &count);
+        for (int i = 0; i < count; ++i) {
+            const int item = items[i];
+            modern_draw_control(dc, item, modern_item_rect(item),
+                                label_font, value_font, small_font);
+        }
+        if (s_active_tab == TAB_BATTLE && column == 1) {
+            for (int i = 0; i < QUICK_TOGGLE_COUNT; ++i) {
+                modern_draw_control(dc, ITEM_COUNT + i,
+                    modern_quick_rect(i), label_font, value_font, small_font);
+            }
+        }
+        if (s_active_tab == TAB_DISPLAY && column == 0)
+            modern_draw_speed_reset(dc, small_font);
+        if (s_active_tab == TAB_SETTINGS && column == 0)
+            modern_draw_settings(dc, label_font, small_font);
+    }
+
+    paint_picker(dc, label_font);
+    frame_rounded_rect(dc, all, RGB(54, 66, 88), 2);
+    BitBlt(target, 0, 0, MENU_TOTAL_W, menu_height(), dc, 0, 0, SRCCOPY);
+
+    SelectObject(dc, old_font);
+    DeleteObject(title_font); DeleteObject(tab_font); DeleteObject(page_font);
+    DeleteObject(label_font); DeleteObject(value_font); DeleteObject(small_font);
+    SelectObject(dc, old_bitmap); DeleteObject(bitmap); DeleteDC(dc);
+    EndPaint(window, &ps);
 }
 
 // ------------------------------------------------------------
@@ -1796,9 +2797,7 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
 
     case WM_NCHITTEST:
-        // Hors contexte RGSS, l'overlay topmost reste visible mais ne doit
-        // intercepter aucun clic destine a une autre application.
-        return menu_context_is_foreground() ? HTCLIENT : HTTRANSPARENT;
+        return HTCLIENT;
 
     case WM_MOUSEACTIVATE:
         // Un clic donne le focus au trainer. Tant qu'aucun clic n'a eu lieu,
@@ -1806,7 +2805,7 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
         return MA_ACTIVATE;
 
     case WM_PAINT:
-        paint(hw);
+        paint_modern(hw);
         return 0;
 
     case WM_ERASEBKGND:
@@ -1864,6 +2863,22 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             InvalidateRect(hw, NULL, FALSE);
             return 0;
         }
+        if (y < TITLE_H && ptin(close_button_rect(), x, y)) {
+            menu_close();
+            return 0;
+        }
+        if (y < TITLE_H) {
+            for (int language = UI_ENGLISH; language <= UI_SPANISH; ++language) {
+                if (ptin(language_flag_rect((UiLanguage)language), x, y)) {
+                    s_ui_language = (UiLanguage)language;
+                    const char* code = language == UI_FRENCH ? "fr" :
+                        (language == UI_SPANISH ? "es" : "en");
+                    WritePrivateProfileStringA("Settings", "UiLanguage", code, "trainer.ini");
+                    InvalidateRect(hw, NULL, FALSE);
+                    return 0;
+                }
+            }
+        }
         if (y < TITLE_H) {
             s_dragging_menu = true;
             s_drag_ox = x;
@@ -1871,138 +2886,104 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             SetCapture(hw);
             return 0;
         }
-    
-        if (x >= MENU_LEFT_W + MENU_GAP) {
-            const int item = quick_menu_item_at(x, y);
-            if (item >= 0) {
-                const int slot = quick_menu_slot_from_item(item);
-                const bool in_hold_key = is_hold_key_item(item) &&
-                    ptin(quick_noclip_key_rect(slot), x, y);
-                const bool in_gamespeed_track = is_gamespeed_item(item) &&
-                    ptin(quick_gamespeed_track_rect(slot), x, y);
-                if (!in_hold_key) s_hold_key_capture_item = -1;
-                if (g_items[item].type == ITEM_TYPE_TOGGLE) {
-                    if (in_hold_key) {
-                        s_hold_key_capture_item = item;
-                        InterlockedExchange(&s_block_game_keyboard, 2);
-                        InvalidateRect(hw, NULL, FALSE);
-                    } else if (in_gamespeed_track) {
-                        int slider_item = -1;
-                        for (int j = 0; j < ITEM_COUNT; ++j) {
-                            if (g_items[j].on_slide == opt_gamespeed_apply) {
-                                slider_item = j;
-                                break;
-                            }
-                        }
-                        if (slider_item >= 0) {
-                            s_slider_drag = true;
-                            s_slider_idx = slider_item;
-                            s_slider_start_value =
-                                *g_items[slider_item].slider_val;
-                            s_slider_in_quick_column = true;
-                            SetCapture(hw);
-                            apply_slider(slider_item,
-                                quick_slider_val_from_x(slider_item, x), false);
-                        }
-                    } else {
-                        s_hold_key_capture_item = -1;
-                        toggle_item(item);
-                    }
-                } else if (g_items[item].type == ITEM_TYPE_TIME &&
-                           ptin(quick_time_box_rect(slot), x, y)) {
-                    picker_open_time(quick_time_box_rect(slot));
-                    InvalidateRect(hw, NULL, FALSE);
-                } else if (g_items[item].type == ITEM_TYPE_WEATHER &&
-                           ptin(quick_weather_box_rect(slot), x, y)) {
-                    picker_open_weather(quick_weather_box_rect(slot));
-                    InvalidateRect(hw, NULL, FALSE);
-                } else if (g_items[item].type == ITEM_TYPE_ACTION) {
-                    trigger_action(item);
-                } else if (g_items[item].type == ITEM_TYPE_SLIDER &&
-                           ptin(quick_slider_track_rect(slot), x, y)) {
-                    s_slider_drag = true;
-                    s_slider_idx = item;
-                    s_slider_start_value = *g_items[item].slider_val;
-                    s_slider_in_quick_column = true;
-                    SetCapture(hw);
-                    apply_slider(item, quick_slider_val_from_x(item, x), false);
-                }
-                return 0;
-            }
-            const int quick = quick_toggle_at(x, y);
-            if (quick >= 0) {
-                toggle_quick_item(quick);
-                return 0;
-            }
+        const int tab = modern_tab_at(x, y);
+        if (tab >= 0) {
+            s_active_tab = (MainTab)tab;
+            s_hovered = -1;
+            s_hold_key_capture_item = -1;
+            s_menu_hotkey_capture = false;
+            picker_close();
+            InvalidateRect(hw, NULL, FALSE);
             return 0;
         }
-    
-        int i = item_at_y(y);
-        if (!(i >= 0 && is_in_hold_key_box(i, x, y)))
-            s_hold_key_capture_item = -1;
-        if (i >= 0) {
-            if (g_items[i].type == ITEM_TYPE_TOGGLE) {
-                if (is_in_hold_key_box(i, x, y)) {
-                    s_hold_key_capture_item = i;
-                    InterlockedExchange(&s_block_game_keyboard, 2);
-                    InvalidateRect(hw, NULL, FALSE);
-                } else {
-                    s_hold_key_capture_item = -1;
-                    toggle_item(i);
-                }
+
+        if (s_active_tab == TAB_DISPLAY &&
+            ptin(modern_speed_reset_rect(), x, y)) {
+            opt_speed_reset_defaults();
+            InvalidateRect(hw, NULL, FALSE);
+            return 0;
+        }
+        if (s_active_tab == TAB_SETTINGS) {
+            if (ptin(modern_settings_key_rect(), x, y)) {
+                s_menu_hotkey_capture = true;
+                s_hold_key_capture_item = -1;
+                SetForegroundWindow(hw);
+                SetFocus(hw);
+                InterlockedExchange(&s_block_game_keyboard, 2);
+                InvalidateRect(hw, NULL, FALSE);
+                return 0;
             }
-            else if (g_items[i].type == ITEM_TYPE_SLIDER && is_in_slider_track(i, x, y)) {
+            if (ptin(modern_settings_default_rect(), x, y)) {
+                s_menu_hotkey_capture = false;
+                save_menu_toggle_key(VK_INSERT);
+                InvalidateRect(hw, NULL, FALSE);
+                return 0;
+            }
+            if (ptin(modern_settings_unload_rect(), x, y)) {
+                menu_request_unload();
+                return 0;
+            }
+        }
+
+        const int control = modern_control_at(x, y);
+        if (control < 0) {
+            s_hold_key_capture_item = -1;
+            return 0;
+        }
+        if (control >= ITEM_COUNT) {
+            s_hold_key_capture_item = -1;
+            toggle_quick_item(control - ITEM_COUNT);
+            return 0;
+        }
+
+        MenuItem& item = g_items[control];
+        const bool hold_key = is_hold_key_item(control) &&
+                              ptin(modern_hold_key_rect(control), x, y);
+        if (!hold_key) s_hold_key_capture_item = -1;
+        if (item.type == ITEM_TYPE_TOGGLE) {
+            const bool game_speed_track = control == 6 &&
+                ptin(modern_slider_track_rect(7), x, y);
+            if (hold_key) {
+                s_hold_key_capture_item = control;
+                InterlockedExchange(&s_block_game_keyboard, 2);
+                InvalidateRect(hw, NULL, FALSE);
+            } else if (game_speed_track) {
                 s_slider_drag = true;
-                s_slider_idx = i;
-                s_slider_start_value = *g_items[i].slider_val;
+                s_slider_idx = 7;
+                s_slider_start_value = *g_items[7].slider_val;
                 s_slider_in_quick_column = false;
                 SetCapture(hw);
-                apply_slider(i, slider_val_from_x(i, x), false);
+                apply_slider(7, modern_slider_val_from_x(7, x), false);
+            } else {
+                toggle_item(control);
             }
-            else if (g_items[i].type == ITEM_TYPE_TIME && is_in_time_box(i, x, y)) {
-                RECT tbox = {
-                    MENU_LEFT_W - 78,
-                    item_y(i) + 8,
-                    MENU_LEFT_W - PAD,
-                    item_y(i) + ITEM_H - 8
-                };
-                picker_open_time(tbox);
-                InvalidateRect(hw, NULL, FALSE);
-                return 0;
-            }
-            else if (g_items[i].type == ITEM_TYPE_WEATHER && is_in_weather_box(i, x, y)) {
-                RECT wbox = {
-                    MENU_LEFT_W - 98,
-                    item_y(i) + 8,
-                    MENU_LEFT_W - PAD,
-                    item_y(i) + ITEM_H - 8
-                };
-                picker_open_weather(wbox);
-                InvalidateRect(hw, NULL, FALSE);
-                return 0;
-            }
-            else if (g_items[i].type == ITEM_TYPE_ACTION) {
-                trigger_action(i);
-                return 0;
-            }
-            else if (g_items[i].type == ITEM_TYPE_POKEMON_MANAGER) {
-                trainer_editors_show_pokemon();
-                InterlockedExchange(&s_block_game_keyboard, 2);
-                return 0;
-            }
-            else if (g_items[i].type == ITEM_TYPE_INVENTORY_MANAGER) {
-                trainer_editors_show_inventory();
-                InterlockedExchange(&s_block_game_keyboard, 2);
-                return 0;
-            }
-            else if (g_items[i].type == ITEM_TYPE_TRAINER_MANAGER) {
-                trainer_editors_show_trainer();
-                InterlockedExchange(&s_block_game_keyboard, 2);
-                return 0;
-            }
-            else {
-                InvalidateRect(hw, NULL, FALSE);
-            }
+        } else if (item.type == ITEM_TYPE_SLIDER &&
+                   ptin(modern_slider_track_rect(control), x, y)) {
+            s_slider_drag = true;
+            s_slider_idx = control;
+            s_slider_start_value = *item.slider_val;
+            s_slider_in_quick_column = false;
+            SetCapture(hw);
+            apply_slider(control, modern_slider_val_from_x(control, x), false);
+        } else if (item.type == ITEM_TYPE_TIME &&
+                   ptin(modern_time_box_rect(control), x, y)) {
+            picker_open_time(modern_time_box_rect(control));
+            InvalidateRect(hw, NULL, FALSE);
+        } else if (item.type == ITEM_TYPE_WEATHER &&
+                   ptin(modern_weather_box_rect(control), x, y)) {
+            picker_open_weather(modern_weather_box_rect(control));
+            InvalidateRect(hw, NULL, FALSE);
+        } else if (item.type == ITEM_TYPE_ACTION) {
+            trigger_action(control);
+        } else if (item.type == ITEM_TYPE_POKEMON_MANAGER) {
+            trainer_editors_show_pokemon();
+            InterlockedExchange(&s_block_game_keyboard, 2);
+        } else if (item.type == ITEM_TYPE_INVENTORY_MANAGER) {
+            trainer_editors_show_inventory();
+            InterlockedExchange(&s_block_game_keyboard, 2);
+        } else if (item.type == ITEM_TYPE_TRAINER_MANAGER) {
+            trainer_editors_show_trainer();
+            InterlockedExchange(&s_block_game_keyboard, 2);
         }
         return 0;
     }
@@ -2053,27 +3034,14 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             SetWindowPos(hw, HWND_TOPMOST, nx, ny, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
         }
         else if (s_slider_drag && s_slider_idx >= 0) {
-            const int value = s_slider_in_quick_column
-                ? quick_slider_val_from_x(s_slider_idx, x)
-                : slider_val_from_x(s_slider_idx, x);
+            const int value = modern_slider_val_from_x(s_slider_idx, x);
             apply_slider(s_slider_idx, value, false);
         }
         else {
-            if (x >= MENU_LEFT_W + MENU_GAP) {
-                const int menu_item = quick_menu_item_at(x, y);
-                const int quick = menu_item < 0 ? quick_toggle_at(x, y) : -1;
-                const int hovered = menu_item >= 0 ? menu_item :
-                    (quick >= 0 ? ITEM_COUNT + quick : -1);
-                if (s_hovered != hovered) {
-                    s_hovered = hovered;
-                    InvalidateRect(hw, NULL, FALSE);
-                }
-            } else {
-                int ni = item_at_y(y);
-                if (ni != s_hovered) {
-                    s_hovered = ni;
-                    InvalidateRect(hw, NULL, FALSE);
-                }
+            const int hovered = modern_control_at(x, y);
+            if (s_hovered != hovered) {
+                s_hovered = hovered;
+                InvalidateRect(hw, NULL, FALSE);
             }
         }
         return 0;
@@ -2120,19 +3088,12 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
     
-        const int quick_item = pt.x >= MENU_LEFT_W + MENU_GAP
-            ? quick_menu_item_at(pt.x, pt.y) : -1;
-        if (quick_item >= 0 && g_items[quick_item].type == ITEM_TYPE_SLIDER) {
-            int step = (g_items[quick_item].slider_max -
-                        g_items[quick_item].slider_min) / 100;
-            if (step < 1) step = 1;
-            apply_slider(quick_item,
-                         *g_items[quick_item].slider_val + delta * step);
-            return 0;
-        }
-        int i = item_at_y(pt.y);
-        if (i >= 0 && g_items[i].type == ITEM_TYPE_SLIDER) {
-            int step = (g_items[i].slider_max - g_items[i].slider_min) / 100;
+        int i = modern_control_at(pt.x, pt.y);
+        if (i == 6) i = 7;
+        if (i >= 0 && i < ITEM_COUNT &&
+            g_items[i].type == ITEM_TYPE_SLIDER) {
+            int step = (g_items[i].slider_max -
+                        g_items[i].slider_min) / 100;
             if (step < 1) step = 1;
             apply_slider(i, *g_items[i].slider_val + delta * step);
         }
@@ -2144,36 +3105,41 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
 
     case WM_KEYDOWN:
         switch (wp) {
-        case VK_INSERT:
         case VK_ESCAPE:
             menu_close();
             return 0;
 
         case VK_UP:
-            s_hovered = navigation_step(s_hovered < 0 ? 0 : s_hovered, -1);
+            s_hovered = modern_navigation_step(s_hovered, -1);
             InvalidateRect(hw, NULL, FALSE);
             return 0;
 
         case VK_DOWN:
-            s_hovered = navigation_step(s_hovered, 1);
+            s_hovered = modern_navigation_step(s_hovered, 1);
             InvalidateRect(hw, NULL, FALSE);
             return 0;
 
         case VK_LEFT:
-            if (s_hovered >= 0 && s_hovered < ITEM_COUNT &&
-                g_items[s_hovered].type == ITEM_TYPE_SLIDER) {
-                int step = (g_items[s_hovered].slider_max - g_items[s_hovered].slider_min) / 100;
+            if (s_hovered == 6 || (s_hovered >= 0 &&
+                s_hovered < ITEM_COUNT &&
+                g_items[s_hovered].type == ITEM_TYPE_SLIDER)) {
+                const int slider = s_hovered == 6 ? 7 : s_hovered;
+                int step = (g_items[slider].slider_max -
+                            g_items[slider].slider_min) / 100;
                 if (step < 1) step = 1;
-                apply_slider(s_hovered, *g_items[s_hovered].slider_val - step);
+                apply_slider(slider, *g_items[slider].slider_val - step);
             }
             return 0;
 
         case VK_RIGHT:
-            if (s_hovered >= 0 && s_hovered < ITEM_COUNT &&
-                g_items[s_hovered].type == ITEM_TYPE_SLIDER) {
-                int step = (g_items[s_hovered].slider_max - g_items[s_hovered].slider_min) / 100;
+            if (s_hovered == 6 || (s_hovered >= 0 &&
+                s_hovered < ITEM_COUNT &&
+                g_items[s_hovered].type == ITEM_TYPE_SLIDER)) {
+                const int slider = s_hovered == 6 ? 7 : s_hovered;
+                int step = (g_items[slider].slider_max -
+                            g_items[slider].slider_min) / 100;
                 if (step < 1) step = 1;
-                apply_slider(s_hovered, *g_items[s_hovered].slider_val + step);
+                apply_slider(slider, *g_items[slider].slider_val + step);
             }
             return 0;
 
@@ -2184,19 +3150,13 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             if (s_hovered >= 0 && g_items[s_hovered].type == ITEM_TYPE_TIME) {
-                const int slot = quick_menu_slot_from_item(s_hovered);
-                RECT tbox = slot >= 0 ? quick_time_box_rect(slot) : RECT{
-                    MENU_LEFT_W - 78, item_y(s_hovered) + 8,
-                    MENU_LEFT_W - PAD, item_y(s_hovered) + ITEM_H - 8};
+                RECT tbox = modern_time_box_rect(s_hovered);
                 picker_open_time(tbox);
                 InvalidateRect(hw, NULL, FALSE);
                 return 0;
             }
             if (s_hovered >= 0 && g_items[s_hovered].type == ITEM_TYPE_WEATHER) {
-                const int slot = quick_menu_slot_from_item(s_hovered);
-                RECT wbox = slot >= 0 ? quick_weather_box_rect(slot) : RECT{
-                    MENU_LEFT_W - 98, item_y(s_hovered) + 8,
-                    MENU_LEFT_W - PAD, item_y(s_hovered) + ITEM_H - 8};
+                RECT wbox = modern_weather_box_rect(s_hovered);
                 picker_open_weather(wbox);
                 InvalidateRect(hw, NULL, FALSE);
                 return 0;
@@ -2241,33 +3201,41 @@ static bool menu_keyboard_should_capture() {
     return fg && (fg == s_overlay || trainer_editors_owns_window(fg));
 }
 
-static bool menu_context_is_foreground() {
-    HWND fg = GetForegroundWindow();
-    if (!fg) return false;
-
-    if (fg == s_game || fg == s_overlay || trainer_editors_owns_window(fg))
-        return true;
-
-    // RGSS peut mettre au premier plan une fenetre top-level auxiliaire de son
-    // propre processus. Ce n'est pas une perte de focus vers une autre appli.
-    // IsChild ne couvre pas ces fenetres possedees/top-level.
-    DWORD fg_pid = 0;
-    DWORD game_pid = 0;
-    GetWindowThreadProcessId(fg, &fg_pid);
-    if (s_game) GetWindowThreadProcessId(s_game, &game_pid);
-    if (game_pid != 0 && fg_pid == game_pid) return true;
-
-    return false;
-}
-
 static LRESULT CALLBACK KbdHook(int code, WPARAM wp, LPARAM lp) {
     if (code == HC_ACTION) {
         KBDLLHOOKSTRUCT* kb = (KBDLLHOOKSTRUCT*)lp;
 
+        if (s_open && s_menu_hotkey_capture &&
+            menu_keyboard_should_capture() &&
+            (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN)) {
+            switch (kb->vkCode) {
+            case VK_SHIFT: case VK_LSHIFT: case VK_RSHIFT:
+            case VK_CONTROL: case VK_LCONTROL: case VK_RCONTROL:
+            case VK_MENU: case VK_LMENU: case VK_RMENU:
+            case VK_LWIN: case VK_RWIN:
+                return 1;
+            case VK_ESCAPE:
+                s_menu_hotkey_capture = false;
+                break;
+            case VK_BACK:
+            case VK_DELETE:
+                save_menu_toggle_key(VK_INSERT);
+                s_menu_hotkey_capture = false;
+                break;
+            default:
+                save_menu_toggle_key((int)kb->vkCode);
+                s_menu_hotkey_capture = false;
+                break;
+            }
+            InterlockedExchange(&s_block_game_keyboard, 1);
+            InvalidateRect(s_overlay, NULL, FALSE);
+            return 1;
+        }
+
         if (s_open && s_hold_key_capture_item >= 0 &&
             menu_keyboard_should_capture() &&
             (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN)) {
-            if (kb->vkCode == VK_INSERT) {
+            if ((int)kb->vkCode == s_menu_toggle_key) {
                 s_hold_key_capture_item = -1;
             } else if (kb->vkCode == VK_ESCAPE ||
                        kb->vkCode == VK_BACK || kb->vkCode == VK_DELETE) {
@@ -2282,14 +3250,11 @@ static LRESULT CALLBACK KbdHook(int code, WPARAM wp, LPARAM lp) {
             return 1;
         }
 
-        // Insert ne pilote le trainer que lorsque le jeu (ou son overlay) est
-        // actif. Il ne doit pas voler cette touche dans une autre application.
-        if (kb->vkCode == VK_INSERT && wp == WM_KEYDOWN) {
-            if (menu_context_is_foreground()) {
-                s_open ? menu_close() : menu_open();
-                return 1;
-            }
-            return CallNextHookEx(s_kbd_hook, code, wp, lp);
+        // The configured shortcut remains global while the trainer is loaded,
+        // regardless of which application currently owns the focus.
+        if ((int)kb->vkCode == s_menu_toggle_key && wp == WM_KEYDOWN) {
+            s_open ? menu_close() : menu_open();
+            return 1;
         }
 
         // A partir d'ici, le trainer ne capture que si l'une de ses propres
@@ -2444,15 +3409,6 @@ static void activate_trainer_window_at_point(const POINT& point) {
 
 static LRESULT CALLBACK MouseHook(int code, WPARAM wp, LPARAM lp) {
     if (code == HC_ACTION && s_overlay) {
-        // Le hook est global au bureau. Ne jamais avaler un evenement lorsque
-        // RGSS (ou l'overlay lui-meme) n'est plus la fenetre de premier plan.
-        if (!menu_context_is_foreground()) {
-            cancel_overlay_mouse_interaction();
-            // L'overlay reste affiche mais WM_NCHITTEST le rend transparent :
-            // le clic est transmis intact a l'application au premier plan.
-            return CallNextHookEx(s_mouse_hook, code, wp, lp);
-        }
-
         const MSLLHOOKSTRUCT* mouse = (const MSLLHOOKSTRUCT*)lp;
         const bool over_overlay = overlay_contains_screen_point(mouse->pt);
         const LONG captured_before = InterlockedExchangeAdd(&s_mouse_buttons, 0);
@@ -2546,20 +3502,25 @@ static LRESULT CALLBACK MouseHook(int code, WPARAM wp, LPARAM lp) {
 void menu_open() {
     if (!s_overlay) return;
 
-    RECT gr;
-    GetWindowRect(s_game, &gr);
-
     int mh = menu_height();
-    int sx = gr.left + 10;
-    int sy = gr.top + 30;
-
-    if (sx > gr.right - MENU_TOTAL_W) sx = gr.right - MENU_TOTAL_W;
-    if (sy > gr.bottom - mh)    sy = gr.bottom - mh;
-    if (sx < gr.left) sx = gr.left;
-    if (sy < gr.top)  sy = gr.top;
-
-    SetWindowPos(s_overlay, HWND_TOPMOST, sx, sy, MENU_TOTAL_W, mh,
-                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    if (!s_menu_positioned) {
+        RECT gr = {};
+        RECT work = {};
+        GetWindowRect(s_game, &gr);
+        SystemParametersInfoA(SPI_GETWORKAREA, 0, &work, 0);
+        int sx = gr.left + 18;
+        int sy = gr.top + 42;
+        if (sx + MENU_TOTAL_W > work.right) sx = work.right - MENU_TOTAL_W;
+        if (sy + mh > work.bottom) sy = work.bottom - mh;
+        if (sx < work.left) sx = work.left;
+        if (sy < work.top) sy = work.top;
+        SetWindowPos(s_overlay, HWND_TOPMOST, sx, sy, MENU_TOTAL_W, mh,
+                     SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        s_menu_positioned = true;
+    } else {
+        SetWindowPos(s_overlay, HWND_TOPMOST, 0, 0, MENU_TOTAL_W, mh,
+                     SWP_NOACTIVATE | SWP_NOMOVE | SWP_SHOWWINDOW);
+    }
 
     opt_money_read(on_money_read);
 
@@ -2578,12 +3539,19 @@ void menu_open() {
 
 void menu_close() {
     cancel_overlay_mouse_interaction();
+    s_menu_hotkey_capture = false;
     trainer_editors_hide_all();
     picker_close();
     ShowWindow(s_overlay, SW_HIDE);
     s_open = false;
     s_hovered = -1;
     InterlockedExchange(&s_block_game_keyboard, 0);
+}
+
+void menu_request_unload() {
+    if (!s_overlay) return;
+    menu_close();
+    PostQuitMessage(0);
 }
 
 bool menu_init(HINSTANCE hinst, HWND game_hwnd) {
@@ -2594,6 +3562,16 @@ bool menu_init(HINSTANCE hinst, HWND game_hwnd) {
     InterlockedExchange(&s_input_guard_pending, 0);
     InterlockedExchange(&s_input_guard_installed, 0);
     s_hold_key_capture_item = -1;
+    s_menu_hotkey_capture = false;
+    s_menu_toggle_key = GetPrivateProfileIntA(
+        "Settings", "MenuToggleKey", VK_INSERT, "trainer.ini");
+    if (s_menu_toggle_key <= 0 || s_menu_toggle_key > 254)
+        s_menu_toggle_key = VK_INSERT;
+    char language[8] = {};
+    GetPrivateProfileStringA("Settings", "UiLanguage", "en", language,
+                             sizeof(language), "trainer.ini");
+    s_ui_language = _stricmp(language, "fr") == 0 ? UI_FRENCH :
+        (_stricmp(language, "es") == 0 ? UI_SPANISH : UI_ENGLISH);
 
     movesdb_load("moves.txt");
 

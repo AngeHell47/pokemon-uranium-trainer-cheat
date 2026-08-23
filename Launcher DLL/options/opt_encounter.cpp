@@ -30,6 +30,7 @@ static volatile LONG s_installed = 0;
 static volatile LONG s_retry_started = 0;
 static LONG s_refresh_frames = 0;
 static char s_ruby[8192] = {};
+static char s_species_name[64] = {};
 
 static void post_to_game() { rgss_safe_dispatch_notify(); }
 
@@ -72,11 +73,17 @@ static void build_ruby() {
         "  $__uranium_trainer_wild_shiny_enabled=%s\n"
         "  $__uranium_trainer_wild_shiny_rate=%d\n"
         "  $__uranium_trainer_encounter_force_address=%lu\n"
+        "  $__uranium_trainer_encounter_name_address=%lu\n"
         "  $__uranium_trainer_encounter_writer ||= Win32API.new(\"kernel32\",\"RtlMoveMemory\",[\"l\",\"p\",\"l\"],\"v\")\n"
         // Dans cette build, pbEncounteredPokemon est defini sur le singleton
         // de $PokemonEncounters, pas sur PokemonEncounters lui-meme. Le
         // wrapper de classe precedent ne pouvait donc jamais l'intercepter.
         "  encounters=(defined?($PokemonEncounters) ? $PokemonEncounters : nil)\n"
+        "  begin\n"
+        "    species_name=(PBSpecies.getName($__uranium_trainer_force_species) rescue '').to_s[0,63].ljust(64,\"\\0\")\n"
+        "    $__uranium_trainer_encounter_writer.call($__uranium_trainer_encounter_name_address,species_name,64)\n"
+        "  rescue Exception\n"
+        "  end\n"
         "  if encounters && encounters.respond_to?(:pbEncounteredPokemon)\n"
         "    class << encounters\n"
         "      unless instance_methods.collect { |m| m.to_s }.include?(\"__uranium_trainer_original_pbEncounteredPokemon\")\n"
@@ -133,6 +140,7 @@ static void build_ruby() {
         "end\n",
         force, species, force_level, level, force_shiny, shiny_rate,
         (unsigned long)(ULONG_PTR)&s_force_next,
+        (unsigned long)(ULONG_PTR)s_species_name,
         (unsigned long)(ULONG_PTR)&s_installed);
 }
 
@@ -149,7 +157,8 @@ static void __cdecl on_game_thread_tick(void*) {
 }
 
 static DWORD WINAPI retry_thread(LPVOID) {
-    while (InterlockedExchangeAdd(&s_installed, 0) == 0) {
+    while (InterlockedExchangeAdd(&s_installed, 0) == 0 &&
+           !rgss_safe_dispatch_is_stopping()) {
         InterlockedExchange(&s_pending, 1);
         post_to_game();
         Sleep(500);
@@ -213,6 +222,10 @@ void opt_encounter_set_species(int species) {
     InterlockedExchange(&s_species, g_forced_wild_species);
     write_int("ForcedWildSpecies", g_forced_wild_species);
     queue_apply();
+}
+
+const char* opt_encounter_species_name() {
+    return s_species_name[0] ? s_species_name : "Unknown";
 }
 
 void opt_encounter_toggle_level(bool enabled) {

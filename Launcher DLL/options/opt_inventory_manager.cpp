@@ -46,7 +46,7 @@ static InventoryCatalogEntry s_catalog[INVENTORY_MANAGER_MAX_CATALOG] = {};
 static int s_entry_count = 0;
 static int s_catalog_count = 0;
 static bool s_truncated = false;
-static char s_status[128] = "En attente des donnees du sac...";
+static char s_status[128] = "Waiting for bag data...";
 static LONG s_revision = 0;
 static LONG s_status_revision = 0;
 
@@ -305,7 +305,7 @@ static void copy_from_shared() {
     const bool first_snapshot = s_revision == 0;
     InterlockedIncrement(&s_revision);
     LeaveCriticalSection(&s_lock);
-    if (first_snapshot) set_status("Toutes les poches et le catalogue sont synchronises.");
+    if (first_snapshot) set_status("All pockets and the catalog are synchronized.");
 }
 
 static void update_result() {
@@ -314,7 +314,7 @@ static void update_result() {
     if (s_shared_result.code == 0) {
         lstrcpynA(message, s_shared_result.message, sizeof(message));
     } else {
-        _snprintf(message, sizeof(message) - 1, "Erreur (%d) : %s",
+        _snprintf(message, sizeof(message) - 1, "Error (%d): %s",
                   s_shared_result.code, s_shared_result.message);
         message[sizeof(message) - 1] = '\0';
     }
@@ -431,12 +431,12 @@ void opt_inventory_manager_set_quantity(int item_id, int quantity) {
     if (quantity < 0) quantity = 0;
     if (quantity > 999) quantity = 999;
     if (!enqueue(INVENTORY_COMMAND_SET, item_id, quantity))
-        set_status("Impossible de mettre la commande en file.");
+        set_status("Unable to queue the command.");
 }
 
 void opt_inventory_manager_give(int item_id, int quantity) {
     if (item_id <= 0 || quantity <= 0) return;
     if (quantity > 999) quantity = 999;
     if (!enqueue(INVENTORY_COMMAND_GIVE, item_id, quantity))
-        set_status("Impossible de mettre la commande en file.");
+        set_status("Unable to queue the command.");
 }

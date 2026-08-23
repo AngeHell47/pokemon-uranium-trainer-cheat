@@ -1,57 +1,31 @@
-TRAINER EXTERNE - POKEMON URANIUM
-=================================
+POKEMON URANIUM EXTERNAL TRAINER
+================================
 
-Utilisation :
-1. Lance UraniumTrainer.exe.
-2. Clique sur "Lancer le jeu + chargement direct" pour supprimer l'intro et
-   charger immediatement la sauvegarde par defaut, sans clic simule.
-3. Pour un jeu deja ouvert normalement, selectionne Uranium.exe (marque [Jeu])
-   puis clique sur "Connecter au jeu selectionne".
-4. Le menu s'ouvre automatiquement au-dessus du jeu.
-5. La touche Inser masque ou reaffiche le menu.
+Usage:
+1. Run UraniumTrainer.exe.
+2. Click "Launch game + load save directly" to skip the intro and load the default save without simulated input.
+3. To attach to a game already running, select Uranium.exe (labelled [Game]) and click "Connect to selected game".
+4. The menu opens automatically over the game.
+5. Press Insert to hide or show the menu, or click the close button in its title bar.
 
-Les boutons "Gerer tous les Pokemon" et "Gerer tout l'inventaire" ouvrent des
-fenetres autonomes. La premiere couvre l'equipe et les boites, y compris la
-creation/suppression et les attaques/PP/IV/EV. La seconde affiche toutes les
-poches et le catalogue complet pour ajouter, retirer ou fixer une quantite.
-"Gerer le dresseur" ouvre une troisieme fenetre pour modifier le pseudo, le
-sexe, le temps de jeu et chacun des huit badges. Cliquez sur Appliquer, puis
-sauvegardez dans le jeu pour rendre ces changements permanents.
+English is the default language. Click the US, French or Spanish flag in the overlay title bar to change the interface language. The preference is saved to trainer.ini.
 
-No-clip : active l'option, puis maintiens la touche affichee dans le petit
-bouton (CTRL par defaut). Clique sur ce bouton et presse une autre touche pour
-changer le raccourci. Presse Echap, Retour arriere ou Suppr pour n'assigner
-aucune touche : le no-clip reste alors actif en permanence tant que l'option
-est active. Le choix est memorise dans trainer.ini.
+The main interface is divided into Player, Battle, Encounters, World, Display and Settings tabs. Settings lets you replace the global Insert show/hide shortcut with another key, restore the default, or use "Stop & Unload" to cleanly detach the trainer from the current game process. The interface remains visible and interactive when Uranium is not the active window or is minimized, and keeps the position where you moved it.
 
-Vitesse globale : choisis un multiplicateur x1 a x5 puis active l'option.
-Sans touche assignee (reglage par defaut), l'acceleration reste permanente.
-Clique sur le petit bouton de touche pour choisir un raccourci a maintenir ;
-Echap, Retour arriere ou Suppr restaure le mode sans touche.
+"Manage all Pokemon" opens a party and PC-box editor, including creation, deletion, moves, PP, IVs and EVs. "Manage inventory" opens an editor for every bag pocket and the complete catalog. "Manage trainer" lets you edit the name, gender, play time and all eight badges. Click Apply, then save in the game to keep profile changes.
 
-KO en un coup met les Pokemon adverses KO des le premier degat inflige, y
-compris pendant les combats de dresseurs. Objets infinis empeche la
-consommation des Pokeballs, soins, CT et baies ; les objets-clefs restent
-volontairement exclus afin de ne pas bloquer les scripts du scenario.
+No-clip: enable the option, then hold the key shown in its small button (Ctrl by default). Click that button and press another key to change the shortcut. Press Escape, Backspace or Delete to clear the shortcut; noclip then remains active while the option is enabled. The selection is saved in trainer.ini.
 
-"Voler depuis n'importe ou" ouvre directement la carte de destinations,
-sans verifier si le personnage se trouve dehors. "Capturer dresseurs" active
-le chemin de capture specialise d'Uranium : une Ball peut alors retirer et
-ajouter a vos boites un Pokemon adverse de dresseur. Combinez-le avec
-"Capture 100%" pour une capture garantie.
+Global speed: choose x1 to x5 on the slider built into the Global speed row, then enable the option. Without a shortcut (the default), acceleration stays on permanently. Click the key button to choose a hold shortcut; Escape, Backspace or Delete restores the no-shortcut mode. The separate duplicate multiplier row has been removed.
 
-Le curseur "Multiplicateur de degats" regle les degats de vos Pokemon de x1
-a x100. Il ne modifie ni les degats recus, ni les degats de recul/allies.
+One-hit KO defeats opposing Pokémon on the first damaging hit, including in trainer battles. Infinite items prevents Poké Balls, healing items, TMs and berries from being consumed; key items are intentionally excluded so story scripts are not blocked.
 
-Le chargement direct ne modifie aucun reglage persistant : lancer Uranium.exe
-normalement conserve l'intro habituelle.
+"Fly from anywhere" opens the destination map without checking whether the player is outdoors. "Catch trainers" enables Uranium's special trainer-catch path: a Ball can remove an opponent's Pokémon and add it to your PC boxes. Combine it with "Capture 100%" for guaranteed catches.
 
-Le fichier EXE contient le payload necessaire : il n'est pas necessaire de
-copier version.dll dans le dossier du jeu. Le payload est extrait dans le
-dossier temporaire de Windows au moment de la connexion.
+The Damage multiplier slider changes damage dealt by your Pokémon from x1 to x100. It does not change received, recoil or ally damage.
 
-Si le jeu est lance en administrateur, lance egalement le trainer en
-administrateur.
+Direct loading does not change persistent settings; launching Uranium.exe normally keeps the regular intro. The executable embeds the required payload, which is extracted to the Windows temporary directory while connecting; do not copy version.dll into the game folder.
 
-Compilation : lancer build.bat avec Visual Studio 2022 Community et les
-outils Desktop C++ x86 installes.
+If the game runs as administrator, run the trainer as administrator too.
+
+Build with build.bat using Visual Studio 2022 Community and the Desktop C++ x86 tools.

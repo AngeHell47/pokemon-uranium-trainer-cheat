@@ -204,7 +204,8 @@ static void __cdecl on_game_thread_tick(void*) {
 }
 
 static DWORD WINAPI retry_thread(LPVOID) {
-    while (InterlockedExchangeAdd(&s_installed, 0) == 0) {
+    while (InterlockedExchangeAdd(&s_installed, 0) == 0 &&
+           !rgss_safe_dispatch_is_stopping()) {
         post_to_game();
         Sleep(50);
     }

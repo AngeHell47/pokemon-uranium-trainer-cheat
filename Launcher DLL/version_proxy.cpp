@@ -151,6 +151,14 @@ static DWORD WINAPI main_thread(LPVOID) {
     menu_start_loop();
     opt_godmode_repair_shutdown();
     opt_extras_shutdown();
+    const bool detached = rgss_safe_dispatch_shutdown();
+    release_trainer_singleton();
+    // Retry workers wake at least twice per second. Let each one observe the
+    // stopping dispatcher before the payload's code is released.
+    if (detached) {
+        Sleep(600);
+        FreeLibraryAndExitThread(g_trainer_module, 0);
+    }
     return 0;
 }
 

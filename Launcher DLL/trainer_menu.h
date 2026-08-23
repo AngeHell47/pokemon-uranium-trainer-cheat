@@ -3,21 +3,21 @@
 #include <windows.h>
 
 #define MENU_W    300
-#define TITLE_H    28
-#define ITEM_H     32
-#define SLIDER_H   50
+#define TITLE_H    42
+#define ITEM_H     36
+#define SLIDER_H   56
 #define BAGITEM_H  50
 #define PAD        10
 
-#define COL_BG      RGB(20,20,30)
-#define COL_BORDER  RGB(80,80,120)
-#define COL_TITLE   RGB(60,60,160)
-#define COL_TEXT    RGB(220,220,220)
-#define COL_DIMTEXT RGB(120,120,120)
-#define COL_ON      RGB(80,200,80)
-#define COL_OFF     RGB(180,60,60)
-#define COL_HOVER   RGB(40,40,65)
-#define COL_SLIDER  RGB(100,100,200)
+#define COL_BG      RGB(10,15,25)
+#define COL_BORDER  RGB(50,62,82)
+#define COL_TITLE   RGB(18,25,41)
+#define COL_TEXT    RGB(239,243,250)
+#define COL_DIMTEXT RGB(145,157,178)
+#define COL_ON      RGB(45,203,157)
+#define COL_OFF     RGB(82,94,116)
+#define COL_HOVER   RGB(31,42,61)
+#define COL_SLIDER  RGB(124,105,255)
 
 #define ITEM_TYPE_TOGGLE  0
 #define ITEM_TYPE_SLIDER  1
@@ -50,7 +50,14 @@ struct MenuItem {
 extern MenuItem  g_items[];
 extern const int ITEM_COUNT;
 
+// English is the default UI language. French and Spanish can be selected from
+// the flags in the overlay title bar and the choice is persisted in trainer.ini.
+bool trainer_ui_is_spanish();
+const char* trainer_ui_text(const char* english, const char* spanish);
+
 bool menu_init(HINSTANCE hinst, HWND game_hwnd);
 void menu_start_loop();
 void menu_open();
 void menu_close();
+// Stops the trainer loop. The payload cleanup then detaches it from Uranium.
+void menu_request_unload();

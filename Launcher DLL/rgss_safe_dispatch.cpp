@@ -776,7 +776,7 @@ bool rgss_safe_dispatch_start(HMODULE owner, HWND game_hwnd, DWORD timeout_ms) {
     return true;
 }
 
-void rgss_safe_dispatch_shutdown() {
+bool rgss_safe_dispatch_shutdown() {
     const LONG previous = InterlockedExchange(&s_state, DISPATCH_STOPPING);
     remove_bootstrap_hooks();
 
@@ -838,6 +838,13 @@ void rgss_safe_dispatch_shutdown() {
         InterlockedExchange(&s_detour_depth, 0);
         InterlockedExchange(&s_state, DISPATCH_STOPPED);
     }
+    return detached;
+}
+
+bool rgss_safe_dispatch_is_stopping() {
+    const LONG state = InterlockedCompareExchange(&s_state, 0, 0);
+    return state == DISPATCH_STOPPING || state == DISPATCH_STOPPED ||
+           state == DISPATCH_FAILED;
 }
 
 bool rgss_safe_dispatch_register(RgssSafeCallback callback, void* context) {

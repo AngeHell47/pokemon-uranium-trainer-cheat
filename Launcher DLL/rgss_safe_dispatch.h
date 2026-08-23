@@ -47,7 +47,12 @@ bool rgss_safe_dispatch_start(HMODULE owner, HWND game_hwnd, DWORD timeout_ms);
 
 // Retire le detour et libere ses ressources. A appeler avant de decharger le
 // payload; les callbacks ne sont jamais executes apres le retour.
-void rgss_safe_dispatch_shutdown();
+// Returns true only when the Graphics.update detour was safely removed and
+// the payload can be unloaded without leaving a callback in RGSS.
+bool rgss_safe_dispatch_shutdown();
+
+// Retry workers use this to exit before the payload is unloaded.
+bool rgss_safe_dispatch_is_stopping();
 
 // Registre un callback permanent, invoque une fois au debut de chaque frame.
 // Les doublons exacts (callback, contexte) sont rejetes. unregister attend la

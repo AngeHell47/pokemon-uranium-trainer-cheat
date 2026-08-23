@@ -136,7 +136,8 @@ static void __cdecl on_game_thread_tick(void*) {
 }
 
 static DWORD WINAPI retry_thread(LPVOID) {
-    while (InterlockedExchangeAdd(&s_installed, 0) == 0) {
+    while (InterlockedExchangeAdd(&s_installed, 0) == 0 &&
+           !rgss_safe_dispatch_is_stopping()) {
         InterlockedExchange(&s_need_install, 1);
         InterlockedExchange(&s_pending_cfg, 1);
         post_to_game();
@@ -236,5 +237,13 @@ void opt_speed_apply_surf(int value) {
 
 void opt_speed_apply_bike(int value) {
     g_speed_bike_value = value;
+    apply_all_now();
+}
+
+void opt_speed_reset_defaults() {
+    g_speed_walk_value = 4;
+    g_speed_run_value = 5;
+    g_speed_surf_value = 5;
+    g_speed_bike_value = 6;
     apply_all_now();
 }

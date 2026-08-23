@@ -1,4 +1,5 @@
 #include "trainer_editors.h"
+#include "trainer_menu.h"
 
 #include "moves_db.h"
 #include "options/opt_inventory_manager.h"
@@ -18,21 +19,21 @@ enum {
     INVENTORY_WINDOW_HEIGHT = 680,
     TRAINER_WINDOW_WIDTH = 620,
     TRAINER_WINDOW_HEIGHT = 430,
-    EDITOR_TITLE_HEIGHT = 30,
+    EDITOR_TITLE_HEIGHT = 36,
     LIST_ROW_HEIGHT = 22
 };
 
-static const COLORREF UI_BACKGROUND = RGB(20, 20, 30);
-static const COLORREF COLOR_PANEL = RGB(28, 28, 43);
-static const COLORREF COLOR_PANEL_ALT = RGB(35, 35, 53);
-static const COLORREF COLOR_BORDER = RGB(80, 80, 120);
-static const COLORREF COLOR_TITLE = RGB(60, 60, 160);
-static const COLORREF COLOR_TEXT = RGB(225, 225, 230);
-static const COLORREF COLOR_DIM = RGB(145, 145, 165);
-static const COLORREF COLOR_ACCENT = RGB(115, 125, 220);
-static const COLORREF COLOR_SUCCESS = RGB(80, 180, 100);
-static const COLORREF COLOR_DANGER = RGB(185, 65, 75);
-static const COLORREF COLOR_HOVER = RGB(48, 48, 75);
+static const COLORREF UI_BACKGROUND = RGB(11, 16, 26);
+static const COLORREF COLOR_PANEL = RGB(18, 25, 39);
+static const COLORREF COLOR_PANEL_ALT = RGB(25, 34, 51);
+static const COLORREF COLOR_BORDER = RGB(48, 63, 88);
+static const COLORREF COLOR_TITLE = RGB(24, 33, 55);
+static const COLORREF COLOR_TEXT = RGB(232, 237, 246);
+static const COLORREF COLOR_DIM = RGB(143, 155, 178);
+static const COLORREF COLOR_ACCENT = RGB(105, 123, 255);
+static const COLORREF COLOR_SUCCESS = RGB(42, 166, 126);
+static const COLORREF COLOR_DANGER = RGB(177, 65, 83);
+static const COLORREF COLOR_HOVER = RGB(34, 47, 71);
 
 static HINSTANCE s_instance = NULL;
 static HWND s_game = NULL;
@@ -214,14 +215,41 @@ static void frame_rect(HDC dc, const RECT& rect, COLORREF color) {
     DeleteObject(pen);
 }
 
+static void fill_rounded_rect(HDC dc, const RECT& rect, COLORREF color,
+                              int radius = 8) {
+    HBRUSH brush = CreateSolidBrush(color);
+    HPEN pen = CreatePen(PS_NULL, 0, 0);
+    HBRUSH previous_brush = (HBRUSH)SelectObject(dc, brush);
+    HPEN previous_pen = (HPEN)SelectObject(dc, pen);
+    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
+    SelectObject(dc, previous_brush); SelectObject(dc, previous_pen);
+    DeleteObject(brush); DeleteObject(pen);
+}
+
+static void frame_rounded_rect(HDC dc, const RECT& rect, COLORREF color,
+                               int radius = 8) {
+    HPEN pen = CreatePen(PS_SOLID, 1, color);
+    HPEN previous_pen = (HPEN)SelectObject(dc, pen);
+    HBRUSH previous_brush = (HBRUSH)SelectObject(dc, GetStockObject(NULL_BRUSH));
+    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
+    SelectObject(dc, previous_pen); SelectObject(dc, previous_brush);
+    DeleteObject(pen);
+}
+
 static void draw_text(HDC dc, const RECT& rect, const char* text,
                       COLORREF color, UINT flags) {
     // Le DC memoire utilise blanc par defaut comme couleur de fond. Sans ce
     // reglage, DrawText dessine un rectangle blanc derriere chaque libelle.
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, color);
+    const char* localized = trainer_ui_text(text ? text : "", NULL);
+    wchar_t wide[512] = {};
+    int converted = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                         localized, -1, wide, 511);
+    if (converted <= 0)
+        converted = MultiByteToWideChar(CP_ACP, 0, localized, -1, wide, 511);
     RECT copy = rect;
-    DrawTextA(dc, text ? text : "", -1, &copy, flags);
+    if (converted > 0) DrawTextW(dc, wide, -1, &copy, flags);
 }
 
 static void draw_edit_caret(HDC dc, const RECT& text_rect,
@@ -244,8 +272,10 @@ static void draw_edit_caret(HDC dc, const RECT& text_rect,
 
 static void draw_button(HDC dc, const RECT& rect, const char* text,
                         COLORREF color) {
-    fill_rect(dc, rect, color);
-    frame_rect(dc, rect, RGB(125, 125, 175));
+    RECT shadow = {rect.left + 1, rect.top + 2, rect.right + 1, rect.bottom + 2};
+    fill_rounded_rect(dc, shadow, RGB(7, 11, 19), 8);
+    fill_rounded_rect(dc, rect, color, 8);
+    frame_rounded_rect(dc, rect, RGB(105, 119, 157), 8);
     draw_text(dc, rect, text, COLOR_TEXT,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
@@ -254,13 +284,22 @@ static void draw_title(HDC dc, int width, const char* title,
                        RECT* close_button) {
     RECT title_rect = {0, 0, width, EDITOR_TITLE_HEIGHT};
     fill_rect(dc, title_rect, COLOR_TITLE);
+    RECT bottom_accent = {0, EDITOR_TITLE_HEIGHT - 2, width, EDITOR_TITLE_HEIGHT};
+    fill_rect(dc, bottom_accent, COLOR_ACCENT);
     draw_text(dc, title_rect, title, COLOR_TEXT,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    RECT grip = {7, 0, 30, EDITOR_TITLE_HEIGHT};
-    draw_text(dc, grip, ":::", RGB(175, 175, 220),
+    RECT grip = {10, 0, 34, EDITOR_TITLE_HEIGHT};
+    draw_text(dc, grip, "•••", RGB(132, 145, 184),
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    *close_button = {width - 31, 4, width - 5, EDITOR_TITLE_HEIGHT - 4};
-    draw_button(dc, *close_button, "X", COLOR_DANGER);
+    *close_button = {width - 34, 6, width - 8, EDITOR_TITLE_HEIGHT - 6};
+    fill_rounded_rect(dc, *close_button, RGB(126, 48, 67), 8);
+    HPEN close_pen = CreatePen(PS_SOLID, 2, RGB(255, 224, 231));
+    HPEN old_pen = (HPEN)SelectObject(dc, close_pen);
+    MoveToEx(dc, close_button->left + 8, close_button->top + 6, NULL);
+    LineTo(dc, close_button->right - 8, close_button->bottom - 6);
+    MoveToEx(dc, close_button->right - 8, close_button->top + 6, NULL);
+    LineTo(dc, close_button->left + 8, close_button->bottom - 6);
+    SelectObject(dc, old_pen); DeleteObject(close_pen);
 }
 
 static bool same_target(const PokemonTarget& left,
@@ -296,12 +335,12 @@ static int find_target(const PokemonTarget& target) {
 
 static void sync_window(HWND window, bool open) {
     if (!window) return;
-    if (!open || !IsWindowVisible(s_game) || IsIconic(s_game)) {
+    if (!open) {
         ShowWindow(window, SW_HIDE);
         return;
     }
-    // Garder la fenetre visible sans modifier le focus courant. Elle est
-    // activable normalement par un clic, comme toute fenetre du trainer.
+    // Editor windows remain usable even when the game is minimized or another
+    // application owns the foreground window.
     ShowWindow(window, SW_SHOWNOACTIVATE);
     SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0,
                  SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
@@ -439,22 +478,22 @@ static void begin_pokemon_field_edit(const PokemonFieldHit& hit,
         s_choice.sub_index = hit.sub_index;
         s_choice.current_value = atoi(hit.initial);
         s_choice.anchor = hit.rect;
-        const char* title = "Choisir une valeur";
+        const char* title = "Choose a value";
         switch (hit.field) {
-        case POKEMON_EDIT_SPECIES:   title = "Choisir l'espece"; break;
-        case POKEMON_EDIT_LEVEL:     title = "Choisir le niveau"; break;
-        case POKEMON_EDIT_GENDER:    title = "Choisir le sexe"; break;
-        case POKEMON_EDIT_FORM:      title = "Choisir la forme"; break;
-        case POKEMON_EDIT_SHINY:     title = "Pokemon shiny"; break;
-        case POKEMON_EDIT_NATURE:    title = "Choisir la nature"; break;
-        case POKEMON_EDIT_ABILITY:   title = "Choisir la capacite"; break;
-        case POKEMON_EDIT_HELD_ITEM: title = "Choisir l'objet tenu"; break;
-        case POKEMON_EDIT_HAPPINESS: title = "Choisir le bonheur"; break;
-        case POKEMON_EDIT_IV:        title = "Choisir l'IV"; break;
-        case POKEMON_EDIT_EV:        title = "Choisir l'EV"; break;
-        case POKEMON_EDIT_MOVE_ID:   title = "Choisir l'attaque"; break;
-        case POKEMON_EDIT_MOVE_PP:   title = "Choisir les PP actuels"; break;
-        case POKEMON_EDIT_MOVE_PPUP: title = "Choisir les PP Up"; break;
+        case POKEMON_EDIT_SPECIES:   title = "Choose species"; break;
+        case POKEMON_EDIT_LEVEL:     title = "Choose level"; break;
+        case POKEMON_EDIT_GENDER:    title = "Choose gender"; break;
+        case POKEMON_EDIT_FORM:      title = "Choose form"; break;
+        case POKEMON_EDIT_SHINY:     title = "Shiny Pokemon"; break;
+        case POKEMON_EDIT_NATURE:    title = "Choose nature"; break;
+        case POKEMON_EDIT_ABILITY:   title = "Choose ability"; break;
+        case POKEMON_EDIT_HELD_ITEM: title = "Choose held item"; break;
+        case POKEMON_EDIT_HAPPINESS: title = "Choose friendship"; break;
+        case POKEMON_EDIT_IV:        title = "Choose IV"; break;
+        case POKEMON_EDIT_EV:        title = "Choose EV"; break;
+        case POKEMON_EDIT_MOVE_ID:   title = "Choose move"; break;
+        case POKEMON_EDIT_MOVE_PP:   title = "Choose current PP"; break;
+        case POKEMON_EDIT_MOVE_PPUP: title = "Choose PP Ups"; break;
         default: break;
         }
         lstrcpynA(s_choice.title, title, sizeof(s_choice.title));
@@ -606,10 +645,10 @@ static bool choice_raw_at(int index, int* value, char* label, int capacity) {
         *value = selected;
         const char* named = NULL;
         if (s_choice.field == POKEMON_EDIT_GENDER) {
-            static const char* names[] = {"Male", "Femelle", "Asexue"};
+            static const char* names[] = {"Male", "Female", "Genderless"};
             named = names[selected];
         } else if (s_choice.field == POKEMON_EDIT_SHINY) {
-            named = selected ? "Oui" : "Non";
+            named = selected ? "Yes" : "No";
         }
         if (named) _snprintf(label, capacity - 1, "%d - %s", selected, named);
         else _snprintf(label, capacity - 1, "%d", selected);
@@ -639,7 +678,7 @@ static bool choice_raw_at(int index, int* value, char* label, int capacity) {
         return true;
     case POKEMON_EDIT_HELD_ITEM:
         if (index == 0) {
-            *value = 0; lstrcpynA(label, "#0  Aucun objet", capacity); return true;
+            *value = 0; lstrcpynA(label, "#0  No item", capacity); return true;
         }
         --index;
         if (index >= s_item_count) return false;
@@ -647,7 +686,7 @@ static bool choice_raw_at(int index, int* value, char* label, int capacity) {
         break;
     case POKEMON_EDIT_MOVE_ID:
         if (index == 0) {
-            *value = 0; lstrcpynA(label, "#0  Aucune attaque", capacity); return true;
+            *value = 0; lstrcpynA(label, "#0  No move", capacity); return true;
         }
         --index;
         if (index >= movesdb_count()) return false;
@@ -779,7 +818,7 @@ static const char* item_name(int item_id) {
         if (s_inventory_entries[i].item_id == item_id)
             return s_inventory_entries[i].name;
     }
-    return "Aucun objet selectionne";
+    return "No item selected";
 }
 
 static void refresh_pokemon_cache() {
@@ -889,9 +928,12 @@ static void format_id_name(char* out, int capacity, int id, const char* name) {
 static void draw_pokemon_detail(HDC dc) {
     s_pokemon_hit_count = 0;
     if (s_pokemon_selected < 0 || !s_pokemon_detail.valid) {
-        RECT empty = {330, 70, POKEMON_WINDOW_WIDTH - 15, 120};
+        RECT empty_panel = {320, 43, POKEMON_WINDOW_WIDTH - 12, 180};
+        fill_rounded_rect(dc, empty_panel, COLOR_PANEL, 10);
+        frame_rounded_rect(dc, empty_panel, COLOR_BORDER, 10);
+        RECT empty = {330, 70, POKEMON_WINDOW_WIDTH - 22, 145};
         draw_text(dc, empty,
-                  "Selectionnez un Pokemon dans l'equipe ou les boites.",
+                  "Select a Pokemon from your party or PC boxes.",
                   COLOR_DIM, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         return;
     }
@@ -909,45 +951,55 @@ static void draw_pokemon_detail(HDC dc) {
     int y2 = 66;
     int y3 = 66;
 
+    RECT identity_panel = {col1 - 7, 39, col1 + width1 + 5, 374};
+    RECT health_panel = {col2 - 7, 39, col2 + width2 + 5, 374};
+    RECT stats_panel = {col3 - 7, 39, col3 + width3 + 5, 374};
+    fill_rounded_rect(dc, identity_panel, COLOR_PANEL, 10);
+    fill_rounded_rect(dc, health_panel, COLOR_PANEL, 10);
+    fill_rounded_rect(dc, stats_panel, COLOR_PANEL, 10);
+    frame_rounded_rect(dc, identity_panel, COLOR_BORDER, 10);
+    frame_rounded_rect(dc, health_panel, COLOR_BORDER, 10);
+    frame_rounded_rect(dc, stats_panel, COLOR_BORDER, 10);
+
     RECT identity_title = {col1, 42, col1 + width1, 63};
     RECT health_title = {col2, 42, col2 + width2, 63};
     RECT stats_title = {col3, 42, col3 + width3, 63};
-    draw_text(dc, identity_title, "Identite", COLOR_TEXT,
+    draw_text(dc, identity_title, "Identity", COLOR_TEXT,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, health_title, "Etat et provenance", COLOR_TEXT,
+    draw_text(dc, health_title, "Status and origin", COLOR_TEXT,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, stats_title, "Statistiques", COLOR_TEXT,
+    draw_text(dc, stats_title, "Stats", COLOR_TEXT,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-    draw_labeled_field(dc, col1, y1, width1, "Surnom", pokemon.name,
+    draw_labeled_field(dc, col1, y1, width1, "Nickname", pokemon.name,
                        pokemon.name, POKEMON_EDIT_NAME, 0, true, true);
     y1 += 25;
     format_id_name(value, sizeof(value), pokemon.species, pokemon.species_name);
     format_int(initial, sizeof(initial), pokemon.species);
-    draw_labeled_field(dc, col1, y1, width1, "Espece", value, initial,
+    draw_labeled_field(dc, col1, y1, width1, "Species", value, initial,
                        POKEMON_EDIT_SPECIES, 0, true, false, true);
     y1 += 25;
     format_int(value, sizeof(value), pokemon.level);
-    draw_labeled_field(dc, col1, y1, width1, "Niveau", value, value,
+    draw_labeled_field(dc, col1, y1, width1, "Level", value, value,
                        POKEMON_EDIT_LEVEL, 0, true, false, true);
     y1 += 25;
     format_int(value, sizeof(value), pokemon.exp);
     draw_labeled_field(dc, col1, y1, width1, "Experience", value, value,
                        POKEMON_EDIT_LEVEL, 0, false, false);
     y1 += 25;
-    const char* gender = pokemon.gender == 1 ? "1 - Femelle" :
-                         pokemon.gender == 2 ? "2 - Asexue" : "0 - Male";
+    const char* gender = pokemon.gender == 1 ? "1 - Female" :
+                         pokemon.gender == 2 ? "2 - Genderless" : "0 - Male";
     format_int(initial, sizeof(initial), pokemon.gender);
-    draw_labeled_field(dc, col1, y1, width1, "Sexe", gender, initial,
+    draw_labeled_field(dc, col1, y1, width1, "Gender", gender, initial,
                        POKEMON_EDIT_GENDER, 0, true, false, true);
     y1 += 25;
     format_int(value, sizeof(value), pokemon.form);
-    draw_labeled_field(dc, col1, y1, width1, "Forme", value, value,
+    draw_labeled_field(dc, col1, y1, width1, "Form", value, value,
                        POKEMON_EDIT_FORM, 0, true, false, true);
     y1 += 25;
     format_int(initial, sizeof(initial), pokemon.shiny);
     draw_labeled_field(dc, col1, y1, width1, "Shiny",
-                       pokemon.shiny ? "1 - Oui" : "0 - Non", initial,
+                       pokemon.shiny ? "1 - Yes" : "0 - No", initial,
                        POKEMON_EDIT_SHINY, 0, true, false, true);
     y1 += 25;
     format_id_name(value, sizeof(value), pokemon.nature, pokemon.nature_name);
@@ -957,16 +1009,16 @@ static void draw_pokemon_detail(HDC dc) {
     y1 += 25;
     format_id_name(value, sizeof(value), pokemon.ability, pokemon.ability_name);
     format_int(initial, sizeof(initial), pokemon.ability_index);
-    draw_labeled_field(dc, col1, y1, width1, "Capacite", value, initial,
+    draw_labeled_field(dc, col1, y1, width1, "Ability", value, initial,
                        POKEMON_EDIT_ABILITY, 0, true, false, true);
     y1 += 25;
     format_id_name(value, sizeof(value), pokemon.held_item, pokemon.item_name);
     format_int(initial, sizeof(initial), pokemon.held_item);
-    draw_labeled_field(dc, col1, y1, width1, "Objet tenu", value, initial,
+    draw_labeled_field(dc, col1, y1, width1, "Held item", value, initial,
                        POKEMON_EDIT_HELD_ITEM, 0, true, false, true);
     y1 += 25;
     format_int(value, sizeof(value), pokemon.happiness);
-    draw_labeled_field(dc, col1, y1, width1, "Bonheur", value, value,
+    draw_labeled_field(dc, col1, y1, width1, "Friendship", value, value,
                        POKEMON_EDIT_HAPPINESS, 0, true, false, true);
 
     _snprintf(value, sizeof(value) - 1, "%d / %d", pokemon.hp, pokemon.totalhp);
@@ -975,19 +1027,19 @@ static void draw_pokemon_detail(HDC dc) {
                        POKEMON_EDIT_HP, 0, true, false);
     y2 += 25;
     format_int(value, sizeof(value), pokemon.status);
-    draw_labeled_field(dc, col2, y2, width2, "Statut", value, value,
+    draw_labeled_field(dc, col2, y2, width2, "Status", value, value,
                        POKEMON_EDIT_STATUS, 0, true, false);
     y2 += 25;
     format_int(value, sizeof(value), pokemon.status_count);
-    draw_labeled_field(dc, col2, y2, width2, "Compteur", value, value,
+    draw_labeled_field(dc, col2, y2, width2, "Counter", value, value,
                        POKEMON_EDIT_STATUS_COUNT, 0, true, false);
     y2 += 25;
-    draw_labeled_field(dc, col2, y2, width2, "Oeuf",
-                       pokemon.egg ? "Oui" : "Non", "0",
+    draw_labeled_field(dc, col2, y2, width2, "Egg",
+                       pokemon.egg ? "Yes" : "No", "0",
                        POKEMON_EDIT_EGGSTEPS, 0, false, false);
     y2 += 25;
     format_int(value, sizeof(value), pokemon.eggsteps);
-    draw_labeled_field(dc, col2, y2, width2, "Pas oeuf", value, value,
+    draw_labeled_field(dc, col2, y2, width2, "Egg steps", value, value,
                        POKEMON_EDIT_EGGSTEPS, 0, true, false);
     y2 += 25;
     format_int(value, sizeof(value), pokemon.pokerus);
@@ -999,26 +1051,26 @@ static void draw_pokemon_detail(HDC dc) {
                        POKEMON_EDIT_POKEBALL, 0, true, false);
     y2 += 25;
     format_int(value, sizeof(value), pokemon.markings);
-    draw_labeled_field(dc, col2, y2, width2, "Marquages", value, value,
+    draw_labeled_field(dc, col2, y2, width2, "Markings", value, value,
                        POKEMON_EDIT_MARKINGS, 0, true, false);
     y2 += 25;
     format_int(value, sizeof(value), pokemon.obtain_mode);
-    draw_labeled_field(dc, col2, y2, width2, "Obtention", value, value,
+    draw_labeled_field(dc, col2, y2, width2, "Met", value, value,
                        POKEMON_EDIT_OBTAIN_MODE, 0, true, false);
     y2 += 25;
     format_int(value, sizeof(value), pokemon.obtain_map);
-    draw_labeled_field(dc, col2, y2, width2, "Carte", value, value,
+    draw_labeled_field(dc, col2, y2, width2, "Map", value, value,
                        POKEMON_EDIT_OBTAIN_MAP, 0, true, false);
     y2 += 25;
     format_int(value, sizeof(value), pokemon.obtain_level);
-    draw_labeled_field(dc, col2, y2, width2, "Niv. obtenu", value, value,
+    draw_labeled_field(dc, col2, y2, width2, "Met level", value, value,
                        POKEMON_EDIT_OBTAIN_LEVEL, 0, true, false);
     y2 += 25;
-    draw_labeled_field(dc, col2, y2, width2, "Lieu texte",
+    draw_labeled_field(dc, col2, y2, width2, "Met text",
                        pokemon.obtain_text, pokemon.obtain_text,
                        POKEMON_EDIT_OBTAIN_TEXT, 0, true, true);
 
-    const char* stat_names[5] = {"Attaque", "Defense", "Vitesse", "Atq. Spe", "Def. Spe"};
+    const char* stat_names[5] = {"Attack", "Defense", "Speed", "Sp. Atk", "Sp. Def"};
     const int stat_values[5] = {pokemon.attack, pokemon.defense, pokemon.speed,
                                 pokemon.spatk, pokemon.spdef};
     for (int i = 0; i < 5; ++i) {
@@ -1075,7 +1127,10 @@ static void draw_pokemon_detail(HDC dc) {
     }
 
     RECT moves_title = {col1, 387, POKEMON_WINDOW_WIDTH - 16, 410};
-    draw_text(dc, moves_title, "Attaques (ID, PP actuels / PP max, PP Up)",
+    RECT moves_panel = {col1 - 7, 382, POKEMON_WINDOW_WIDTH - 11, 529};
+    fill_rounded_rect(dc, moves_panel, COLOR_PANEL, 10);
+    frame_rounded_rect(dc, moves_panel, COLOR_BORDER, 10);
+    draw_text(dc, moves_title, "Moves (ID, current PP / max PP, PP Ups)",
               COLOR_TEXT, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     int moves_y = 414;
     for (int i = 0; i < 4; ++i) {
@@ -1147,11 +1202,14 @@ static void draw_pokemon_detail(HDC dc) {
     }
 
     RECT ids_title = {col1, 538, POKEMON_WINDOW_WIDTH - 16, 560};
-    draw_text(dc, ids_title, "Identite d'origine (lecture seule)", COLOR_TEXT,
+    RECT ids_panel = {col1 - 7, 534, POKEMON_WINDOW_WIDTH - 11, 595};
+    fill_rounded_rect(dc, ids_panel, COLOR_PANEL, 10);
+    frame_rounded_rect(dc, ids_panel, COLOR_BORDER, 10);
+    draw_text(dc, ids_title, "Original identity (read-only)", COLOR_TEXT,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     char ids[256] = {};
     _snprintf(ids, sizeof(ids) - 1,
-              "Dresseur : %s     ID Dresseur : %u     ID personnel : %u",
+              "Trainer: %s     Trainer ID: %u     Personal ID: %u",
               pokemon.original_trainer,
               (unsigned)pokemon.trainer_id,
               (unsigned)pokemon.personal_id);
@@ -1165,16 +1223,19 @@ static void draw_pokemon_detail(HDC dc) {
 
 static void draw_pokemon_add(HDC dc) {
     s_pokemon_hit_count = 0;
+    RECT add_panel = {319, 40, POKEMON_WINDOW_WIDTH - 12, 598};
+    fill_rounded_rect(dc, add_panel, COLOR_PANEL, 10);
+    frame_rounded_rect(dc, add_panel, COLOR_BORDER, 10);
     RECT title = {326, 45, POKEMON_WINDOW_WIDTH - 18, 70};
-    draw_text(dc, title, "Creer un Pokemon", COLOR_TEXT,
+    draw_text(dc, title, "Create a Pokemon", COLOR_TEXT,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     RECT help = {326, 72, POKEMON_WINDOW_WIDTH - 18, 95};
     draw_text(dc, help,
-              "Il sera ajoute a l'equipe, ou a la premiere boite libre si l'equipe est pleine.",
+              "It will be added to your party, or the first free PC slot if the party is full.",
               COLOR_DIM, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
     RECT search_label = {326, 102, 420, 126};
-    draw_text(dc, search_label, "Rechercher", COLOR_DIM,
+    draw_text(dc, search_label, "Search", COLOR_DIM,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     s_species_search_rect = {422, 102, 760, 126};
     fill_rect(dc, s_species_search_rect,
@@ -1233,7 +1294,7 @@ static void draw_pokemon_add(HDC dc) {
     RECT selection = {836, 177, 1038, 250};
     fill_rect(dc, selection, COLOR_PANEL_ALT);
     frame_rect(dc, selection, COLOR_BORDER);
-    const char* selected_name = "Aucune espece";
+    const char* selected_name = "No species";
     for (int i = 0; i < s_species_count; ++i) {
         if (s_species[i].id == s_species_selected) {
             selected_name = s_species[i].name;
@@ -1248,8 +1309,8 @@ static void draw_pokemon_add(HDC dc) {
 
     s_create_confirm_rect = {836, 270, 1038, 306};
     s_create_cancel_rect = {836, 314, 1038, 350};
-    draw_button(dc, s_create_confirm_rect, "Creer le Pokemon", COLOR_SUCCESS);
-    draw_button(dc, s_create_cancel_rect, "Annuler", RGB(80, 80, 105));
+    draw_button(dc, s_create_confirm_rect, "Create Pokemon", COLOR_SUCCESS);
+    draw_button(dc, s_create_cancel_rect, "Cancel", RGB(80, 80, 105));
 }
 
 static void draw_pokemon_choice(HDC dc) {
@@ -1373,13 +1434,13 @@ static void paint_pokemon(HWND window) {
     RECT background = {0, 0, POKEMON_WINDOW_WIDTH, POKEMON_WINDOW_HEIGHT};
     fill_rect(dc, background, UI_BACKGROUND);
     frame_rect(dc, background, COLOR_BORDER);
-    draw_title(dc, POKEMON_WINDOW_WIDTH, "Gestion complete des Pokemon",
+    draw_title(dc, POKEMON_WINDOW_WIDTH, "Pokemon manager",
                &s_pokemon_close_button);
 
     RECT list_title = {12, 40, 304, 64};
     char title[96] = {};
-    _snprintf(title, sizeof(title) - 1, "Equipe et boites (%d Pokemon)%s",
-              s_pokemon_count, s_pokemon_truncated ? " - liste tronquee" : "");
+    _snprintf(title, sizeof(title) - 1, "Party and PC boxes (%d Pokemon)%s",
+              s_pokemon_count, s_pokemon_truncated ? " - list truncated" : "");
     draw_text(dc, list_title, title, COLOR_TEXT,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     s_pokemon_list_rect = {12, 66, 304, 620};
@@ -1397,7 +1458,13 @@ static void paint_pokemon(HWND window) {
                          s_pokemon_list_rect.top + row * LIST_ROW_HEIGHT + 1,
                          s_pokemon_list_rect.right - 1,
                          s_pokemon_list_rect.top + (row + 1) * LIST_ROW_HEIGHT};
-        if (index == s_pokemon_selected) fill_rect(dc, row_rect, COLOR_HOVER);
+        if (row & 1) fill_rect(dc, row_rect, RGB(21, 29, 44));
+        if (index == s_pokemon_selected) {
+            fill_rect(dc, row_rect, COLOR_HOVER);
+            RECT selected_accent = {row_rect.left, row_rect.top,
+                                    row_rect.left + 3, row_rect.bottom};
+            fill_rect(dc, selected_accent, COLOR_ACCENT);
+        }
         const PokemonListEntry& pokemon = s_pokemon_list[index];
         char location[20] = {};
         if (pokemon.location == POKEMON_LOCATION_PARTY)
@@ -1409,7 +1476,7 @@ static void paint_pokemon(HWND window) {
                   location,
                   pokemon.name[0] ? pokemon.name : pokemon.species_name,
                   pokemon.level, pokemon.hp, pokemon.totalhp,
-                  pokemon.shiny ? " S" : "", pokemon.egg ? " Oeuf" : "");
+                  pokemon.shiny ? " S" : "", pokemon.egg ? " Egg" : "");
         RECT row_text = {row_rect.left + 5, row_rect.top,
                          row_rect.right - 4, row_rect.bottom};
         draw_text(dc, row_text, line, COLOR_TEXT,
@@ -1419,20 +1486,20 @@ static void paint_pokemon(HWND window) {
     s_pokemon_refresh_button = {12, 630, 100, 662};
     s_pokemon_add_button = {108, 630, 204, 662};
     s_pokemon_delete_button = {212, 630, 304, 662};
-    draw_button(dc, s_pokemon_refresh_button, "Rafraichir", RGB(70, 70, 105));
+    draw_button(dc, s_pokemon_refresh_button, "Refresh", RGB(70, 70, 105));
     draw_button(dc, s_pokemon_add_button,
-                s_pokemon_add_mode ? "Creation..." : "Ajouter", COLOR_SUCCESS);
+                s_pokemon_add_mode ? "Creating..." : "Add", COLOR_SUCCESS);
     const bool delete_pending = s_delete_deadline > GetTickCount() &&
                                 same_target(s_delete_target, selected_target());
     draw_button(dc, s_pokemon_delete_button,
-                delete_pending ? "Confirmer" : "Supprimer", COLOR_DANGER);
+                delete_pending ? "Confirm" : "Delete", COLOR_DANGER);
 
     if (s_pokemon_add_mode) draw_pokemon_add(dc);
     else draw_pokemon_detail(dc);
 
     RECT status_rect = {12, 674, POKEMON_WINDOW_WIDTH - 14, 707};
-    fill_rect(dc, status_rect, COLOR_PANEL_ALT);
-    frame_rect(dc, status_rect, COLOR_BORDER);
+    fill_rounded_rect(dc, status_rect, COLOR_PANEL_ALT, 8);
+    frame_rounded_rect(dc, status_rect, COLOR_BORDER, 8);
     RECT status_text = {18, 674, POKEMON_WINDOW_WIDTH - 20, 707};
     draw_text(dc, status_text, s_pokemon_status, COLOR_DIM,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
@@ -1471,8 +1538,13 @@ static void draw_inventory_lists(HDC dc) {
                          s_inventory_owned_rect.top + row * LIST_ROW_HEIGHT + 1,
                          s_inventory_owned_rect.right - 1,
                          s_inventory_owned_rect.top + (row + 1) * LIST_ROW_HEIGHT};
-        if (item.item_id == s_inventory_selected_item)
+        if (row & 1) fill_rect(dc, row_rect, RGB(21, 29, 44));
+        if (item.item_id == s_inventory_selected_item) {
             fill_rect(dc, row_rect, COLOR_HOVER);
+            RECT selected_accent = {row_rect.left, row_rect.top,
+                                    row_rect.left + 3, row_rect.bottom};
+            fill_rect(dc, selected_accent, COLOR_ACCENT);
+        }
         char line[160] = {};
         _snprintf(line, sizeof(line) - 1, "P%d   #%d   %-38s x%d",
                   item.pocket, item.item_id, item.name, item.quantity);
@@ -1497,8 +1569,13 @@ static void draw_inventory_lists(HDC dc) {
                          s_inventory_catalog_rect.top + row * LIST_ROW_HEIGHT + 1,
                          s_inventory_catalog_rect.right - 1,
                          s_inventory_catalog_rect.top + (row + 1) * LIST_ROW_HEIGHT};
-        if (item.item_id == s_inventory_selected_item)
+        if (row & 1) fill_rect(dc, row_rect, RGB(21, 29, 44));
+        if (item.item_id == s_inventory_selected_item) {
             fill_rect(dc, row_rect, COLOR_HOVER);
+            RECT selected_accent = {row_rect.left, row_rect.top,
+                                    row_rect.left + 3, row_rect.bottom};
+            fill_rect(dc, selected_accent, COLOR_ACCENT);
+        }
         char line[160] = {};
         _snprintf(line, sizeof(line) - 1, "P%d   #%d   %-43s (x%d)",
                   item.pocket, item.item_id, item.name,
@@ -1526,17 +1603,17 @@ static void paint_inventory(HWND window) {
     RECT background = {0, 0, INVENTORY_WINDOW_WIDTH, INVENTORY_WINDOW_HEIGHT};
     fill_rect(dc, background, UI_BACKGROUND);
     frame_rect(dc, background, COLOR_BORDER);
-    draw_title(dc, INVENTORY_WINDOW_WIDTH, "Inventaire complet",
+    draw_title(dc, INVENTORY_WINDOW_WIDTH, "Inventory manager",
                &s_inventory_close_rect);
 
     RECT owned_title = {12, 38, 454, 62};
     RECT catalog_title = {466, 38, 928, 62};
     char owned_text[96] = {};
-    _snprintf(owned_text, sizeof(owned_text) - 1, "Objets possedes (%d)%s",
-              s_inventory_count, s_inventory_truncated ? " - liste tronquee" : "");
+    _snprintf(owned_text, sizeof(owned_text) - 1, "Owned items (%d)%s",
+              s_inventory_count, s_inventory_truncated ? " - list truncated" : "");
     draw_text(dc, owned_title, owned_text, COLOR_TEXT,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, catalog_title, "Catalogue complet / donner un objet", COLOR_TEXT,
+    draw_text(dc, catalog_title, "Full catalog / give an item", COLOR_TEXT,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
     s_pocket_button_count = 0;
@@ -1545,7 +1622,7 @@ static void paint_inventory(HWND window) {
         RECT button = {pocket_x, 68, pocket_x + (i < 0 ? 48 : 39), 96};
         s_pocket_buttons[s_pocket_button_count++] = button;
         char label[12] = {};
-        if (i < 0) lstrcpyA(label, "Tous");
+        if (i < 0) lstrcpyA(label, "All");
         else wsprintfA(label, "P%d", i);
         draw_button(dc, button, label,
                     s_inventory_pocket == i ? COLOR_ACCENT : RGB(65, 65, 90));
@@ -1560,7 +1637,7 @@ static void paint_inventory(HWND window) {
     const char* shown_search = s_edit.kind == EDIT_ITEM_SEARCH ?
                                s_edit.buffer : s_item_search;
     draw_text(dc, search_text, shown_search[0] ? shown_search :
-              "Cliquer puis saisir un nom ou un ID...", shown_search[0] ?
+              "Click and enter a name or ID...", shown_search[0] ?
               COLOR_TEXT : COLOR_DIM,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     if (s_edit.kind == EDIT_ITEM_SEARCH)
@@ -1569,11 +1646,11 @@ static void paint_inventory(HWND window) {
     draw_inventory_lists(dc);
 
     RECT selected_rect = {12, 548, 928, 582};
-    fill_rect(dc, selected_rect, COLOR_PANEL_ALT);
-    frame_rect(dc, selected_rect, COLOR_BORDER);
+    fill_rounded_rect(dc, selected_rect, COLOR_PANEL_ALT, 8);
+    frame_rounded_rect(dc, selected_rect, COLOR_BORDER, 8);
     char selected[256] = {};
     _snprintf(selected, sizeof(selected) - 1,
-              "Selection : #%d  %s     Quantite actuelle : %d",
+              "Selected: #%d  %s     Current quantity: %d",
               s_inventory_selected_item,
               item_name(s_inventory_selected_item),
               item_quantity(s_inventory_selected_item));
@@ -1582,7 +1659,7 @@ static void paint_inventory(HWND window) {
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     RECT quantity_label = {12, 590, 82, 622};
-    draw_text(dc, quantity_label, "Quantite", COLOR_DIM,
+    draw_text(dc, quantity_label, "Quantity", COLOR_DIM,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     s_inventory_quantity_rect = {84, 590, 164, 622};
     fill_rect(dc, s_inventory_quantity_rect,
@@ -1600,17 +1677,17 @@ static void paint_inventory(HWND window) {
     s_inventory_give_rect = {336, 590, 486, 622};
     s_inventory_remove_rect = {496, 590, 646, 622};
     s_inventory_refresh_rect = {780, 590, 928, 622};
-    draw_button(dc, s_inventory_set_rect, "Fixer quantite", COLOR_ACCENT);
-    draw_button(dc, s_inventory_give_rect, "Donner +", COLOR_SUCCESS);
+    draw_button(dc, s_inventory_set_rect, "Set quantity", COLOR_ACCENT);
+    draw_button(dc, s_inventory_give_rect, "Give +", COLOR_SUCCESS);
     const bool delete_pending = s_inventory_delete_item == s_inventory_selected_item &&
                                 s_inventory_delete_deadline > GetTickCount();
     draw_button(dc, s_inventory_remove_rect,
-                delete_pending ? "Confirmer retrait" : "Retirer tout", COLOR_DANGER);
-    draw_button(dc, s_inventory_refresh_rect, "Rafraichir", RGB(70, 70, 105));
+                delete_pending ? "Confirm removal" : "Remove all", COLOR_DANGER);
+    draw_button(dc, s_inventory_refresh_rect, "Refresh", RGB(70, 70, 105));
 
     RECT status_rect = {12, 634, 928, 667};
-    fill_rect(dc, status_rect, COLOR_PANEL_ALT);
-    frame_rect(dc, status_rect, COLOR_BORDER);
+    fill_rounded_rect(dc, status_rect, COLOR_PANEL_ALT, 8);
+    frame_rounded_rect(dc, status_rect, COLOR_BORDER, 8);
     RECT status_text = {18, 634, 922, 667};
     draw_text(dc, status_text, s_inventory_status, COLOR_DIM,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
@@ -1662,26 +1739,33 @@ static void paint_trainer(HWND window) {
     HFONT old_font = (HFONT)SelectObject(dc, font);
     RECT whole = {0, 0, TRAINER_WINDOW_WIDTH, TRAINER_WINDOW_HEIGHT};
     fill_rect(dc, whole, UI_BACKGROUND);
-    draw_title(dc, TRAINER_WINDOW_WIDTH, "Gerer le dresseur", &s_trainer_close_rect);
+    draw_title(dc, TRAINER_WINDOW_WIDTH, "Trainer manager", &s_trainer_close_rect);
 
     RECT hint = {16, 40, 604, 65};
-    draw_text(dc, hint, "Modifiez le profil puis cliquez sur Appliquer. Sauvegardez ensuite dans le jeu.",
+    draw_text(dc, hint, "Edit the profile, then click Apply. Save in the game afterwards.",
               COLOR_DIM, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
+    RECT profile_panel = {12, 72, 608, 220};
+    RECT badges_panel = {12, 224, 608, 350};
+    fill_rounded_rect(dc, profile_panel, COLOR_PANEL, 10);
+    fill_rounded_rect(dc, badges_panel, COLOR_PANEL, 10);
+    frame_rounded_rect(dc, profile_panel, COLOR_BORDER, 10);
+    frame_rounded_rect(dc, badges_panel, COLOR_BORDER, 10);
+
     RECT name_label = {20, 82, 170, 112};
-    draw_text(dc, name_label, "Pseudo", COLOR_DIM, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, name_label, "Name", COLOR_DIM, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     s_trainer_name_rect = {172, 80, 594, 114};
     fill_rect(dc, s_trainer_name_rect, s_edit.kind == EDIT_TRAINER_NAME ?
               RGB(65, 65, 105) : COLOR_PANEL_ALT);
     frame_rect(dc, s_trainer_name_rect, COLOR_ACCENT);
     const char* name = s_edit.kind == EDIT_TRAINER_NAME ? s_edit.buffer : s_trainer_draft.name;
     RECT name_text = {180, 80, 586, 114};
-    draw_text(dc, name_text, name[0] ? name : "(sans pseudo)",
+    draw_text(dc, name_text, name[0] ? name : "(no name)",
               name[0] ? COLOR_TEXT : COLOR_DIM, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     if (s_edit.kind == EDIT_TRAINER_NAME) draw_edit_caret(dc, name_text, name, false);
 
     RECT time_label = {20, 128, 170, 158};
-    draw_text(dc, time_label, "Temps de jeu (H:MM:SS)", COLOR_DIM,
+    draw_text(dc, time_label, "Play time (H:MM:SS)", COLOR_DIM,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     s_trainer_time_rect = {172, 126, 360, 160};
     fill_rect(dc, s_trainer_time_rect, s_edit.kind == EDIT_TRAINER_TIME ?
@@ -1694,8 +1778,8 @@ static void paint_trainer(HWND window) {
     if (s_edit.kind == EDIT_TRAINER_TIME) draw_edit_caret(dc, s_trainer_time_rect, time, true);
 
     RECT gender_label = {20, 180, 170, 210};
-    draw_text(dc, gender_label, "Sexe", COLOR_DIM, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    const char* gender_labels[] = {"Garcon", "Fille", "Neutre"};
+    draw_text(dc, gender_label, "Gender", COLOR_DIM, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    const char* gender_labels[] = {"Boy", "Girl", "Neutral"};
     for (int i = 0; i < 3; ++i) {
         s_trainer_gender_rects[i] = {172 + i * 138, 176, 302 + i * 138, 210};
         draw_button(dc, s_trainer_gender_rects[i], gender_labels[i],
@@ -1703,7 +1787,7 @@ static void paint_trainer(HWND window) {
     }
 
     RECT badges_label = {20, 232, 594, 258};
-    draw_text(dc, badges_label, "Badges (cliquer pour cocher/decocher)", COLOR_DIM,
+    draw_text(dc, badges_label, "Badges (click to toggle)", COLOR_DIM,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     const char* badge_names[] = {"Normal", "Bright Gem", "Surf", "Pixel",
                                  "Salsa", "Drama", "Apex", "Zen"};
@@ -1722,9 +1806,12 @@ static void paint_trainer(HWND window) {
 
     s_trainer_apply_rect = {20, 360, 256, 396};
     s_trainer_refresh_rect = {270, 360, 420, 396};
-    draw_button(dc, s_trainer_apply_rect, "Appliquer", COLOR_SUCCESS);
-    draw_button(dc, s_trainer_refresh_rect, "Recharger", RGB(70, 70, 105));
-    RECT status = {20, 404, 594, 426};
+    draw_button(dc, s_trainer_apply_rect, "Apply", COLOR_SUCCESS);
+    draw_button(dc, s_trainer_refresh_rect, "Reload", RGB(70, 70, 105));
+    RECT status_panel = {12, 400, 608, 428};
+    fill_rounded_rect(dc, status_panel, COLOR_PANEL_ALT, 8);
+    frame_rounded_rect(dc, status_panel, COLOR_BORDER, 8);
+    RECT status = {20, 402, 600, 426};
     draw_text(dc, status, s_trainer_status, COLOR_DIM,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
@@ -1779,7 +1866,7 @@ static void handle_trainer_click(int x, int y) {
     if (point_in(s_trainer_apply_rect, x, y)) {
         if (s_edit.window == s_trainer_window) commit_edit();
         opt_trainer_manager_apply(s_trainer_draft);
-        lstrcpyA(s_trainer_status, "Application en cours...");
+        lstrcpyA(s_trainer_status, "Applying changes...");
         InvalidateRect(s_trainer_window, NULL, FALSE); return;
     }
     if (point_in(s_trainer_refresh_rect, x, y)) {
@@ -1908,7 +1995,7 @@ static void handle_pokemon_click(int x, int y) {
             s_delete_target = target;
             s_delete_deadline = now + 4000;
             lstrcpyA(s_pokemon_status,
-                     "Cliquez encore sur Supprimer pour confirmer (action sauvegardable)." );
+                     "Click Delete again to confirm (this action can be saved)." );
         }
         InvalidateRect(s_pokemon_window, NULL, FALSE);
         return;
@@ -2035,7 +2122,7 @@ static void handle_inventory_click(int x, int y) {
             s_inventory_delete_item = s_inventory_selected_item;
             s_inventory_delete_deadline = now + 4000;
             lstrcpyA(s_inventory_status,
-                     "Cliquez encore sur Retirer tout pour confirmer.");
+                     "Click Remove all again to confirm.");
         }
         InvalidateRect(s_inventory_window, NULL, FALSE);
         return;
@@ -2464,7 +2551,7 @@ void trainer_editors_show_trainer() {
     s_trainer_open = true;
     s_keyboard_window = s_trainer_window;
     s_trainer_revision = -1;
-    lstrcpyA(s_trainer_status, "Chargement du profil...");
+    lstrcpyA(s_trainer_status, "Loading trainer profile...");
     opt_trainer_manager_start();
     position_editor(s_trainer_window, TRAINER_WINDOW_WIDTH,
                     TRAINER_WINDOW_HEIGHT, 48);

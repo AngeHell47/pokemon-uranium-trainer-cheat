@@ -14,6 +14,7 @@ void opt_encounter_init(const char* ini_path);
 void opt_encounter_set_hwnd_and_start(HWND hwnd);
 void opt_encounter_toggle_force(bool enabled);
 void opt_encounter_set_species(int species);
+const char* opt_encounter_species_name();
 void opt_encounter_toggle_level(bool enabled);
 void opt_encounter_set_level(int level);
 void opt_encounter_toggle_shiny(bool enabled);

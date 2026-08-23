@@ -67,7 +67,7 @@ static int s_nature_count = 0;
 static int s_ability_count = 0;
 static int s_item_count = 0;
 static bool s_list_truncated = false;
-static char s_status[128] = "En attente des donnees du jeu...";
+static char s_status[128] = "Waiting for game data...";
 static LONG s_list_revision = 0;
 static LONG s_detail_revision = 0;
 static LONG s_status_revision = 0;
@@ -767,7 +767,7 @@ static void update_result() {
     if (s_shared_result.code == 0) {
         lstrcpynA(message, s_shared_result.message, sizeof(message));
     } else {
-        _snprintf(message, sizeof(message) - 1, "Erreur (%d) : %s",
+        _snprintf(message, sizeof(message) - 1, "Error (%d): %s",
                   s_shared_result.code, s_shared_result.message);
         message[sizeof(message) - 1] = '\0';
     }
@@ -852,7 +852,7 @@ static void copy_list_from_shared() {
     const bool first_snapshot = s_list_revision == 0;
     InterlockedIncrement(&s_list_revision);
     LeaveCriticalSection(&s_lock);
-    if (first_snapshot) set_status("Equipe et boites synchronisees avec le jeu.");
+    if (first_snapshot) set_status("Party and PC boxes synchronized with the game.");
 }
 
 static void copy_detail_from_shared() {
@@ -1079,7 +1079,7 @@ void opt_pokemon_manager_set_value(const PokemonTarget& target,
     command.field = field;
     command.sub_index = sub_index;
     command.value = value;
-    if (!enqueue(command)) set_status("Impossible de mettre la commande en file.");
+    if (!enqueue(command)) set_status("Unable to queue the command.");
 }
 
 void opt_pokemon_manager_set_text(const PokemonTarget& target,
@@ -1089,7 +1089,7 @@ void opt_pokemon_manager_set_text(const PokemonTarget& target,
     command.target = target;
     command.field = field;
     lstrcpynA(command.text, text ? text : "", sizeof(command.text));
-    if (!enqueue(command)) set_status("Impossible de mettre la commande en file.");
+    if (!enqueue(command)) set_status("Unable to queue the command.");
 }
 
 void opt_pokemon_manager_create(int species, int level) {
@@ -1097,12 +1097,12 @@ void opt_pokemon_manager_create(int species, int level) {
     command.type = COMMAND_CREATE;
     command.value = species;
     command.sub_index = level;
-    if (!enqueue(command)) set_status("Impossible de mettre la commande en file.");
+    if (!enqueue(command)) set_status("Unable to queue the command.");
 }
 
 void opt_pokemon_manager_delete(const PokemonTarget& target) {
     PokemonCommand command = {};
     command.type = COMMAND_DELETE;
     command.target = target;
-    if (!enqueue(command)) set_status("Impossible de mettre la commande en file.");
+    if (!enqueue(command)) set_status("Unable to queue the command.");
 }

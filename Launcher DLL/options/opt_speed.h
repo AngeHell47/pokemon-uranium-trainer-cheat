@@ -13,3 +13,4 @@ void opt_speed_apply_walk(int value);
 void opt_speed_apply_run(int value);
 void opt_speed_apply_surf(int value);
 void opt_speed_apply_bike(int value);
+void opt_speed_reset_defaults();
