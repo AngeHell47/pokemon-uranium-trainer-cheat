@@ -112,8 +112,8 @@ static const Translation kTranslations[] = {
     { "Interface", "Interface", "Interfaz" },
     { "Menu Shortcut", "Raccourci du menu", "Atajo del menú" },
     { "Click the key button, then press a new shortcut", "Cliquez sur la touche, puis choisissez un nouveau raccourci", "Haz clic en la tecla y pulsa un nuevo atajo" },
-    { "Unload Trainer", "Décharger le trainer", "Descargar el trainer" },
-    { "Stop & Unload", "Arrêter et décharger", "Detener y descargar" },
+    { "Trainer Session", "Session du trainer", "Sesión del trainer" },
+    { "Stop Trainer", "Arrêter le trainer", "Detener el trainer" },
     { "Default Speeds", "Vitesses par défaut", "Velocidades predeterminadas" },
     { "Reset", "Réinitialiser", "Restablecer" },
     { "Default", "Par défaut", "Predeterminado" },
@@ -2318,7 +2318,7 @@ static void modern_draw_settings(HDC dc, HFONT label_font,
     RECT unload_label = {unload_row.left + 10, unload_row.top + 8,
                          unload_button.left - 16, unload_row.bottom - 8};
     SelectObject(dc, label_font); SetTextColor(dc, COL_TEXT);
-    DrawTextA(dc, trainer_ui_text("Unload Trainer", NULL), -1, &unload_label,
+    DrawTextA(dc, trainer_ui_text("Trainer Session", NULL), -1, &unload_label,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     RECT divider = {unload_row.left, unload_row.top,
@@ -2328,7 +2328,7 @@ static void modern_draw_settings(HDC dc, HFONT label_font,
     fill_rounded_rect(dc, unload_button, RGB(123, 50, 67), 9);
     frame_rounded_rect(dc, unload_button, RGB(200, 91, 112), 9);
     SelectObject(dc, small_font); SetTextColor(dc, RGB(255, 232, 236));
-    DrawTextA(dc, trainer_ui_text("Stop & Unload", NULL), -1, &unload_button,
+    DrawTextA(dc, trainer_ui_text("Stop Trainer", NULL), -1, &unload_button,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
@@ -2920,7 +2920,7 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             if (ptin(modern_settings_unload_rect(), x, y)) {
-                menu_request_unload();
+                menu_request_stop();
                 return 0;
             }
         }
@@ -3548,7 +3548,7 @@ void menu_close() {
     InterlockedExchange(&s_block_game_keyboard, 0);
 }
 
-void menu_request_unload() {
+void menu_request_stop() {
     if (!s_overlay) return;
     menu_close();
     PostQuitMessage(0);

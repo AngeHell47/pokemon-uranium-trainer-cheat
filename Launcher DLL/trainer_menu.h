@@ -59,5 +59,5 @@ bool menu_init(HINSTANCE hinst, HWND game_hwnd);
 void menu_start_loop();
 void menu_open();
 void menu_close();
-// Stops the trainer loop. The payload cleanup then detaches it from Uranium.
-void menu_request_unload();
+// Stops the trainer loop and removes its active UI and input hooks.
+void menu_request_stop();

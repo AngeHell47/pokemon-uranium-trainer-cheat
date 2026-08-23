@@ -10,7 +10,7 @@ Usage:
 
 English is the default language. Click the US, French or Spanish flag in the overlay title bar to change the interface language. The preference is saved to trainer.ini.
 
-The main interface is divided into Player, Battle, Encounters, World, Display and Settings tabs. Settings lets you replace the global Insert show/hide shortcut with another key, restore the default, or use "Stop & Unload" to cleanly detach the trainer from the current game process. The interface remains visible and interactive when Uranium is not the active window or is minimized, and keeps the position where you moved it.
+The main interface is divided into Player, Battle, Encounters, World, Display and Settings tabs. Settings lets you replace the global Insert show/hide shortcut with another key, restore the default, or use "Stop Trainer" to close the trainer UI and remove its active hooks for the current game session. The interface remains visible and interactive when Uranium is not the active window or is minimized, and keeps the position where you moved it.
 
 "Manage all Pokemon" opens a party and PC-box editor, including creation, deletion, moves, PP, IVs and EVs. "Manage inventory" opens an editor for every bag pocket and the complete catalog. "Manage trainer" lets you edit the name, gender, play time and all eight badges. Click Apply, then save in the game to keep profile changes.
 
