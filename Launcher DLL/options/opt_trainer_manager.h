@@ -7,6 +7,7 @@ struct TrainerProfile {
     int gender;          // 0=garcon, 1=fille, 2=neutre (ID de joueur Uranium)
     int play_seconds;
     int badge_mask;      // bits 0..7
+    int trainer_id;      // identite 32 bits, affichee en lecture seule
 };
 
 bool opt_trainer_manager_init(const char* ini_path);

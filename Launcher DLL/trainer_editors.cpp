@@ -14,11 +14,11 @@ namespace {
 
 enum {
     POKEMON_WINDOW_WIDTH = 1060,
-    POKEMON_WINDOW_HEIGHT = 720,
+    POKEMON_WINDOW_HEIGHT = 676,
     INVENTORY_WINDOW_WIDTH = 720,
     INVENTORY_WINDOW_HEIGHT = 620,
     TRAINER_WINDOW_WIDTH = 620,
-    TRAINER_WINDOW_HEIGHT = 430,
+    TRAINER_WINDOW_HEIGHT = 520,
     EDITOR_TITLE_HEIGHT = 36,
     LIST_ROW_HEIGHT = 22,
     INVENTORY_LIST_ROW_HEIGHT = 30
@@ -62,9 +62,7 @@ static int s_nature_count = 0;
 static int s_item_count = 0;
 static LONG s_pokemon_list_revision = -1;
 static LONG s_pokemon_detail_revision = -1;
-static LONG s_pokemon_status_revision = -1;
 static bool s_pokemon_truncated = false;
-static char s_pokemon_status[128] = {};
 static int s_pokemon_selected = -1;
 static int s_pokemon_scroll = 0;
 static bool s_pokemon_add_mode = false;
@@ -864,9 +862,6 @@ static void refresh_pokemon_cache() {
     }
     opt_pokemon_manager_copy_detail(&s_pokemon_detail,
                                     &s_pokemon_detail_revision);
-    opt_pokemon_manager_copy_status(s_pokemon_status,
-                                    sizeof(s_pokemon_status),
-                                    &s_pokemon_status_revision);
 }
 
 static void refresh_inventory_cache() {
@@ -1214,55 +1209,53 @@ static void draw_pokemon_detail(HDC dc) {
         moves_y += 29;
     }
 
-    RECT ids_title = {col1, 538, POKEMON_WINDOW_WIDTH - 16, 560};
-    RECT ids_panel = {col1 - 7, 534, POKEMON_WINDOW_WIDTH - 11, 595};
-    fill_rounded_rect(dc, ids_panel, COLOR_PANEL, 10);
-    frame_rounded_rect(dc, ids_panel, COLOR_BORDER, 10);
-    draw_text(dc, ids_title, "Original identity (read-only)", COLOR_TEXT,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    char ids[256] = {};
-    _snprintf(ids, sizeof(ids) - 1,
-              "Trainer: %s     Trainer ID: %u     Personal ID: %u",
-              pokemon.original_trainer,
-              (unsigned)pokemon.trainer_id,
-              (unsigned)pokemon.personal_id);
-    RECT ids_rect = {col1, 562, POKEMON_WINDOW_WIDTH - 16, 588};
-    fill_rect(dc, ids_rect, COLOR_PANEL_ALT);
-    frame_rect(dc, ids_rect, COLOR_BORDER);
-    RECT ids_pad = {ids_rect.left + 5, ids_rect.top, ids_rect.right - 5, ids_rect.bottom};
-    draw_text(dc, ids_pad, ids, COLOR_DIM,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
 static void draw_pokemon_add(HDC dc) {
     s_pokemon_hit_count = 0;
-    RECT add_panel = {319, 40, POKEMON_WINDOW_WIDTH - 12, 598};
+    RECT veil = {1, EDITOR_TITLE_HEIGHT, POKEMON_WINDOW_WIDTH - 1,
+                 POKEMON_WINDOW_HEIGHT - 1};
+    fill_rect(dc, veil, RGB(7, 11, 19));
+
+    RECT add_panel = {174, 50, 886, 632};
     fill_rounded_rect(dc, add_panel, COLOR_PANEL, 10);
-    frame_rounded_rect(dc, add_panel, COLOR_BORDER, 10);
-    RECT title = {326, 45, POKEMON_WINDOW_WIDTH - 18, 70};
+    frame_rounded_rect(dc, add_panel, COLOR_ACCENT, 10);
+    RECT title = {196, 62, 864, 88};
     draw_text(dc, title, "Create a Pokemon", COLOR_TEXT,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    RECT help = {326, 72, POKEMON_WINDOW_WIDTH - 18, 95};
+    RECT help = {196, 88, 864, 114};
     draw_text(dc, help,
               "It will be added to your party, or the first free PC slot if the party is full.",
-              COLOR_DIM, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+              COLOR_DIM, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
+              DT_END_ELLIPSIS);
 
-    RECT search_label = {326, 102, 420, 126};
-    draw_text(dc, search_label, "Search", COLOR_DIM,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    s_species_search_rect = {422, 102, 760, 126};
-    fill_rect(dc, s_species_search_rect,
-              s_edit.kind == EDIT_SPECIES_SEARCH ? RGB(65, 65, 105) : COLOR_PANEL_ALT);
-    frame_rect(dc, s_species_search_rect, COLOR_ACCENT);
-    RECT search_text = {427, 102, 755, 126};
+    s_species_search_rect = {196, 124, 864, 154};
+    fill_rounded_rect(dc, s_species_search_rect,
+                      s_edit.kind == EDIT_SPECIES_SEARCH ?
+                          RGB(65, 65, 105) : COLOR_PANEL_ALT, 6);
+    frame_rounded_rect(dc, s_species_search_rect, COLOR_ACCENT, 6);
+    RECT search_text = {206, 124, 854, 154};
+    const char* shown_search = s_edit.kind == EDIT_SPECIES_SEARCH ?
+        s_edit.buffer : s_species_search;
     draw_text(dc, search_text,
-              s_edit.kind == EDIT_SPECIES_SEARCH ? s_edit.buffer : s_species_search,
-              COLOR_TEXT, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+              shown_search[0] ? shown_search : "Search Pokemon...",
+              shown_search[0] ? COLOR_TEXT : COLOR_DIM,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     if (s_edit.kind == EDIT_SPECIES_SEARCH)
         draw_edit_caret(dc, search_text, s_edit.buffer, false);
 
-    s_species_list_rect = {326, 136, 820, 576};
-    fill_rect(dc, s_species_list_rect, COLOR_PANEL);
+    RECT list_header = {196, 164, 640, 188};
+    fill_rect(dc, list_header, COLOR_TITLE);
+    frame_rect(dc, list_header, COLOR_BORDER);
+    RECT id_header = {208, 164, 266, 188};
+    RECT species_header = {274, 164, 630, 188};
+    draw_text(dc, id_header, "ID", COLOR_DIM,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, species_header, "Species", COLOR_DIM,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    s_species_list_rect = {196, 188, 640, 562};
+    fill_rect(dc, s_species_list_rect, COLOR_PANEL_ALT);
     frame_rect(dc, s_species_list_rect, COLOR_BORDER);
     const int visible = (s_species_list_rect.bottom - s_species_list_rect.top) /
                         LIST_ROW_HEIGHT;
@@ -1280,22 +1273,32 @@ static void draw_pokemon_add(HDC dc) {
                          s_species_list_rect.top + (row + 1) * LIST_ROW_HEIGHT};
         if (s_species[index].id == s_species_selected)
             fill_rect(dc, row_rect, COLOR_HOVER);
-        char line[96] = {};
-        _snprintf(line, sizeof(line) - 1, "#%d   %s",
-                  s_species[index].id, s_species[index].name);
-        RECT row_text = {row_rect.left + 6, row_rect.top,
-                         row_rect.right - 5, row_rect.bottom};
-        draw_text(dc, row_text, line, COLOR_TEXT,
+        char id[24] = {};
+        wsprintfA(id, "#%d", s_species[index].id);
+        RECT id_rect = {208, row_rect.top, 266, row_rect.bottom};
+        RECT name_rect = {274, row_rect.top, 630, row_rect.bottom};
+        draw_text(dc, id_rect, id, COLOR_DIM,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        draw_text(dc, name_rect, s_species[index].name, COLOR_TEXT,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
+    if (filtered == 0) {
+        RECT empty = {212, 250, 624, 320};
+        draw_text(dc, empty, "No Pokemon found.", COLOR_DIM,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
 
-    RECT level_label = {836, 136, 918, 160};
-    draw_text(dc, level_label, "Niveau", COLOR_DIM,
+    RECT side_panel = {660, 164, 864, 562};
+    fill_rounded_rect(dc, side_panel, COLOR_PANEL_ALT, 8);
+    frame_rounded_rect(dc, side_panel, COLOR_BORDER, 8);
+    RECT level_label = {676, 178, 752, 206};
+    draw_text(dc, level_label, "Level", COLOR_DIM,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    s_create_level_rect = {920, 136, 1038, 160};
-    fill_rect(dc, s_create_level_rect,
-              s_edit.kind == EDIT_CREATE_LEVEL ? RGB(65, 65, 105) : COLOR_PANEL_ALT);
-    frame_rect(dc, s_create_level_rect, COLOR_ACCENT);
+    s_create_level_rect = {758, 178, 848, 206};
+    fill_rounded_rect(dc, s_create_level_rect,
+                      s_edit.kind == EDIT_CREATE_LEVEL ?
+                          RGB(65, 65, 105) : COLOR_PANEL, 6);
+    frame_rounded_rect(dc, s_create_level_rect, COLOR_ACCENT, 6);
     char level[16] = {};
     format_int(level, sizeof(level), s_create_level);
     draw_text(dc, s_create_level_rect,
@@ -1304,8 +1307,11 @@ static void draw_pokemon_add(HDC dc) {
     if (s_edit.kind == EDIT_CREATE_LEVEL)
         draw_edit_caret(dc, s_create_level_rect, s_edit.buffer, true);
 
-    RECT selection = {836, 177, 1038, 250};
-    fill_rect(dc, selection, COLOR_PANEL_ALT);
+    RECT selection_label = {676, 224, 848, 248};
+    draw_text(dc, selection_label, "Selected Pokemon", COLOR_DIM,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    RECT selection = {676, 252, 848, 336};
+    fill_rounded_rect(dc, selection, COLOR_PANEL, 6);
     frame_rect(dc, selection, COLOR_BORDER);
     const char* selected_name = "No species";
     for (int i = 0; i < s_species_count; ++i) {
@@ -1320,8 +1326,8 @@ static void draw_pokemon_add(HDC dc) {
     draw_text(dc, selection, selected, COLOR_TEXT,
               DT_CENTER | DT_VCENTER | DT_WORDBREAK);
 
-    s_create_confirm_rect = {836, 270, 1038, 306};
-    s_create_cancel_rect = {836, 314, 1038, 350};
+    s_create_confirm_rect = {676, 450, 848, 486};
+    s_create_cancel_rect = {676, 494, 848, 530};
     draw_button(dc, s_create_confirm_rect, "Create Pokemon", COLOR_SUCCESS);
     draw_button(dc, s_create_cancel_rect, "Cancel", RGB(80, 80, 105));
 }
@@ -1507,16 +1513,9 @@ static void paint_pokemon(HWND window) {
     draw_button(dc, s_pokemon_delete_button,
                 delete_pending ? "Confirm" : "Delete", COLOR_DANGER);
 
+    draw_pokemon_detail(dc);
     if (s_pokemon_add_mode) draw_pokemon_add(dc);
-    else draw_pokemon_detail(dc);
-
-    RECT status_rect = {12, 674, POKEMON_WINDOW_WIDTH - 14, 707};
-    fill_rounded_rect(dc, status_rect, COLOR_PANEL_ALT, 8);
-    frame_rounded_rect(dc, status_rect, COLOR_BORDER, 8);
-    RECT status_text = {18, 674, POKEMON_WINDOW_WIDTH - 20, 707};
-    draw_text(dc, status_text, s_pokemon_status, COLOR_DIM,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-    draw_pokemon_choice(dc);
+    else draw_pokemon_choice(dc);
 
     BitBlt(target, 0, 0, POKEMON_WINDOW_WIDTH, POKEMON_WINDOW_HEIGHT,
            dc, 0, 0, SRCCOPY);
@@ -1906,14 +1905,38 @@ static void paint_trainer(HWND window) {
                     checked ? COLOR_SUCCESS : RGB(65, 65, 90));
     }
 
-    s_trainer_apply_rect = {20, 360, 256, 396};
-    s_trainer_refresh_rect = {270, 360, 420, 396};
+    RECT identity_panel = {12, 360, 608, 430};
+    fill_rounded_rect(dc, identity_panel, COLOR_PANEL, 10);
+    frame_rounded_rect(dc, identity_panel, COLOR_BORDER, 10);
+    RECT identity_title = {20, 366, 594, 390};
+    draw_text(dc, identity_title, "Original identity (read-only)", COLOR_DIM,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    const unsigned int full_id = (unsigned int)s_trainer_profile.trainer_id;
+    char public_id[16] = {};
+    char secret_id[16] = {};
+    _snprintf_s(public_id, sizeof(public_id), _TRUNCATE, "%u", full_id & 0xFFFFu);
+    _snprintf_s(secret_id, sizeof(secret_id), _TRUNCATE, "%u", full_id >> 16);
+    RECT trainer_id_label = {20, 396, 110, 422};
+    RECT trainer_id_value = {112, 396, 260, 422};
+    RECT secret_id_label = {320, 396, 410, 422};
+    RECT secret_id_value = {412, 396, 594, 422};
+    draw_text(dc, trainer_id_label, "Trainer ID", COLOR_DIM,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, trainer_id_value, public_id, COLOR_TEXT,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, secret_id_label, "Secret ID", COLOR_DIM,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, secret_id_value, secret_id, COLOR_TEXT,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    s_trainer_apply_rect = {20, 440, 256, 476};
+    s_trainer_refresh_rect = {270, 440, 420, 476};
     draw_button(dc, s_trainer_apply_rect, "Apply", COLOR_SUCCESS);
     draw_button(dc, s_trainer_refresh_rect, "Reload", RGB(70, 70, 105));
-    RECT status_panel = {12, 400, 608, 428};
+    RECT status_panel = {12, 484, 608, 516};
     fill_rounded_rect(dc, status_panel, COLOR_PANEL_ALT, 8);
     frame_rounded_rect(dc, status_panel, COLOR_BORDER, 8);
-    RECT status = {20, 402, 600, 426};
+    RECT status = {20, 486, 600, 514};
     draw_text(dc, status, s_trainer_status, COLOR_DIM,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
@@ -2069,6 +2092,43 @@ static void handle_pokemon_click(int x, int y) {
         close_choice();
         return;
     }
+    if (s_pokemon_add_mode) {
+        if (point_in(s_species_search_rect, x, y)) {
+            begin_edit(EDIT_SPECIES_SEARCH, s_pokemon_window,
+                       s_species_search, false, 63);
+            return;
+        }
+        if (point_in(s_species_list_rect, x, y)) {
+            if (s_edit.window == s_pokemon_window) commit_edit();
+            const int row = (y - s_species_list_rect.top) / LIST_ROW_HEIGHT;
+            const int index = species_filtered_at(s_species_scroll + row);
+            if (index >= 0) s_species_selected = s_species[index].id;
+            InvalidateRect(s_pokemon_window, NULL, FALSE);
+            return;
+        }
+        if (point_in(s_create_level_rect, x, y)) {
+            char level[16] = {};
+            format_int(level, sizeof(level), s_create_level);
+            begin_edit(EDIT_CREATE_LEVEL, s_pokemon_window, level, true, 3);
+            return;
+        }
+        if (point_in(s_create_confirm_rect, x, y)) {
+            if (s_edit.window == s_pokemon_window) commit_edit();
+            if (s_species_selected > 0) {
+                opt_pokemon_manager_create(s_species_selected, s_create_level);
+                s_pokemon_add_mode = false;
+            }
+            InvalidateRect(s_pokemon_window, NULL, FALSE);
+            return;
+        }
+        if (point_in(s_create_cancel_rect, x, y)) {
+            cancel_edit();
+            s_pokemon_add_mode = false;
+            InvalidateRect(s_pokemon_window, NULL, FALSE);
+            return;
+        }
+        return;
+    }
     if (point_in(s_pokemon_list_rect, x, y)) {
         const int row = (y - s_pokemon_list_rect.top) / LIST_ROW_HEIGHT;
         pokemon_select_row(s_pokemon_scroll + row);
@@ -2097,57 +2157,20 @@ static void handle_pokemon_click(int x, int y) {
         } else {
             s_delete_target = target;
             s_delete_deadline = now + 4000;
-            lstrcpyA(s_pokemon_status,
-                     "Click Delete again to confirm (this action can be saved)." );
         }
         InvalidateRect(s_pokemon_window, NULL, FALSE);
         return;
     }
 
-    if (s_pokemon_add_mode) {
-        if (point_in(s_species_search_rect, x, y)) {
-            begin_edit(EDIT_SPECIES_SEARCH, s_pokemon_window,
-                       s_species_search, false, 63);
+    for (int i = 0; i < s_pokemon_hit_count; ++i) {
+        if (point_in(s_pokemon_hits[i].rect, x, y)) {
+            const PokemonFieldHit& hit = s_pokemon_hits[i];
+            const bool custom = choice_allows_custom_value(hit.field);
+            const bool open_choice = hit.choice &&
+                (!custom || x >= hit.rect.right - 22);
+            if (s_edit.kind == EDIT_POKEMON_FIELD) commit_edit();
+            begin_pokemon_field_edit(hit, open_choice);
             return;
-        }
-        if (point_in(s_species_list_rect, x, y)) {
-            const int row = (y - s_species_list_rect.top) / LIST_ROW_HEIGHT;
-            const int index = species_filtered_at(s_species_scroll + row);
-            if (index >= 0) s_species_selected = s_species[index].id;
-            InvalidateRect(s_pokemon_window, NULL, FALSE);
-            return;
-        }
-        if (point_in(s_create_level_rect, x, y)) {
-            char level[16] = {};
-            format_int(level, sizeof(level), s_create_level);
-            begin_edit(EDIT_CREATE_LEVEL, s_pokemon_window, level, true, 3);
-            return;
-        }
-        if (point_in(s_create_confirm_rect, x, y)) {
-            if (s_species_selected > 0) {
-                opt_pokemon_manager_create(s_species_selected, s_create_level);
-                s_pokemon_add_mode = false;
-            }
-            InvalidateRect(s_pokemon_window, NULL, FALSE);
-            return;
-        }
-        if (point_in(s_create_cancel_rect, x, y)) {
-            cancel_edit();
-            s_pokemon_add_mode = false;
-            InvalidateRect(s_pokemon_window, NULL, FALSE);
-            return;
-        }
-    } else {
-        for (int i = 0; i < s_pokemon_hit_count; ++i) {
-            if (point_in(s_pokemon_hits[i].rect, x, y)) {
-                const PokemonFieldHit& hit = s_pokemon_hits[i];
-                const bool custom = choice_allows_custom_value(hit.field);
-                const bool open_choice = hit.choice &&
-                    (!custom || x >= hit.rect.right - 22);
-                if (s_edit.kind == EDIT_POKEMON_FIELD) commit_edit();
-                begin_pokemon_field_edit(hit, open_choice);
-                return;
-            }
         }
     }
     if (s_edit.window == s_pokemon_window) commit_edit();
@@ -2457,7 +2480,12 @@ static LRESULT CALLBACK PokemonWindowProc(HWND window, UINT message,
         return 0;
     case WM_KEYDOWN:
         if (handle_edit_key(window, wparam)) return 0;
-        if (wparam == VK_ESCAPE) close_pokemon();
+        if (wparam == VK_ESCAPE && s_pokemon_add_mode) {
+            cancel_edit();
+            s_pokemon_add_mode = false;
+            InvalidateRect(window, NULL, FALSE);
+        }
+        else if (wparam == VK_ESCAPE) close_pokemon();
         else if (wparam == VK_F5) opt_pokemon_manager_refresh();
         else if (wparam == VK_UP && s_pokemon_selected > 0)
             pokemon_select_row(s_pokemon_selected - 1);
