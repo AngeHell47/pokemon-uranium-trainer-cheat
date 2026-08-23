@@ -1,5 +1,6 @@
 #include "trainer_editors.h"
 #include "trainer_menu.h"
+#include "trainer_logo.h"
 
 #include "moves_db.h"
 #include "options/opt_inventory_manager.h"
@@ -37,6 +38,7 @@ static const COLORREF COLOR_DANGER = RGB(177, 65, 83);
 static const COLORREF COLOR_HOVER = RGB(34, 47, 71);
 
 static HINSTANCE s_instance = NULL;
+static HICON s_logo_icon = NULL;
 static HWND s_game = NULL;
 static HWND s_pokemon_window = NULL;
 static HWND s_inventory_window = NULL;
@@ -314,11 +316,10 @@ static void draw_title(HDC dc, int width, const char* title,
     fill_rect(dc, title_rect, COLOR_TITLE);
     RECT bottom_accent = {0, EDITOR_TITLE_HEIGHT - 2, width, EDITOR_TITLE_HEIGHT};
     fill_rect(dc, bottom_accent, COLOR_ACCENT);
+    if (s_logo_icon)
+        DrawIconEx(dc, 8, 4, s_logo_icon, 28, 28, 0, NULL, DI_NORMAL);
     draw_text(dc, title_rect, title, COLOR_TEXT,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    RECT grip = {10, 0, 34, EDITOR_TITLE_HEIGHT};
-    draw_text(dc, grip, "•••", RGB(132, 145, 184),
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     *close_button = {width - 36, 6, width - 8, EDITOR_TITLE_HEIGHT - 6};
     draw_close_button(dc, *close_button);
 }
@@ -2629,6 +2630,8 @@ static bool register_editor_class(const char* name, WNDPROC procedure) {
 bool trainer_editors_init(HINSTANCE instance, HWND game_window,
                           const char* ini_path) {
     s_instance = instance;
+    s_logo_icon = static_cast<HICON>(LoadImageA(instance,
+        MAKEINTRESOURCEA(IDI_TRAINER_LOGO), IMAGE_ICON, 28, 28, LR_DEFAULTCOLOR));
     s_game = game_window;
     if (!opt_pokemon_manager_init(ini_path)) return false;
     if (!opt_inventory_manager_init(ini_path)) {
@@ -2702,6 +2705,10 @@ void trainer_editors_shutdown() {
     opt_trainer_manager_shutdown();
     opt_inventory_manager_shutdown();
     opt_pokemon_manager_shutdown();
+    if (s_logo_icon) {
+        DestroyIcon(s_logo_icon);
+        s_logo_icon = NULL;
+    }
 }
 
 void trainer_editors_show_pokemon() {

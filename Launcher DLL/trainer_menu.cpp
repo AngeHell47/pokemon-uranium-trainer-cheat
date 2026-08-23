@@ -26,6 +26,7 @@
 #include "moves_db.h"
 #include "rgss_safe_dispatch.h"
 #include "trainer_editors.h"
+#include "trainer_logo.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -546,6 +547,7 @@ static RECT quick_toggle_rect(int index) {
 
 static HWND  s_overlay       = NULL;
 static HWND  s_game          = NULL;
+static HICON s_logo_icon     = NULL;
 static bool  s_open          = false;
 static int   s_hovered       = -1;
 static HHOOK s_kbd_hook      = NULL;
@@ -617,6 +619,11 @@ static void paint_close_button(HDC dc) {
     MoveToEx(dc, rect.right - 8, rect.top + 8, NULL);
     LineTo(dc, rect.left + 8, rect.bottom - 8);
     SelectObject(dc, old); DeleteObject(pen);
+}
+
+static void paint_trainer_logo(HDC dc) {
+    if (s_logo_icon)
+        DrawIconEx(dc, 8, 7, s_logo_icon, 28, 28, 0, NULL, DI_NORMAL);
 }
 
 static void paint_section_header(HDC dc, const RECT& rect, const char* title,
@@ -1563,16 +1570,13 @@ static void paint(HWND hw) {
 
     HFONT of = (HFONT)SelectObject(mem, fB);
     SetTextColor(mem, COL_TEXT);
+    paint_trainer_logo(mem);
     DrawTextA(mem, "Uranium Trainer", -1, &trc,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     paint_language_flag(mem, language_flag_rect(UI_ENGLISH), UI_ENGLISH);
     paint_language_flag(mem, language_flag_rect(UI_FRENCH), UI_FRENCH);
     paint_language_flag(mem, language_flag_rect(UI_SPANISH), UI_SPANISH);
     paint_close_button(mem);
-
-    RECT dh = {4,0,20,TITLE_H};
-    SetTextColor(mem, RGB(160,160,200));
-    DrawTextA(mem, ":::", -1, &dh, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
     SelectObject(mem, fN);
 
@@ -2545,7 +2549,8 @@ static void paint_modern(HWND window) {
     HBRUSH title_brush = CreateSolidBrush(COL_TITLE);
     FillRect(dc, &title_bar, title_brush); DeleteObject(title_brush);
     SetTextColor(dc, RGB(255, 255, 255));
-    RECT title_text = {16, 0, 320, TITLE_H};
+    paint_trainer_logo(dc);
+    RECT title_text = {44, 0, 320, TITLE_H};
     DrawTextA(dc, "Uranium Trainer", -1, &title_text,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     paint_language_flag(dc, language_flag_rect(UI_ENGLISH), UI_ENGLISH);
@@ -3778,6 +3783,8 @@ void menu_request_stop() {
 
 bool menu_init(HINSTANCE hinst, HWND game_hwnd) {
     s_game = game_hwnd;
+    s_logo_icon = static_cast<HICON>(LoadImageA(hinst,
+        MAKEINTRESOURCEA(IDI_TRAINER_LOGO), IMAGE_ICON, 28, 28, LR_DEFAULTCOLOR));
     s_game_tid = game_hwnd ? GetWindowThreadProcessId(game_hwnd, NULL) : 0;
     InterlockedExchange(&s_block_game_mouse, 0);
     InterlockedExchange(&s_block_game_keyboard, 0);
@@ -3889,5 +3896,9 @@ void menu_start_loop() {
     }
 
     trainer_editors_shutdown();
+    if (s_logo_icon) {
+        DestroyIcon(s_logo_icon);
+        s_logo_icon = NULL;
+    }
     movesdb_free();
 }

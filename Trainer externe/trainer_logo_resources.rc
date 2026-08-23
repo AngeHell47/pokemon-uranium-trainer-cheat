@@ -1,0 +1,3 @@
+#include "..\\Launcher DLL\\trainer_logo.h"
+
+IDI_TRAINER_LOGO ICON "Icon-simplifie.ico"

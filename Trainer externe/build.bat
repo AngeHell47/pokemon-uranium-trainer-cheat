@@ -18,6 +18,9 @@ set "DLLSRC=..\Launcher DLL"
 
 rem Build the proxy first: it is embedded in the external payload and can be
 rem installed from Settings as <game folder>\version.dll.
+rc /nologo /fo build\trainer_logo.res trainer_logo_resources.rc
+if errorlevel 1 exit /b 1
+
 cl /nologo /O1 /GS- /MT /LD /W4 /utf-8 ^
   "%DLLSRC%\version_proxy.cpp" ^
   "%DLLSRC%\rgss_safe_dispatch.cpp" ^
@@ -51,6 +54,7 @@ cl /nologo /O1 /GS- /MT /LD /W4 /utf-8 ^
   "%DLLSRC%\options\opt_weather.cpp" ^
   "%DLLSRC%\options\opt_heal.cpp" ^
   "%DLLSRC%\options\opt_extras.cpp" ^
+  build\trainer_logo.res ^
   /Fe:build\version.dll /link /DEF:"%DLLSRC%\version.def" /MACHINE:X86 ^
   psapi.lib kernel32.lib user32.lib gdi32.lib d3d9.lib
 if errorlevel 1 exit /b 1

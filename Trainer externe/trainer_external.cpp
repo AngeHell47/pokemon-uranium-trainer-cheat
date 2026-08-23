@@ -37,6 +37,8 @@ HWND g_attach_button = nullptr;
 HWND g_launch_button = nullptr;
 HWND g_status_text = nullptr;
 HFONT g_font = nullptr;
+HICON g_logo_icon = nullptr;
+HICON g_logo_icon_small = nullptr;
 std::vector<ProcessEntry> g_processes;
 COLORREF g_status_color = RGB(75, 85, 99);
 
@@ -603,13 +605,19 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
 
+        HWND logo = CreateWindowExW(0, WC_STATICW, L"",
+            WS_CHILD | WS_VISIBLE | SS_ICON, 20, 12, 44, 44,
+            window, nullptr, g_instance, nullptr);
+        SendMessageW(logo, STM_SETIMAGE, IMAGE_ICON,
+            reinterpret_cast<LPARAM>(g_logo_icon));
+
         HWND title = CreateWindowExW(0, L"STATIC", L"Pokemon Uranium External Trainer",
-            WS_CHILD | WS_VISIBLE, 22, 18, 510, 28, window, nullptr, g_instance, nullptr);
+            WS_CHILD | WS_VISIBLE, 76, 18, 456, 28, window, nullptr, g_instance, nullptr);
         set_control_font(title);
 
         HWND help = CreateWindowExW(0, L"STATIC",
             L"Recommended: launch the game directly, or connect to a game already running.",
-            WS_CHILD | WS_VISIBLE, 22, 50, 510, 22, window, nullptr, g_instance, nullptr);
+            WS_CHILD | WS_VISIBLE, 76, 50, 456, 22, window, nullptr, g_instance, nullptr);
         set_control_font(help);
 
         g_process_combo = CreateWindowExW(WS_EX_CLIENTEDGE, WC_COMBOBOXW, L"",
@@ -696,13 +704,20 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
     INITCOMMONCONTROLSEX controls = {sizeof(controls), ICC_STANDARD_CLASSES};
     InitCommonControlsEx(&controls);
 
+    g_logo_icon = static_cast<HICON>(LoadImageW(instance,
+        MAKEINTRESOURCEW(IDI_TRAINER_LOGO), IMAGE_ICON, 48, 48, LR_DEFAULTCOLOR));
+    g_logo_icon_small = static_cast<HICON>(LoadImageW(instance,
+        MAKEINTRESOURCEW(IDI_TRAINER_LOGO), IMAGE_ICON, 20, 20, LR_DEFAULTCOLOR));
+    if (!g_logo_icon) g_logo_icon = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
+    if (!g_logo_icon_small) g_logo_icon_small = g_logo_icon;
+
     WNDCLASSEXW window_class = {};
     window_class.cbSize = sizeof(window_class);
     window_class.lpfnWndProc = window_proc;
     window_class.hInstance = instance;
     window_class.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
-    window_class.hIcon = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
-    window_class.hIconSm = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
+    window_class.hIcon = g_logo_icon;
+    window_class.hIconSm = g_logo_icon_small;
     window_class.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
     window_class.lpszClassName = kWindowClass;
     if (!RegisterClassExW(&window_class)) return 1;
