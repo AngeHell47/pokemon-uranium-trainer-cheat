@@ -1,12 +1,7 @@
 #include "opt_startup.h"
 #include "../rgss_safe_dispatch.h"
-#include "../trainer_runtime.h"
-
-#include <shellapi.h>
 #include <stdio.h>
 #include <string.h>
-
-#pragma comment(lib, "shell32.lib")
 
 bool g_auto_load_save = false;
 bool g_fast_boot = false;
@@ -18,269 +13,7 @@ static volatile LONG s_auto_load = 0;
 static char s_ruby[12288];
 static char s_ready_probe[1024];
 static char s_ini[MAX_PATH] = {};
-static char s_last_error[512] = {};
 
-// Kept in the external payload so it can install the exact proxy DLL that was
-// built with it.  A separately installed proxy simply needs the preference.
-#define IDR_AUTOSTART_VERSION_PROXY 102
-
-static bool get_game_version_path(char* path, size_t capacity) {
-    if (!path || capacity < MAX_PATH ||
-        !GetModuleFileNameA(NULL, path, (DWORD)capacity)) return false;
-    char* slash = strrchr(path, '\\');
-    if (!slash) return false;
-    *(slash + 1) = '\0';
-    if (lstrlenA(path) + lstrlenA("version.dll") >= (int)capacity) return false;
-    lstrcatA(path, "version.dll");
-    return true;
-}
-
-static bool startup_error(const char* reason, const char* path) {
-    if (!reason) reason = "opération impossible";
-    if (!path) path = "";
-    _snprintf_s(s_last_error, sizeof(s_last_error), _TRUNCATE,
-                "Impossible d'activer le démarrage automatique.\n\n%s\n\nFichier ciblé : %s\n\nLa DLL injectée hérite des droits du jeu : lancer uniquement UraniumTrainer.exe en administrateur ne suffit pas toujours. Lance aussi le jeu en administrateur ou accepte la demande UAC du trainer.",
-                reason, path);
-    return false;
-}
-
-static bool is_trainer_version_proxy(const char* path) {
-    // This marker has been present in every trainer proxy build.  It prevents
-    // Settings from deleting or adopting an unrelated version.dll.
-    static const char marker[] = "PolkamonUraniumTrainer_%lu";
-    HANDLE file = CreateFileA(path, GENERIC_READ,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (file == INVALID_HANDLE_VALUE) return false;
-    char bytes[4096 + sizeof(marker)] = {};
-    DWORD retained = 0;
-    bool found = false;
-    for (;;) {
-        DWORD read = 0;
-        if (!ReadFile(file, bytes + retained, 4096, &read, NULL) || read == 0)
-            break;
-        const DWORD total = retained + read;
-        for (DWORD i = 0; i + sizeof(marker) - 1 <= total; ++i) {
-            if (memcmp(bytes + i, marker, sizeof(marker) - 1) == 0) {
-                found = true;
-                break;
-            }
-        }
-        if (found) break;
-        retained = total < sizeof(marker) - 2 ? total : sizeof(marker) - 2;
-        memmove(bytes, bytes + total - retained, retained);
-    }
-    CloseHandle(file);
-    return found;
-}
-
-// Une DLL injectée s'exécute avec le jeton du jeu. Si le jeu est installé dans
-// Program Files mais lancé normalement, même un launcher élevé ne peut pas
-// écrire à côté de l'exécutable. Dans ce cas, déléguer uniquement le déplacement
-// du proxy à cmd.exe avec le verbe runas déclenche la demande UAC attendue.
-static bool install_version_proxy_elevated(const void* bytes, DWORD size,
-                                           const char* target,
-                                           char* failure, size_t failure_capacity) {
-    if (failure && failure_capacity) failure[0] = '\0';
-    if (!bytes || !size || !target || !target[0]) return false;
-
-    char temp_dir[MAX_PATH] = {};
-    if (!GetTempPathA(sizeof(temp_dir), temp_dir)) {
-        if (failure && failure_capacity)
-            wsprintfA(failure, "Le dossier temporaire est introuvable (erreur %lu).",
-                      (unsigned long)GetLastError());
-        return false;
-    }
-
-    char source[MAX_PATH] = {};
-    if (!GetTempFileNameA(temp_dir, "utr", 0, source)) {
-        if (failure && failure_capacity)
-            wsprintfA(failure, "Le fichier temporaire n'a pas pu être créé (erreur %lu).",
-                      (unsigned long)GetLastError());
-        return false;
-    }
-
-    HANDLE file = CreateFileA(source, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
-                              FILE_ATTRIBUTE_NORMAL, NULL);
-    if (file == INVALID_HANDLE_VALUE) {
-        const DWORD error = GetLastError();
-        DeleteFileA(source);
-        if (failure && failure_capacity)
-            wsprintfA(failure, "Le proxy temporaire n'a pas pu être écrit (erreur %lu).",
-                      (unsigned long)error);
-        return false;
-    }
-    DWORD written = 0;
-    const bool written_ok = WriteFile(file, bytes, size, &written, NULL) &&
-                            written == size;
-    const DWORD write_error = written_ok ? ERROR_SUCCESS : GetLastError();
-    CloseHandle(file);
-    if (!written_ok) {
-        DeleteFileA(source);
-        if (failure && failure_capacity)
-            wsprintfA(failure, "Le proxy temporaire n'a pas pu être écrit (erreur %lu).",
-                      (unsigned long)write_error);
-        return false;
-    }
-
-    char command[MAX_PATH * 2 + 128] = {};
-    _snprintf_s(command, sizeof(command), _TRUNCATE,
-                "/d /c move /Y \"%s\" \"%s\" >nul",
-                source, target);
-    char comspec[MAX_PATH] = {};
-    GetEnvironmentVariableA("ComSpec", comspec, sizeof(comspec));
-    if (!comspec[0]) lstrcpyA(comspec, "cmd.exe");
-
-    SHELLEXECUTEINFOA execute = {};
-    execute.cbSize = sizeof(execute);
-    execute.fMask = SEE_MASK_NOCLOSEPROCESS;
-    execute.hwnd = NULL;
-    execute.lpVerb = "runas";
-    execute.lpFile = comspec;
-    execute.lpParameters = command;
-    execute.nShow = SW_HIDE;
-    if (!ShellExecuteExA(&execute)) {
-        const DWORD error = GetLastError();
-        DeleteFileA(source);
-        if (failure && failure_capacity)
-            wsprintfA(failure, "Windows n'a pas pu demander l'élévation (erreur %lu).",
-                      (unsigned long)error);
-        return false;
-    }
-
-    const DWORD wait = WaitForSingleObject(execute.hProcess, 30000);
-    DWORD exit_code = 1;
-    if (wait == WAIT_OBJECT_0) GetExitCodeProcess(execute.hProcess, &exit_code);
-    if (execute.hProcess) CloseHandle(execute.hProcess);
-    DeleteFileA(source);
-    if (wait != WAIT_OBJECT_0 || exit_code != 0 ||
-        GetFileAttributesA(target) == INVALID_FILE_ATTRIBUTES ||
-        !is_trainer_version_proxy(target)) {
-        if (failure && failure_capacity) {
-            if (wait != WAIT_OBJECT_0)
-                wsprintfA(failure, "L'installation élevée a expiré ou a été annulée.");
-            else
-                wsprintfA(failure, "L'installation élevée a échoué (code %lu).",
-                          (unsigned long)exit_code);
-        }
-        return false;
-    }
-    return true;
-}
-
-static bool remove_version_proxy() {
-    char game_path[MAX_PATH] = {};
-    if (!get_game_version_path(game_path, sizeof(game_path))) return false;
-    if (GetFileAttributesA(game_path) == INVALID_FILE_ATTRIBUTES) return true;
-    if (!is_trainer_version_proxy(game_path)) return false;
-
-    if (DeleteFileA(game_path)) return true;
-
-    // Uranium normally has version.dll mapped until process exit.  Windows can
-    // usually rename a mapped DLL; removing its active filename disables the
-    // next launch immediately.  The renamed file is then deleted when free.
-    char disabled[MAX_PATH] = {};
-    _snprintf_s(disabled, sizeof(disabled), _TRUNCATE,
-                "%s.trainer-disabled", game_path);
-    if (GetFileAttributesA(disabled) != INVALID_FILE_ATTRIBUTES &&
-        is_trainer_version_proxy(disabled))
-        DeleteFileA(disabled);
-    if (MoveFileExA(game_path, disabled,
-                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        if (!DeleteFileA(disabled))
-            MoveFileExA(disabled, NULL, MOVEFILE_DELAY_UNTIL_REBOOT);
-        return true;
-    }
-
-    // Last resort for systems that forbid renaming mapped images.  The setting
-    // still disables the proxy, and reactivation recognizes this managed DLL.
-    MoveFileExA(game_path, NULL, MOVEFILE_DELAY_UNTIL_REBOOT);
-    return true;
-}
-
-static bool install_version_proxy() {
-    char game_path[MAX_PATH] = {};
-    if (!get_game_version_path(game_path, sizeof(game_path)))
-        return startup_error("Le chemin de l'exécutable du jeu est introuvable.", NULL);
-
-    char module_path[MAX_PATH] = {};
-    GetModuleFileNameA(g_trainer_module, module_path, sizeof(module_path));
-    // Already running through the installed proxy: no file operation needed.
-    if (_stricmp(game_path, module_path) == 0) return true;
-    // A previous session may have disabled the proxy while Windows still had
-    // it mapped.  Re-adopt our own file, but never replace an unrelated DLL.
-    if (GetFileAttributesA(game_path) != INVALID_FILE_ATTRIBUTES) {
-        if (is_trainer_version_proxy(game_path)) return true;
-        return startup_error(
-            "Un autre version.dll existe déjà à côté du jeu et n'a pas été remplacé.",
-            game_path);
-    }
-
-    HRSRC resource = FindResourceA(g_trainer_module,
-        MAKEINTRESOURCEA(IDR_AUTOSTART_VERSION_PROXY), RT_RCDATA);
-    if (!resource)
-        return startup_error("Le proxy version.dll n'est pas inclus dans ce build.", game_path);
-    HGLOBAL loaded = LoadResource(g_trainer_module, resource);
-    const DWORD size = SizeofResource(g_trainer_module, resource);
-    const void* bytes = loaded ? LockResource(loaded) : NULL;
-    if (!bytes || !size)
-        return startup_error("Le proxy version.dll inclus est invalide.", game_path);
-
-    char temporary[MAX_PATH] = {};
-    _snprintf_s(temporary, sizeof(temporary), _TRUNCATE, "%s.new", game_path);
-    HANDLE file = CreateFileA(temporary, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
-                              FILE_ATTRIBUTE_NORMAL, NULL);
-    if (file == INVALID_HANDLE_VALUE) {
-        const DWORD error = GetLastError();
-        if (error == ERROR_ACCESS_DENIED) {
-            char elevated_error[192] = {};
-            if (install_version_proxy_elevated(bytes, size, game_path,
-                                               elevated_error, sizeof(elevated_error)))
-                return true;
-            return startup_error(elevated_error[0] ? elevated_error :
-                                 "Windows refuse l'écriture du proxy (erreur 5).",
-                                 game_path);
-        }
-        char reason[160] = {};
-        wsprintfA(reason, "Windows refuse l'écriture (erreur %lu).",
-                  (unsigned long)error);
-        return startup_error(reason, game_path);
-    }
-    DWORD written = 0;
-    const bool ok = WriteFile(file, bytes, size, &written, NULL) && written == size;
-    const DWORD write_error = ok ? ERROR_SUCCESS : GetLastError();
-    CloseHandle(file);
-    if (!ok) {
-        DeleteFileA(temporary);
-        if (write_error == ERROR_ACCESS_DENIED) {
-            char elevated_error[192] = {};
-            if (install_version_proxy_elevated(bytes, size, game_path,
-                                               elevated_error, sizeof(elevated_error)))
-                return true;
-            return startup_error(elevated_error[0] ? elevated_error :
-                                 "Windows refuse l'écriture du proxy (erreur 5).",
-                                 game_path);
-        }
-        return startup_error("La copie de version.dll n'a pas pu être écrite.", game_path);
-    }
-    if (!MoveFileExA(temporary, game_path, MOVEFILE_WRITE_THROUGH)) {
-        const DWORD error = GetLastError();
-        char reason[160] = {};
-        wsprintfA(reason, "Windows refuse l'installation (erreur %lu).",
-                  (unsigned long)error);
-        DeleteFileA(temporary);
-        if (error == ERROR_ACCESS_DENIED) {
-            char elevated_error[192] = {};
-            if (install_version_proxy_elevated(bytes, size, game_path,
-                                               elevated_error, sizeof(elevated_error)))
-                return true;
-            return startup_error(elevated_error[0] ? elevated_error : reason,
-                                 game_path);
-        }
-        return startup_error(reason, game_path);
-    }
-    return true;
-}
 
 static void post_to_game() {
     rgss_safe_dispatch_notify();
@@ -492,11 +225,16 @@ static void start_retry_thread() {
 
 void opt_startup_init(const char* ini_path) {
     lstrcpynA(s_ini, ini_path ? ini_path : "trainer.ini", sizeof(s_ini));
-    s_last_error[0] = '\0';
-    const bool auto_trainer =
-        GetPrivateProfileIntA("Settings", "AutoStartTrainer", 0, s_ini) != 0;
-    g_fast_boot = auto_trainer &&
+    // Legacy setting removed: a manually installed proxy always starts.
+    WritePrivateProfileStringA("Settings", "AutoStartTrainer", NULL, s_ini);
+#ifdef TRAINER_EXTERNAL_PAYLOAD
+    // Attaching the standalone injector to an existing game must never run the
+    // next-launch fast boot path.
+    g_fast_boot = false;
+#else
+    g_fast_boot =
         GetPrivateProfileIntA("Settings", "FastBoot", 0, s_ini) != 0;
+#endif
     g_auto_load_save = g_fast_boot ||
         strstr(GetCommandLineA(), "--trainer-direct-load") != NULL;
     InterlockedExchange(&s_auto_load, g_auto_load_save ? 1 : 0);
@@ -516,33 +254,9 @@ void opt_startup_init(const char* ini_path) {
         (unsigned long)(ULONG_PTR)&s_game_ready);
 }
 
-bool opt_startup_set_auto_trainer(bool enabled) {
-    s_last_error[0] = '\0';
-    if (!enabled) {
-        if (!remove_version_proxy())
-            return startup_error("Le version.dll du trainer n'a pas pu être retiré.", NULL);
-        g_fast_boot = false;
-        WritePrivateProfileStringA("Settings", "FastBoot", "0", s_ini);
-        WritePrivateProfileStringA("Settings", "AutoStartTrainer", "0", s_ini);
-        return true;
-    }
-    if (!install_version_proxy()) return false;
-    WritePrivateProfileStringA("Settings", "AutoStartTrainer", "1", s_ini);
-    return true;
-}
-
 void opt_startup_set_fast_boot(bool enabled) {
-    // Fast boot is meaningful only when the proxy will load the trainer on the
-    // next launch.  Keep the persisted state coherent even if this is called
-    // from a future UI entry point.
-    if (enabled && GetPrivateProfileIntA("Settings", "AutoStartTrainer", 0, s_ini) == 0)
-        enabled = false;
     g_fast_boot = enabled;
     WritePrivateProfileStringA("Settings", "FastBoot", enabled ? "1" : "0", s_ini);
-}
-
-bool opt_startup_auto_trainer_enabled() {
-    return GetPrivateProfileIntA("Settings", "AutoStartTrainer", 0, s_ini) != 0;
 }
 
 bool opt_startup_fast_boot_enabled() {
@@ -551,10 +265,6 @@ bool opt_startup_fast_boot_enabled() {
 
 const char* opt_startup_config_path() {
     return s_ini[0] ? s_ini : "trainer.ini";
-}
-
-const char* opt_startup_last_error() {
-    return s_last_error[0] ? s_last_error : "L'opération a échoué.";
 }
 
 void opt_startup_set_hwnd_and_start(HWND hwnd) {

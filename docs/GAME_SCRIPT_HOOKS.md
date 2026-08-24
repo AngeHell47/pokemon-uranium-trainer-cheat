@@ -19,14 +19,11 @@ imbriqués à `Graphics.update` sans réentrer dans les callbacks du trainer.
 - Éclosion : le gestionnaire `Events.onStepTaken` décrémente `eggsteps`, puis
   appelle `pbHatch`. Un getter virtuel à 1 conserve l'animation et ne modifie
   pas le compteur réel si l'option est désactivée avant le prochain pas.
-- CS effaçables : le corps natif de `PokemonSummary#pbStartForgetScreen` est
-  reposé en mémoire avec une condition supplémentaire autour de son unique
-  refus. Le helper `pbIsHiddenMove?` est également réinstallé, sans affecter
-  l'utilisation des CS sur la carte ni les objets HM. Les deux méthodes sont
-  installées une fois après acquittement de `PokemonSummary`, puis uniquement
-  mises à jour lors d'une bascule explicite de l'option. Le drapeau `$DEBUG`,
-  que le jeu consulte dans ce refus précis, est également
-  forcé pendant l'activation et remis à faux à la désactivation.
+- CS effaçables : `BW_Summary` redéfinit tardivement
+  `PokemonSummary#pbStartForgetScreen`. Le trainer repose donc périodiquement
+  cette méthode finale et le prédicat `pbIsHiddenMove?`; seul le refus d'oubli
+  dépend du bouton. `$DEBUG` n'est jamais modifié : Surf conserve tous ses
+  prérequis.
 
 ## Éditeurs persistants
 
@@ -138,6 +135,29 @@ utilise `setSeen` et `setOwned` pour chaque espèce, ses deux sexes et une
 variante shiny, plutôt que d'écrire partiellement les tableaux du dresseur.
 
 ## Combat et vitesse
+
+Les avantages de combat du trainer sont regroupés dans un wrapper réversible :
+
+- l'ordre natif est calculé en premier, puis les attaques du joueur sont
+  remontées sans modifier leur ordre relatif ;
+- la précision et les critiques garantis ne concernent que les attaques du
+  joueur visant le camp adverse ;
+- l'immunité bloque les cinq statuts majeurs ainsi que confusion et attraction,
+  et soigne ces états lorsqu'elle est activée ;
+- la fuite garantie neutralise uniquement le tirage aléatoire d'un combat
+  sauvage et respecte les combats de Dresseur, les hordes et les verrous de
+  scénario ;
+- le multiplicateur d'XP agit dans la portée de `pbGainEXP`, avant les animations
+  de niveau et l'apprentissage des attaques ;
+- le multiplicateur d'argent agit sur la récompense du Dresseur et l'argent de
+  Jackpot, sans multiplier les ventes ni annuler les pertes ;
+- les handlers `UseInField` des trois cannes sont raccordés directement au
+  trainer. Option désactivée, ils délèguent aux handlers natifs sauvegardés.
+  « Pêche instantané 100% » choisit une table de pêche disponible et lance
+  directement la rencontre, sans tirage de morsure ni fenêtre de réaction.
+
+Tous les multiplicateurs sont bornés de x1 à x100 et leurs valeurs, comme les
+interrupteurs, sont conservées dans `trainer.ini`.
 
 Le God mode ne falsifie pas `isFainted?` et ne restaure pas les PV à chaque
 image. Le payload réinstalle dynamiquement trois petites méthodes natives avec

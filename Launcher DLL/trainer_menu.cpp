@@ -20,6 +20,7 @@
 #include "options/opt_heal.h"
 #include "options/opt_extras.h"
 #include "options/opt_autosave.h"
+#include "options/opt_advantages.h"
 //#include "options/opt_speedhack.h"
 #include "options/opt_zoom.h"
 #include "options/opt_minimap.h"
@@ -93,6 +94,15 @@ static const Translation kTranslations[] = {
     { "Show FPS", "Afficher les FPS", "Mostrar FPS" }, { "Catch trainers", "Capturer dresseurs", "Capturar entrenadores" },
     { "Infinite items", "Objets infinis", "Objetos infinitos" }, { "Instant egg hatch", "Éclosion instantanée", "Eclosión instantánea" },
     { "Removable HMs", "CS effaçables", "MO eliminables" }, { "None", "Aucune", "Ninguno" },
+    { "Always Attack First", "Toujours attaquer en premier", "Atacar siempre primero" },
+    { "100% Accuracy", "Précision 100 %", "Precisión 100 %" },
+    { "Guaranteed Critical Hits", "Coups critiques garantis", "Golpes críticos garantizados" },
+    { "Status Immunity", "Immunité aux altérations de statut", "Inmunidad a estados" },
+    { "Guaranteed Escape", "Fuite réussie 100%", "Huida garantizada" },
+    { "EXP Multiplier", "Multiplicateur d'XP gagné", "Multiplicador de EXP" },
+    { "Prize Money Multiplier", "Multiplicateur d'argent gagné", "Multiplicador de dinero ganado" },
+    { "Instant 100% Fishing", "Pêche instantané 100%", "Pesca instantánea 100%" },
+    { "Fishing", "Pêche", "Pesca" },
     { "Rain", "Pluie", "Lluvia" }, { "Storm", "Orage", "Tormenta" }, { "Snow", "Neige", "Nieve" },
     { "Sandstorm", "Tempête de sable", "Tormenta de arena" }, { "Sun", "Soleil", "Sol" },
     { "Heavy rain", "Forte pluie", "Lluvia intensa" }, { "Blizzard", "Blizzard", "Ventisca" },
@@ -177,8 +187,6 @@ static const Translation kTranslations[] = {
     { "Click the key button, then press a new shortcut", "Cliquez sur la touche, puis choisissez un nouveau raccourci", "Haz clic en la tecla y pulsa un nuevo atajo" },
     { "Trainer Session", "Session du trainer", "Sesión del trainer" },
     { "Stop Trainer", "Arrêter le trainer", "Detener el trainer" },
-    { "Start trainer with game", "Lancer le trainer avec le jeu", "Iniciar el trainer con el juego" },
-    { "Installs the required version.dll next to Uranium.exe", "Installe le version.dll requis à côté de Uranium.exe", "Instala el version.dll necesario junto a Uranium.exe" },
     { "Fast boot", "Démarrage rapide", "Inicio rápido" },
     { "Skip the intro and load the default save on next launch", "Passe l'intro et charge la sauvegarde par défaut au prochain lancement", "Omite la introducción y carga la partida predeterminada al iniciar" },
     { "On", "Activé", "Sí" }, { "Off", "Désactivé", "No" },
@@ -429,6 +437,23 @@ MenuItem g_items[] = {
 
     { "Quick Save", ITEM_TYPE_ACTION,
       NULL,NULL, NULL,0,0,NULL,opt_extras_quick_save_trigger },
+
+    { "Always Attack First", ITEM_TYPE_TOGGLE,
+      &g_always_first_enabled,opt_advantages_set_always_first, NULL,0,0,NULL },
+    { "100% Accuracy", ITEM_TYPE_TOGGLE,
+      &g_perfect_accuracy_enabled,opt_advantages_set_perfect_accuracy, NULL,0,0,NULL },
+    { "Guaranteed Critical Hits", ITEM_TYPE_TOGGLE,
+      &g_guaranteed_critical_enabled,opt_advantages_set_guaranteed_critical, NULL,0,0,NULL },
+    { "Status Immunity", ITEM_TYPE_TOGGLE,
+      &g_status_immunity_enabled,opt_advantages_set_status_immunity, NULL,0,0,NULL },
+    { "Guaranteed Escape", ITEM_TYPE_TOGGLE,
+      &g_guaranteed_flee_enabled,opt_advantages_set_guaranteed_flee, NULL,0,0,NULL },
+    { "EXP Multiplier", ITEM_TYPE_SLIDER,
+      NULL,NULL, &g_exp_multiplier,1,100,opt_advantages_set_exp_multiplier },
+    { "Prize Money Multiplier", ITEM_TYPE_SLIDER,
+      NULL,NULL, &g_prize_money_multiplier,1,100,opt_advantages_set_money_multiplier },
+    { "Instant 100% Fishing", ITEM_TYPE_TOGGLE,
+      &g_guaranteed_fishing_enabled,opt_advantages_set_guaranteed_fishing, NULL,0,0,NULL },
 	  
 };
 
@@ -454,9 +479,10 @@ static const int kPlayerFeatures[] = {5, 36, 38, 37, 22};
 static const int kPlayerMovement[] = {6, 27, 28, 29, 30};
 static const int kPlayerActions[] = {17, 18, 19, 21, 39};
 static const int kPlayerEditors[] = {23, 24, 25};
-static const int kBattleLeft[] = {1, 2, 3, 4};
+static const int kBattleLeft[] = {1, 2, 3, 40, 41, 42, 43, 44, 4, 45, 46};
 static const int kEncountersLeft[] = {8, 9, 10};
 static const int kEncountersRight[] = {11, 12, 13, 14};
+static const int kEncountersFishing[] = {47};
 static const int kDisplayLeft[] = {26, 35};
 static const int kDisplayRight[] = {31, 32, 33, 34};
 static const int kDisplayEnvironment[] = {15, 16};
@@ -619,7 +645,6 @@ static int   s_drag_ox = 0, s_drag_oy = 0;
 static bool  s_menu_positioned = false;
 static int   s_menu_toggle_key = VK_INSERT;
 static bool  s_menu_hotkey_capture = false;
-static bool  s_auto_start_trainer = false;
 static bool  s_fast_boot = false;
 static bool  s_slider_drag   = false;
 static int   s_slider_idx    = -1;
@@ -1984,7 +2009,7 @@ static const char* modern_group_title(MainTab tab, int column) {
     static const char* titles[TAB_COUNT][MODERN_MAX_CARD_COUNT] = {
         {"Features", "Movement", "Actions", "Editors"},
         {"Battle Boosts", "Capture", "", ""},
-        {"Encounter Rules", "Wild Pokémon", "", ""},
+        {"Encounter Rules", "Wild Pokémon", "Fishing", ""},
         {"", "", "", ""},
         {"Zoom & FPS", "Minimap", "Environment", ""},
         {"", "", "", ""},
@@ -2011,6 +2036,8 @@ static void modern_tab_items(MainTab tab, int column,
         *items = kEncountersLeft; *count = ARRAYSIZE(kEncountersLeft);
     } else if (tab == TAB_ENCOUNTERS && column == 1) {
         *items = kEncountersRight; *count = ARRAYSIZE(kEncountersRight);
+    } else if (tab == TAB_ENCOUNTERS && column == 2) {
+        *items = kEncountersFishing; *count = ARRAYSIZE(kEncountersFishing);
     } else if (tab == TAB_DISPLAY && column == 0) {
         *items = kDisplayLeft; *count = ARRAYSIZE(kDisplayLeft);
     } else if (tab == TAB_DISPLAY && column == 1) {
@@ -2048,7 +2075,7 @@ static int modern_card_count(MainTab tab) {
     if (tab == TAB_PLAYER) return 4;
     if (tab == TAB_WORLD) return 0;
     if (tab == TAB_AUTOSAVE) return 0;
-    if (tab == TAB_DISPLAY) return 3;
+    if (tab == TAB_DISPLAY || tab == TAB_ENCOUNTERS) return 3;
     if (tab == TAB_SETTINGS) return 1;
     return 2;
 }
@@ -2100,18 +2127,21 @@ static RECT modern_card_rect(int column) {
     int visual_column = column;
     if (s_active_tab == TAB_PLAYER && column >= 2)
         visual_column = column - 2;
-    else if (s_active_tab == TAB_DISPLAY && column == 2)
-        visual_column = 1;
+    else if ((s_active_tab == TAB_DISPLAY || s_active_tab == TAB_ENCOUNTERS) &&
+             column == 2)
+        visual_column = s_active_tab == TAB_DISPLAY ? 1 : 0;
     const int left = MODERN_MARGIN + visual_column * (width + MODERN_COLUMN_GAP);
     int top = TITLE_H + MODERN_TAB_H + MODERN_PAGE_HEADER_H;
     if (s_active_tab == TAB_SETTINGS) {
         return {left, top, left + width,
-                top + MODERN_CARD_HEADER_H + MODERN_SETTINGS_ROW_H * 5 + 10};
+                top + MODERN_CARD_HEADER_H + MODERN_SETTINGS_ROW_H * 4 + 10};
     }
     if (s_active_tab == TAB_PLAYER && column >= 2)
         top = modern_card_rect(column - 2).bottom + MODERN_COLUMN_GAP;
-    else if (s_active_tab == TAB_DISPLAY && column == 2)
-        top = modern_card_rect(1).bottom + MODERN_COLUMN_GAP;
+    else if ((s_active_tab == TAB_DISPLAY || s_active_tab == TAB_ENCOUNTERS) &&
+             column == 2)
+        top = modern_card_rect(s_active_tab == TAB_DISPLAY ? 1 : 0).bottom +
+              MODERN_COLUMN_GAP;
     int content_height = 0;
     const int* items = NULL;
     int count = 0;
@@ -2155,7 +2185,7 @@ static RECT modern_settings_default_rect() {
 }
 
 static RECT modern_settings_unload_rect() {
-    RECT row = modern_settings_row_rect(4);
+    RECT row = modern_settings_row_rect(3);
     return {row.right - 166, row.top + 17, row.right, row.bottom - 17};
 }
 
@@ -2576,41 +2606,31 @@ static void modern_draw_settings(HDC dc, HFONT label_font,
     DrawTextA(dc, trainer_ui_text(g_pause_on_inactive ? "On" : "Off", NULL), -1,
               &pause_button, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-    const int toggle_rows[] = {2, 3};
-    const char* toggle_labels[] = {"Start trainer with game", "Fast boot"};
-    const char* toggle_descriptions[] = {
-        "Installs the required version.dll next to Uranium.exe",
-        "Skip the intro and load the default save on next launch"
-    };
-    const bool toggle_values[] = {s_auto_start_trainer, s_fast_boot};
-    for (int i = 0; i < 2; ++i) {
-        RECT toggle_row = modern_settings_row_rect(toggle_rows[i]);
-        RECT toggle_button = modern_settings_toggle_rect(toggle_rows[i]);
-        RECT toggle_label = {toggle_row.left + 10, toggle_row.top + 8,
-                             toggle_button.left - 16, toggle_row.top + 34};
-        SelectObject(dc, label_font); SetTextColor(dc, COL_TEXT);
-        DrawTextA(dc, trainer_ui_text(toggle_labels[i], NULL), -1, &toggle_label,
-                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        RECT toggle_description = {toggle_row.left + 10, toggle_row.top + 33,
-                                   toggle_button.left - 16, toggle_row.bottom - 7};
-        SelectObject(dc, small_font); SetTextColor(dc, COL_DIMTEXT);
-        DrawTextA(dc, trainer_ui_text(toggle_descriptions[i], NULL), -1,
-                  &toggle_description, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
-                  DT_END_ELLIPSIS);
-        const bool available = i == 0 || s_auto_start_trainer;
-        fill_rounded_rect(dc, toggle_button,
-            !available ? RGB(42, 48, 59) :
-            (toggle_values[i] ? RGB(40, 111, 83) : RGB(51, 65, 93)), 9);
-        frame_rounded_rect(dc, toggle_button,
-            !available ? RGB(62, 70, 84) :
-            (toggle_values[i] ? RGB(72, 185, 130) : RGB(73, 89, 121)), 9);
-        SetTextColor(dc, !available ? RGB(134, 143, 158) :
-            (toggle_values[i] ? RGB(222, 255, 238) : RGB(220, 226, 240)));
-        DrawTextA(dc, trainer_ui_text(toggle_values[i] ? "On" : "Off", NULL), -1,
-                  &toggle_button, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    }
+    const int toggle_row_index = 2;
+    RECT toggle_row = modern_settings_row_rect(toggle_row_index);
+    RECT toggle_button = modern_settings_toggle_rect(toggle_row_index);
+    RECT toggle_label = {toggle_row.left + 10, toggle_row.top + 8,
+                         toggle_button.left - 16, toggle_row.top + 34};
+    SelectObject(dc, label_font); SetTextColor(dc, COL_TEXT);
+    DrawTextA(dc, trainer_ui_text("Fast boot", NULL), -1, &toggle_label,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    RECT toggle_description = {toggle_row.left + 10, toggle_row.top + 33,
+                               toggle_button.left - 16, toggle_row.bottom - 7};
+    SelectObject(dc, small_font); SetTextColor(dc, COL_DIMTEXT);
+    DrawTextA(dc, trainer_ui_text(
+                  "Skip the intro and load the default save on next launch", NULL), -1,
+              &toggle_description, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
+              DT_END_ELLIPSIS);
+    fill_rounded_rect(dc, toggle_button,
+        s_fast_boot ? RGB(40, 111, 83) : RGB(51, 65, 93), 9);
+    frame_rounded_rect(dc, toggle_button,
+        s_fast_boot ? RGB(72, 185, 130) : RGB(73, 89, 121), 9);
+    SetTextColor(dc,
+        s_fast_boot ? RGB(222, 255, 238) : RGB(220, 226, 240));
+    DrawTextA(dc, trainer_ui_text(s_fast_boot ? "On" : "Off", NULL), -1,
+              &toggle_button, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-    RECT unload_row = modern_settings_row_rect(4);
+    RECT unload_row = modern_settings_row_rect(3);
     RECT unload_button = modern_settings_unload_rect();
     RECT unload_label = {unload_row.left + 10, unload_row.top + 8,
                          unload_button.left - 16, unload_row.bottom - 8};
@@ -4132,18 +4152,6 @@ static bool partymon_on_keydown(WPARAM vk) {
 }
 #endif
 
-static void show_startup_error(HWND owner) {
-    const char* utf8 = opt_startup_last_error();
-    wchar_t message[1024] = {};
-    if (!utf8 || MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
-                                     utf8, -1, message, ARRAYSIZE(message)) == 0) {
-        MultiByteToWideChar(CP_ACP, 0, utf8 ? utf8 : "", -1,
-                            message, ARRAYSIZE(message));
-    }
-    MessageBoxW(owner, message, L"Uranium Trainer",
-                MB_OK | MB_ICONWARNING);
-}
-
 // ------------------------------------------------------------
 // WINDOW PROC
 // ------------------------------------------------------------
@@ -4376,22 +4384,6 @@ static LRESULT CALLBACK OverlayProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             if (ptin(modern_settings_toggle_rect(2), x, y)) {
-                const bool requested = !s_auto_start_trainer;
-                // Do not report the option as enabled if version.dll could not
-                // be installed (for example, another DLL already occupies it).
-                if (opt_startup_set_auto_trainer(requested))
-                    s_auto_start_trainer = requested;
-                else if (requested)
-                    show_startup_error(hw);
-                if (!s_auto_start_trainer && s_fast_boot) {
-                    s_fast_boot = false;
-                    opt_startup_set_fast_boot(false);
-                }
-                InvalidateRect(hw, NULL, FALSE);
-                return 0;
-            }
-            if (ptin(modern_settings_toggle_rect(3), x, y)) {
-                if (!s_auto_start_trainer) return 0;
                 s_fast_boot = !s_fast_boot;
                 opt_startup_set_fast_boot(s_fast_boot);
                 InvalidateRect(hw, NULL, FALSE);
@@ -5153,8 +5145,7 @@ bool menu_init(HINSTANCE hinst, HWND game_hwnd) {
         s_menu_toggle_key = VK_INSERT;
     // opt_startup owns the absolute game-folder ini path.  Using it here is
     // essential when the trainer was injected by an executable in Launcher/.
-    s_auto_start_trainer = opt_startup_auto_trainer_enabled();
-    s_fast_boot = s_auto_start_trainer && opt_startup_fast_boot_enabled();
+    s_fast_boot = opt_startup_fast_boot_enabled();
     char language[8] = {};
     GetPrivateProfileStringA("Settings", "UiLanguage", "en", language,
                              sizeof(language), opt_startup_config_path());

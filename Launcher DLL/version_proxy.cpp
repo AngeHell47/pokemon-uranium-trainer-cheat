@@ -28,6 +28,7 @@
 #include "options/opt_heal.h"
 #include "options/opt_extras.h"
 #include "options/opt_autosave.h"
+#include "options/opt_advantages.h"
 //#include "options/opt_speedhack.h"
 #include "options/opt_zoom.h"
 #include "options/opt_minimap.h"
@@ -91,6 +92,15 @@ static void disable_active_trainer_options() {
     opt_zoom_apply(100);
     opt_minimap_toggle_fps(false);
     opt_minimap_toggle(false);
+    opt_advantages_set_always_first(false);
+    opt_advantages_set_perfect_accuracy(false);
+    opt_advantages_set_guaranteed_critical(false);
+    opt_advantages_set_status_immunity(false);
+    opt_advantages_set_guaranteed_flee(false);
+    opt_advantages_set_instant_fishing(false);
+    opt_advantages_set_guaranteed_fishing(false);
+    opt_advantages_set_exp_multiplier(1);
+    opt_advantages_set_money_multiplier(1);
 }
 
 static DWORD WINAPI main_thread(LPVOID) {
@@ -155,6 +165,7 @@ static DWORD WINAPI main_thread(LPVOID) {
         release_trainer_singleton();
         return 0;
     }
+    opt_advantages_init(g_ini_path);
 	//opt_speedhack_init(g_ini_path);
     opt_zoom_init(g_ini_path);
     opt_minimap_init(g_ini_path);
@@ -184,6 +195,7 @@ static DWORD WINAPI main_thread(LPVOID) {
 	//opt_speedhack_set_hwnd_and_start(game);
     opt_zoom_set_hwnd_and_start(game);
     opt_minimap_set_hwnd_and_start(game);
+    opt_advantages_set_hwnd_and_start(game);
 	
     menu_open();
     if (g_trainer_ready) SetEvent(g_trainer_ready);
@@ -238,11 +250,6 @@ BOOL APIENTRY DllMain(HMODULE hm,DWORD reason,LPVOID){
         char path[MAX_PATH]; GetSystemDirectoryA(path,MAX_PATH); lstrcatA(path,"\\version.dll");
         hReal=LoadLibraryA(path);
         for(int i=0;i<11;i++) fp[i]=GetProcAddress(hReal,EXPORTS[i]);
-        // Leave the proxy fully functional but do not claim the trainer
-        // singleton when auto-start is disabled.  An external trainer can
-        // then still attach to this game normally.
-        if(GetPrivateProfileIntA("Settings", "AutoStartTrainer", 0, g_ini_path) == 0)
-            return TRUE;
 #endif
         char mutex_name[96];
         wsprintfA(mutex_name,"Local\\PolkamonUraniumTrainer_%lu",GetCurrentProcessId());

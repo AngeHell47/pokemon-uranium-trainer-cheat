@@ -2,5 +2,4 @@
 #include "..\\Launcher DLL\\trainer_logo.h"
 
 101 RCDATA "..\\Launcher DLL\\options\\moves.txt"
-102 RCDATA "build\\version.dll"
 IDI_TRAINER_LOGO ICON "Icon-simplifie.ico"

@@ -11,15 +11,16 @@ static volatile LONG s_pending = 0;
 static volatile LONG s_installed = 0;
 static volatile LONG s_retry_started = 0;
 static volatile LONG s_runtime_state = 0;
+static volatile LONG s_refresh_frames = 0;
 static char          s_ruby[4096];
 
 static void post_to_game() {
     rgss_safe_dispatch_notify();
 }
 
-// Reinstalle le helper et le corps exact de l'ecran de remplacement. Le garde
-// direct est double par $DEBUG, qui figure dans le refus natif d'Uranium. Les
-// etats 1/2/3 signalent installation, appel et CS effectivement acceptee.
+// Repose le predicat et surtout la methode finale de BW_Summary. Cette derniere
+// est chargee tardivement et peut ecraser un hook pose pendant le bootstrap.
+// Le refus seul est conditionne par le trainer; $DEBUG reste toujours intact.
 static void build_ruby() {
     const char* enabled =
         InterlockedExchangeAdd(&s_enabled, 0) ? "true" : "false";
@@ -29,11 +30,6 @@ static void build_ruby() {
         "begin\n"
         "  hm_enabled=%s\n"
         "  $__uranium_trainer_hm_forget=hm_enabled\n"
-        "  if !defined?($__uranium_trainer_hm_original_debug_saved)\n"
-        "    $__uranium_trainer_hm_original_debug=($DEBUG ? true : false)\n"
-        "    $__uranium_trainer_hm_original_debug_saved=true\n"
-        "  end\n"
-        "  $DEBUG=hm_enabled ? true : $__uranium_trainer_hm_original_debug\n"
         "  $__uranium_trainer_hm_runtime_address=%lu\n"
         "  if $__uranium_trainer_hm_runtime_enabled!=hm_enabled\n"
         "    $__uranium_trainer_hm_runtime_enabled=hm_enabled\n"
@@ -43,7 +39,14 @@ static void build_ruby() {
         "  $__uranium_trainer_hm_writer||=Win32API.new(\"kernel32\",\"RtlMoveMemory\",[\"l\",\"p\",\"l\"],\"v\")\n"
         "  class Object\n"
         "    def pbIsHiddenMove?(move)\n"
-        "      return false if $__uranium_trainer_hm_forget\n"
+        "      if $__uranium_trainer_hm_forget\n"
+        "        $__uranium_trainer_hm_runtime_state=4\n"
+        "        begin\n"
+        "          $__uranium_trainer_hm_writer.call($__uranium_trainer_hm_runtime_address,[4].pack(\"l\"),4)\n"
+        "        rescue Exception\n"
+        "        end\n"
+        "        return false\n"
+        "      end\n"
         "      return false if !$ItemData\n"
         "      for i in 0...$ItemData.length\n"
         "        next if !pbIsHiddenMachine?(i)\n"
@@ -54,27 +57,31 @@ static void build_ruby() {
         "    end\n"
         "    private :pbIsHiddenMove?\n"
         "  end\n"
-        "  if defined?(PokemonSummary)\n"
-        "    class PokemonSummary\n"
+        "  if defined?(::PokemonSummary)\n"
+        "    class ::PokemonSummary\n"
         "      def pbStartForgetScreen(party,partyindex,moveToLearn)\n"
-        "        $__uranium_trainer_hm_runtime_state=2 if %s && $__uranium_trainer_hm_runtime_state.to_i<2\n"
         "        ret=-1\n"
         "        @scene.pbStartForgetScene(party,partyindex,moveToLearn)\n"
         "        ret=@scene.pbChooseMoveToForget(moveToLearn)\n"
-        "        if ret>=0 && moveToLearn!=0 && %s\n"
-        "          $__uranium_trainer_hm_runtime_state=3\n"
-        "        elsif ret>=0 && moveToLearn!=0 && pbIsHiddenMove?(party[partyindex].moves[ret].id) && !$DEBUG\n"
+        "        if ret>=0 && moveToLearn!=0 && !$__uranium_trainer_hm_forget &&\n"
+        "           pbIsHiddenMove?(party[partyindex].moves[ret].id) && !$DEBUG\n"
         "          ret=-1\n"
         "          @scene.pbEndScene\n"
         "          Kernel.pbMessage(_INTL(\"HM moves can't be forgotten now.\"))\n"
+        "        elsif ret>=0 && moveToLearn!=0 && $__uranium_trainer_hm_forget\n"
+        "          $__uranium_trainer_hm_runtime_state=4\n"
+        "          begin\n"
+        "            $__uranium_trainer_hm_writer.call($__uranium_trainer_hm_runtime_address,[4].pack(\"l\"),4)\n"
+        "          rescue Exception\n"
+        "          end\n"
         "        end\n"
         "        @scene.pbEndScene\n"
         "        return ret\n"
         "      end\n"
         "    end\n"
         "    installed=1\n"
-        "    $__uranium_trainer_hm_runtime_state=1 if $__uranium_trainer_hm_runtime_state.to_i<1\n"
         "  end\n"
+        "  $__uranium_trainer_hm_runtime_state=1 if $__uranium_trainer_hm_runtime_state.to_i<1\n"
         "rescue Exception\n"
         "end\n"
         "begin\n"
@@ -84,16 +91,20 @@ static void build_ruby() {
         "rescue Exception\n"
         "end\n",
         enabled, (unsigned long)(ULONG_PTR)&s_runtime_state,
-        enabled, enabled, (unsigned long)(ULONG_PTR)&s_installed,
+        (unsigned long)(ULONG_PTR)&s_installed,
         (unsigned long)(ULONG_PTR)&s_runtime_state);
     s_ruby[sizeof(s_ruby) - 1] = '\0';
 }
 
 static void __cdecl on_game_thread_tick(void*) {
-    // PokemonSummary est charge une seule fois par la VM. Apres acquittement,
-    // les bascules ON/OFF ne changent que les globales du wrapper existant ;
-    // le reevaluer chaque seconde mutait inutilement les tables de methodes.
-    if (InterlockedExchange(&s_pending, 0) == 0) return;
+    const bool requested = InterlockedExchange(&s_pending, 0) != 0;
+    bool refresh = false;
+    if (!requested && InterlockedExchangeAdd(&s_enabled, 0) != 0 &&
+        InterlockedExchangeAdd(&s_installed, 0) != 0) {
+        refresh = InterlockedIncrement(&s_refresh_frames) >= 120;
+    }
+    if (!requested && !refresh) return;
+    InterlockedExchange(&s_refresh_frames, 0);
     build_ruby();
     if (rgss_safe_eval(s_ruby) != 0)
         InterlockedExchange(&s_pending, 1);
@@ -126,6 +137,7 @@ void opt_hmforget_init(const char* ini_path) {
     InterlockedExchange(&s_pending, 1);
     InterlockedExchange(&s_installed, 0);
     InterlockedExchange(&s_runtime_state, 0);
+    InterlockedExchange(&s_refresh_frames, 0);
 }
 
 void opt_hmforget_set_hwnd_and_start(HWND hwnd) {

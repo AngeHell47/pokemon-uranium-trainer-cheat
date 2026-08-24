@@ -16,8 +16,8 @@ if not exist "build\payload_obj" mkdir "build\payload_obj"
 
 set "DLLSRC=..\Launcher DLL"
 
-rem Build the proxy first: it is embedded in the external payload and can be
-rem installed from Settings as <game folder>\version.dll.
+rem Build the proxy first. It is shipped as a separate release asset and users
+rem copy it manually beside Uranium.exe.
 rc /nologo /fo build\trainer_logo.res trainer_logo_resources.rc
 if errorlevel 1 exit /b 1
 
@@ -56,8 +56,9 @@ cl /nologo /O1 /GS- /MT /LD /W4 /utf-8 ^
   "%DLLSRC%\options\opt_heal.cpp" ^
   "%DLLSRC%\options\opt_extras.cpp" ^
   "%DLLSRC%\options\opt_autosave.cpp" ^
+  "%DLLSRC%\options\opt_advantages.cpp" ^
   build\trainer_logo.res ^
-  /Fe:build\version.dll /link /DEF:"%DLLSRC%\version.def" /MACHINE:X86 ^
+  /Fe:build\version.dll /link /DEF:"%DLLSRC%\version.def" /MACHINE:X86 /MAP:build\version.map ^
   psapi.lib kernel32.lib user32.lib gdi32.lib d3d9.lib
 if errorlevel 1 exit /b 1
 
@@ -99,6 +100,7 @@ cl /nologo /O1 /GS- /MT /LD /W4 /utf-8 /DTRAINER_EXTERNAL_PAYLOAD ^
   "%DLLSRC%\options\opt_heal.cpp" ^
   "%DLLSRC%\options\opt_extras.cpp" ^
   "%DLLSRC%\options\opt_autosave.cpp" ^
+  "%DLLSRC%\options\opt_advantages.cpp" ^
   build\payload_resources.res ^
   /Fo:build\payload_obj\ /Fe:build\trainer_payload.dll ^
   /link /MACHINE:X86 /MAP:build\trainer_payload.map ^

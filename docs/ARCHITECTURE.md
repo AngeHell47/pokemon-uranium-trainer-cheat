@@ -34,12 +34,10 @@ Un mutex nommé par PID empêche une double initialisation. Le lanceur ne décla
 la connexion réussie qu'après le signal de l'événement `Ready` **et** la
 présence de la fenêtre d'overlay. Une deuxième connexion réutilise donc
 l'instance prête sans charger un second payload. En mode d'attache externe
-normal, aucun `version.dll` de trainer n'est nécessaire à côté de `Uranium.exe`;
-l'option « Start trainer with game » installe explicitement le proxy géré à cet
-emplacement pour les lancements suivants. Le payload injecté hérite toutefois
-du niveau d'élévation du jeu, pas de celui du launcher : si `Uranium.exe` est
-dans `Program Files` et lancé normalement, l'installation du proxy bascule
-sur une demande UAC dédiée avant de déplacer le fichier.
+normal, aucun `version.dll` de trainer n'est nécessaire à côté de `Uranium.exe`.
+Pour le chargement automatique, l'utilisateur copie lui-même le `version.dll`
+publié à côté du jeu; sa présence démarre toujours le trainer. Aucun code du
+payload n'installe, ne renomme ou ne supprime ce fichier.
 
 ## Principes de sûreté
 

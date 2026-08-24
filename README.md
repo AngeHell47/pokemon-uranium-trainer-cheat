@@ -16,8 +16,8 @@ Choose either of these methods:
 2. Start Pokémon Uranium normally.
 
 The trainer loads automatically with the game, so the external injector is not
-required. Remove `version.dll` from the game directory to disable automatic
-loading.
+required. Installation and removal are intentionally manual: remove
+`version.dll` from the game directory to disable automatic loading.
 
 ### External injector
 
@@ -36,6 +36,9 @@ hide it.
 ## Features
 
 - God mode, infinite PP and items, guaranteed capture, and one-hit KOs.
+- Guaranteed priority, accuracy, critical hits, escape and status immunity.
+- Damage, experience and prize-money multipliers from x1 to x100.
+- Instant guaranteed fishing and removable HM moves.
 - Money, inventory, party, PC box, and trainer-profile editing.
 - Speed, movement, encounters, time, weather, and minimap controls.
 - In-game Pokémon, inventory, and trainer editors.
